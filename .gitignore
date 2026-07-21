@@ -1,6 +1,9 @@
 # Build output
 out/
 
+# Platform bundle output
+dist/
+
 # Rust build artifacts
 host/target/
 

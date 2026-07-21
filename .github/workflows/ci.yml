@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & validate demo component
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-tools
+        run: cargo install wasm-tools
+
+      - name: Install Roc nightly
+        uses: roc-lang/setup-roc@v3
+        with:
+          version: nightly
+
+      - name: Build demo component
+        run: bash build.sh
+
+      - name: Validate component
+        run: wasm-tools validate out/golem-component.wasm
+
+      - name: Upload demo component
+        uses: actions/upload-artifact@v4
+        with:
+          name: golem-component
+          path: out/golem-component.wasm
+          if-no-files-found: error

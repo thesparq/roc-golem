@@ -10,26 +10,30 @@ A Roc platform that handles all WIT type serialization, canonical ABI encoding, 
 
 ## Using the platform
 
-Download the latest `roc-golem.tar.gz` from [Releases](https://github.com/<your-org>/roc-golem/releases), then extract and edit the app:
+The platform is distributed as a `.tar.zst` bundle from [Releases](https://github.com/<your-org>/roc-golem/releases).
 
-```bash
-tar xzf roc-golem.tar.gz
-cd roc-golem
+In your Roc app, reference the platform by its release URL:
 
-# Edit app/main.roc with your agent logic
-# Then build:
-bash build.sh
-
-# Output: out/golem-component.wasm — a valid Golem component
-wasm-tools validate out/golem-component.wasm
+```roc
+app [main, getAgentType, initialize, invoke, discoverTypes, save, load] {
+    pf: platform "https://github.com/<your-org>/roc-golem/releases/download/v0.1.0/<hash>.tar.zst"
+}
 ```
 
-Your app can reference this platform:
+Or for local development, use a relative path:
 
 ```roc
 app [main, getAgentType, initialize, invoke, discoverTypes, save, load] {
     pf: platform "../platform/main.roc"
 }
+```
+
+Then build:
+
+```bash
+bash build.sh
+# Output: out/golem-component.wasm — a valid Golem component
+wasm-tools validate out/golem-component.wasm
 ```
 
 ## App API
@@ -54,6 +58,7 @@ app [main, getAgentType, initialize, invoke, discoverTypes, save, load] {
 | `host/src/lib.rs` | Rust host source (Golem exports + canonical ABI) |
 | `wit/` | WIT dependency files (golem 1.5.0 + wasi) |
 | `build.sh` | Full build pipeline |
+| `scripts/bundle.py` | Build Rust host + produce platform bundle |
 | `golem.yaml` | Golem app manifest |
 
 ## Requirements
