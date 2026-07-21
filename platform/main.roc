@@ -1,5 +1,11 @@
 platform "roc-golem"
-    requires { main : {}, getAgentType : Str -> Str, initialize : Str, Str -> I32, invoke : Str, Str -> Str, discoverTypes : {} -> Str, save : {} -> Str, load : Str -> I32 }
+    requires {
+        main : {},
+        discoverTypes : {} -> Str,
+        getDefinition : {} -> Str,
+        init : Str -> Try(Str, Str),
+        invoke : Str, Str, Str -> Try(Str, Str),
+    }
     exposes []
     packages {}
     provides {
@@ -7,8 +13,6 @@ platform "roc-golem"
         "roc_initialize":     initialize!,
         "roc_invoke":         invoke!,
         "roc_discover_types": discover_types!,
-        "roc_save":           save!,
-        "roc_load":           load!,
     }
     hosted {}
     targets: {
@@ -21,8 +25,6 @@ platform "roc-golem"
                 "roc_initialize",
                 "roc_invoke",
                 "roc_discover_types",
-                "roc_save",
-                "roc_load",
                 "golem:agent/guest@1.5.0#initialize",
                 "golem:agent/guest@1.5.0#invoke",
                 "golem:agent/guest@1.5.0#get-definition",
@@ -30,6 +32,7 @@ platform "roc-golem"
                 "golem:api/save-snapshot@1.5.0#save",
                 "golem:api/load-snapshot@1.5.0#load",
                 "cabi_realloc",
+                "roc_dealloc",
                 "cabi_post_golem:agent/guest@1.5.0#initialize",
                 "cabi_post_golem:agent/guest@1.5.0#invoke",
                 "cabi_post_golem:agent/guest@1.5.0#get-definition",
@@ -39,27 +42,27 @@ platform "roc-golem"
             ],
             import_memory: Zeroed,
             initial_stack_size: 14752,
-            minimum_memory: 65536,
+            minimum_memory: 262144,
         },
     }
 
 get_agent_type! : Str -> Str
-get_agent_type! = |type_name| getAgentType(type_name)
+get_agent_type! = |_typeName| getDefinition({})
 
-initialize! : Str, Str -> I32
-initialize! = |agent_type, input| initialize(agent_type, input)
+initialize! : Str, Str -> Str
+initialize! = |_agentType, input| match init(input) {
+    Ok(state) => state
+    Err(_) => ""
+}
 
-invoke! : Str, Str -> Str
-invoke! = |method_name, input| invoke(method_name, input)
+invoke! : Str, Str, Str -> Str
+invoke! = |methodName, state, input| match invoke(methodName, state, input) {
+    Ok(result) => result
+    Err(_) => "{}"
+}
 
 discover_types! : {} -> Str
 discover_types! = |_| discoverTypes({})
-
-save! : {} -> Str
-save! = |_| save({})
-
-load! : Str -> I32
-load! = |snapshot| load(snapshot)
 
 main! : {} -> I32
 main! = |_| 0

@@ -1,23 +1,21 @@
-app [main, getAgentType, initialize, invoke, discoverTypes, save, load] {
+app [main, discoverTypes, getDefinition, init, invoke] {
     pf: platform "../platform/main.roc"
 }
 
-getAgentType : Str -> Str
-getAgentType = |typeName| typeName
-
-initialize : Str, Str -> I32
-initialize = |_, _| 0
-
-invoke : Str, Str -> Str
-invoke = |methodName, _input| methodName
+getDefinition : {} -> Str
+getDefinition = |_| "roc-counter"
 
 discoverTypes : {} -> Str
 discoverTypes = |_| "[]"
 
-save : {} -> Str
-save = |_| "{}"
+init : Str -> Try(Str, Str)
+init = |_input| Ok("{\"count\":0,\"history\":[]}")
 
-load : Str -> I32
-load = |_| 0
+invoke : Str, Str, Str -> Try(Str, Str)
+invoke = |methodName, _state, _input|
+    match methodName {
+        "increment" => Ok("{\"count\":1,\"history\":[\"incremented\"]}")
+        _ => Err("unknown method")
+    }
 
 main = {}

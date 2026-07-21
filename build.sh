@@ -23,10 +23,13 @@ HOST_A="$HOST_DIR/target/wasm32-unknown-unknown/release/libgolem_host.a"
 if [ -f "$HOST_A" ]; then
   TMP_EXTRACT="$(mktemp -d)"
   (cd "$TMP_EXTRACT" && ar x "$HOST_A" 2>/dev/null)
-  HOST_OBJ=$(find "$TMP_EXTRACT" -name "*.o" 2>/dev/null | head -1)
+  HOST_OBJ=$(find "$TMP_EXTRACT" -name "*golem_host*.o" -not -name "*.rmeta" 2>/dev/null | head -1)
+  if [ -z "${HOST_OBJ:-}" ]; then
+    HOST_OBJ=$(find "$TMP_EXTRACT" -name "*.o" 2>/dev/null | head -1)
+  fi
 fi
 if [ -z "${HOST_OBJ:-}" ]; then
-  HOST_OBJ=$(find "$HOST_DIR/target/wasm32-unknown-unknown/release" -name "*.o" 2>/dev/null | head -1)
+  HOST_OBJ=$(find "$HOST_DIR/target/wasm32-unknown-unknown/release" -name "*golem_host*.o" 2>/dev/null | head -1)
 fi
 if [ -z "${HOST_OBJ:-}" ]; then
   echo "ERROR: No host object file found!"
@@ -43,30 +46,9 @@ roc build --target=wasm32 --opt=dev "$APP_DIR/main.roc" \
 # Step 4: Fix memory (import → export)
 # All imports must come before non-imports in WASM. We remove the memory import
 # and insert a memory export after all remaining imports.
-echo "==> Fixing memory export"
+echo "==> Fixing memory & roc_dealloc"
 wasm-tools print "$TMPDIR/stage1.wasm" > "$TMPDIR/stage1.wat"
-python3 -c '
-import sys, re
-
-with open(sys.argv[1]) as f:
-    wat = f.read()
-
-# Remove the memory import line
-wat = re.sub(r"\s+\(import \"env\" \"memory\" \(memory \([^)]+\) \d+\)\)", "", wat)
-
-# Insert memory export after the last remaining import (or after module header if no imports remain)
-lines = wat.split("\n")
-insert_at = 1  # default: after module header
-for i, line in enumerate(lines):
-    if "(import" in line.strip():
-        insert_at = i + 1
-
-lines.insert(insert_at, "  (memory (export \"memory\") 1)")
-
-result = "\n".join(lines)
-with open(sys.argv[1], "w") as f:
-    f.write(result)
-' "$TMPDIR/stage1.wat"
+python3 "$ROOT/scripts/fix_wasm.py" "$TMPDIR/stage1.wat"
 
 wasm-tools parse "$TMPDIR/stage1.wat" -o "$TMPDIR/stage2.wasm"
 

@@ -1,10 +1,15 @@
 #![no_std]
+#![allow(static_mut_refs)]
 
 use core::arch::wasm32;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 const HEAP_START: usize = 0x10000;
 static ALLOC_OFFSET: AtomicUsize = AtomicUsize::new(HEAP_START);
+
+const STATE_BUF_SIZE: usize = 65536;
+static mut STATE_BUF: [u8; STATE_BUF_SIZE] = [0; STATE_BUF_SIZE];
+static mut STATE_LEN: usize = 0;
 
 fn ensure_memory(min_size: usize) {
     let pages_needed = (min_size + 0xFFFF) / 0x10000;
@@ -35,11 +40,9 @@ pub extern "C" fn cabi_realloc(
 
 extern "C" {
     fn roc_get_agent_type(input_ptr: i32, output_ptr: i32);
-    fn roc_initialize(agent_type_ptr: i32, input_ptr: i32) -> i32;
-    fn roc_invoke(method_ptr: i32, input_ptr: i32, output_ptr: i32);
+    fn roc_initialize(agent_type_ptr: i32, input_ptr: i32, state_output_ptr: i32);
+    fn roc_invoke(method_ptr: i32, state_ptr: i32, input_ptr: i32, output_ptr: i32);
     fn roc_discover_types(output_ptr: i32);
-    fn roc_save(output_ptr: i32);
-    fn roc_load(snapshot_ptr: i32) -> i32;
 }
 
 // --- Canon ABI encoding helpers ---
@@ -81,86 +84,57 @@ unsafe fn write_enum(buf: *mut u8, off: i32, disc: u8) -> i32 {
 
 // --- Result encodings ---
 
-/// result<_, agent-error> = Ok(())
 unsafe fn encode_result_ok_empty(buf: *mut u8, off: i32) -> i32 {
     write_variant_disc(buf, off, 0)
 }
 
-/// result<_, agent-error> = Err(invalid-input(""))
 unsafe fn encode_result_err_generic(buf: *mut u8, off: i32) -> i32 {
     let off = write_variant_disc(buf, off, 1);
-    // agent-error = variant:
-    //   0: invalid-input(string)
-    //   1: invalid-method(string)
-    //   2: invalid-type(string)
-    //   3: invalid-agent-id(string)
-    //   4: custom-error(value-and-type)
     let off = write_variant_disc(buf, off, 0); // invalid-input
     write_str(buf, off, "roc error")
 }
 
-/// result<data-value, agent-error> = Ok(tuple([]))
 unsafe fn encode_result_ok_data_value_empty(buf: *mut u8, off: i32) -> i32 {
     let off = write_variant_disc(buf, off, 0); // Ok
-    // data-value = variant { tuple(list<element-value>), multimodal(...) }
-    //   tuple([]) = disc 0, empty list
     let off = write_variant_disc(buf, off, 0); // tuple
-    write_empty_list(buf, off) // empty element-value list
+    write_empty_list(buf, off)
 }
 
-/// result<list<agent-type>, agent-error> = Ok([])
 unsafe fn encode_result_ok_empty_agent_type_list(buf: *mut u8, off: i32) -> i32 {
     let off = write_variant_disc(buf, off, 0); // Ok
-    write_empty_list(buf, off) // empty agent-type list
+    write_empty_list(buf, off)
 }
 
-/// result<_, string> = Ok(())
 unsafe fn encode_result_ok_unit(buf: *mut u8, off: i32) -> i32 {
     write_variant_disc(buf, off, 0)
 }
 
-/// result<_, string> = Err(msg)
-unsafe fn encode_result_err_string(buf: *mut u8, off: i32, msg: &str) -> i32 {
-    let off = write_variant_disc(buf, off, 1); // Err
-    write_str(buf, off, msg)
-}
-
 /// snapshot { payload: list<u8>, mime-type: string }
 unsafe fn encode_snapshot(buf: *mut u8, off: i32, payload: &[u8], mime: &str) -> i32 {
-    // payload: list<u8>
     let off = write_i32(buf, off, payload.len() as i32);
     if !payload.is_empty() {
         core::ptr::copy_nonoverlapping(payload.as_ptr(), buf.offset(off as isize), payload.len());
     }
     let off = off + payload.len() as i32;
-    // mime-type: string
     write_str(buf, off, mime)
 }
 
-/// Encode a minimal agent-type into canonical ABI buffer.
 unsafe fn encode_minimal_agent_type(buf: *mut u8, off: i32, type_name: &str) -> i32 {
     let mut o = off;
     o = write_str(buf, o, type_name);
     o = write_str(buf, o, "");
     o = write_str(buf, o, "roc");
-    // constructor: agent-constructor { name: option<string>, description: string, prompt-hint: option<string>, input-schema: data-schema }
     o = write_option_none(buf, o);
     o = write_str(buf, o, "");
     o = write_option_none(buf, o);
-    // input-schema: data-schema = tuple([])
     o = write_variant_disc(buf, o, 0); // tuple
     o = write_empty_list(buf, o);
-    // methods, dependencies: empty lists
     o = write_empty_list(buf, o);
     o = write_empty_list(buf, o);
-    // mode: agent-mode = ephemeral
-    o = write_enum(buf, o, 1);
-    // http-mount: none
+    o = write_enum(buf, o, 1); // ephemeral
     o = write_option_none(buf, o);
-    // snapshotting: enabled(default)
     o = write_variant_disc(buf, o, 1); // enabled
     o = write_variant_disc(buf, o, 0); // default
-    // config: empty list
     o = write_empty_list(buf, o);
     o
 }
@@ -189,16 +163,38 @@ unsafe fn canon_string_to_roc(buf: *const u8, offset: i32) -> (i32, i32) {
     (offset + 4 + len, roc_ptr)
 }
 
+/// Read a Roc string from a pointer (len-prefixed), return (pointer_to_data, length)
+unsafe fn read_roc_string(ptr: i32) -> (*const u8, usize) {
+    let len = core::ptr::read_unaligned(ptr as *const i32) as usize;
+    (if len > 0 { (ptr + 4) as *const u8 } else { core::ptr::null() }, len)
+}
+
 // --- Golem guest exports ---
 
 #[export_name = "golem:agent/guest@1.5.0#initialize"]
 pub extern "C" fn golem_initialize(input_ptr: i32) -> i32 {
     unsafe {
         let buf = input_ptr as *const u8;
-        let (_next, agent_type) = canon_string_to_roc(buf, 0);
-        let result = roc_initialize(agent_type, _next);
+
+        // Read agent type name from WIT-encoded input: (agent-type, data-value, principal)
+        let (_off, agent_type) = canon_string_to_roc(buf, 0);
+
+        // Pass empty input for MVP — data-value parsing is complex (variant of variant)
+        let input_roc = alloc_roc_string(b"{}");
+
+        // Pre-allocate output buffer for Roc to write initial state
+        let state_out = alloc_roc_string(&[0u8; STATE_BUF_SIZE]);
+
+        // Call Roc's initialize! — writes initial state to state_out
+        roc_initialize(agent_type, input_roc, state_out);
+
+        // Read initial state from Roc's output
+        let (state_data, state_len) = read_roc_string(state_out);
+        let success = state_len > 0 && state_len <= STATE_BUF_SIZE;
         let out = alloc(16, 1) as *mut u8;
-        if result == 0 {
+        if success {
+            core::ptr::copy_nonoverlapping(state_data, STATE_BUF.as_mut_ptr(), state_len);
+            STATE_LEN = state_len;
             encode_result_ok_empty(out, 0);
         } else {
             encode_result_err_generic(out, 0);
@@ -211,10 +207,37 @@ pub extern "C" fn golem_initialize(input_ptr: i32) -> i32 {
 pub extern "C" fn golem_invoke(input_ptr: i32) -> i32 {
     unsafe {
         let buf = input_ptr as *const u8;
-        let (_next, method_name) = canon_string_to_roc(buf, 0);
+
+        // Read method name from WIT-encoded input: (method-name, data-value, principal)
+        let (_off, method_name) = canon_string_to_roc(buf, 0);
+
+        // Pass empty input for MVP — data-value parsing is complex
+        let input_roc = alloc_roc_string(b"{}");
+
+        // Write current state from buffer to linear memory as Roc string
+        let state_ptr = if STATE_LEN > 0 {
+            alloc_roc_string(core::slice::from_raw_parts(
+                STATE_BUF.as_ptr(),
+                STATE_LEN,
+            ))
+        } else {
+            alloc_roc_string(b"{}")
+        };
+
+        // Pre-allocate output buffer for Roc to write result
         let output = alloc_roc_string(&[0u8; 4096]);
-        let dummy_input = alloc_roc_string(b"{}");
-        roc_invoke(method_name, dummy_input, output);
+
+        // Call Roc's invoke! — dispatches to handler, writes result to output
+        roc_invoke(method_name, state_ptr, input_roc, output);
+
+        // Read result from output buffer — becomes new state
+        let (result_data, result_len) = read_roc_string(output);
+        if result_len > 0 && result_len <= STATE_BUF_SIZE {
+            core::ptr::copy_nonoverlapping(result_data, STATE_BUF.as_mut_ptr(), result_len);
+            STATE_LEN = result_len;
+        }
+
+        // Encode result as result<data-value, agent-error> with empty data-value
         let out = alloc(32, 1) as *mut u8;
         encode_result_ok_data_value_empty(out, 0)
     }
@@ -252,30 +275,25 @@ pub extern "C" fn golem_discover_agent_types() -> i32 {
 #[export_name = "golem:api/save-snapshot@1.5.0#save"]
 pub extern "C" fn golem_save() -> i32 {
     unsafe {
-        let output = alloc_roc_string(&[0u8; 4096]);
-        roc_save(output);
-        let roc_len = core::ptr::read_unaligned(output as *const i32) as usize;
-        let roc_data = if roc_len > 0 {
-            core::slice::from_raw_parts((output + 4) as *const u8, roc_len)
-        } else {
-            &[]
-        };
+        let payload = core::slice::from_raw_parts(STATE_BUF.as_ptr(), STATE_LEN);
         let out = alloc(1024, 1) as *mut u8;
-        encode_snapshot(out, 0, roc_data, "application/json");
+        encode_snapshot(out, 0, payload, "application/json");
         out as i32
     }
 }
 
 #[export_name = "golem:api/load-snapshot@1.5.0#load"]
-pub extern "C" fn golem_load(t1: i32, _t2: i32, _t3: i32, _t4: i32) -> i32 {
+pub extern "C" fn golem_load(t1: i32, t2: i32, _t3: i32, _t4: i32) -> i32 {
     unsafe {
-        let result = roc_load(t1);
-        let out = alloc(16, 1) as *mut u8;
-        if result == 0 {
-            encode_result_ok_unit(out, 0);
-        } else {
-            encode_result_err_string(out, 0, "load failed");
+        // t1 = payload pointer, t2 = payload length
+        let payload = core::slice::from_raw_parts(t1 as *const u8, t2 as usize);
+        let len = payload.len();
+        if len <= STATE_BUF_SIZE {
+            core::ptr::copy_nonoverlapping(payload.as_ptr(), STATE_BUF.as_mut_ptr(), len);
+            STATE_LEN = len;
         }
+        let out = alloc(16, 1) as *mut u8;
+        encode_result_ok_unit(out, 0);
         out as i32
     }
 }
