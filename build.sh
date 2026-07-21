@@ -13,17 +13,22 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 mkdir -p "$OUTDIR" "$TARGETS_DIR"
 
-# Step 1: Build Rust host object
+# Step 1: Build Rust host (staticlib → .a, no linking step)
 echo "==> Building Rust host (wasm32-unknown-unknown)"
-(cd "$HOST_DIR" && cargo rustc --target=wasm32-unknown-unknown --release \
-  -- --emit=obj -C relocation-model=pic 2>&1) || true
+(cd "$HOST_DIR" && cargo build --target=wasm32-unknown-unknown --release 2>&1) || true
 
-# Step 2: Find and copy host object to platform targets dir
-HOST_OBJ=$(ls "$HOST_DIR/target/wasm32-unknown-unknown/release/deps/"*golem_host*.o 2>/dev/null | head -1)
-if [ -z "$HOST_OBJ" ]; then
+# Step 2: Extract host object from static library archive
+echo "==> Extracting host object"
+HOST_A="$HOST_DIR/target/wasm32-unknown-unknown/release/libgolem_host.a"
+if [ -f "$HOST_A" ]; then
+  TMP_EXTRACT="$(mktemp -d)"
+  (cd "$TMP_EXTRACT" && ar x "$HOST_A" 2>/dev/null)
+  HOST_OBJ=$(find "$TMP_EXTRACT" -name "*.o" 2>/dev/null | head -1)
+fi
+if [ -z "${HOST_OBJ:-}" ]; then
   HOST_OBJ=$(find "$HOST_DIR/target/wasm32-unknown-unknown/release" -name "*.o" 2>/dev/null | head -1)
 fi
-if [ -z "$HOST_OBJ" ]; then
+if [ -z "${HOST_OBJ:-}" ]; then
   echo "ERROR: No host object file found!"
   exit 1
 fi

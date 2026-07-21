@@ -3,6 +3,8 @@
 
 import subprocess
 import sys
+import shutil
+import tempfile
 from pathlib import Path
 
 
@@ -16,25 +18,30 @@ OUTPUT_DIR = ROOT / "dist"
 def build_rust_host() -> None:
     print("==> Building Rust host (wasm32-unknown-unknown)")
     subprocess.run(
-        [
-            "cargo", "rustc",
-            "--target=wasm32-unknown-unknown",
-            "--release",
-            "--",
-            "--emit=obj",
-            "-C", "relocation-model=pic",
-        ],
+        ["cargo", "build", "--target=wasm32-unknown-unknown", "--release"],
         cwd=str(HOST_DIR),
         check=False,
     )
-    objs = sorted(Path(HOST_DIR / "target" / "wasm32-unknown-unknown" / "release" / "deps").glob("*golem_host*.o"))
+    host_a = HOST_DIR / "target" / "wasm32-unknown-unknown" / "release" / "libgolem_host.a"
+    tmp_dir = None
+    objs = []
+    if host_a.is_file():
+        tmp_dir = Path(tempfile.mkdtemp())
+        subprocess.run(["ar", "x", str(host_a)], cwd=str(tmp_dir), check=False)
+        objs = sorted(tmp_dir.rglob("*.o"))
     if not objs:
+        objs = sorted(Path(HOST_DIR / "target" / "wasm32-unknown-unknown" / "release" / "deps").glob("*.o"))
+    if not objs:
+        if tmp_dir:
+            shutil.rmtree(str(tmp_dir), ignore_errors=True)
         raise SystemExit("No host object file found")
     obj = objs[-1]
     dest = TARGETS_DIR / "host.wasm"
     print(f"  -> {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    obj.rename(dest)
+    shutil.copy2(str(obj), str(dest))
+    if tmp_dir:
+        shutil.rmtree(str(tmp_dir), ignore_errors=True)
 
 
 def bundle_platform() -> str:
