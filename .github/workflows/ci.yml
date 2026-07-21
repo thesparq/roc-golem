@@ -30,9 +30,10 @@ jobs:
         run: cargo install wasm-tools
 
       - name: Install Roc nightly
-        uses: roc-lang/setup-roc@v0.3.0
+        uses: roc-lang/setup-roc@cbe782d6f165b89c87d99f50a59ac4f5f73b4427
         with:
-          version: nightly
+          version: nightly-new-compiler
+          nightly-tag: nightly-2026-June-27-127861d
 
       - name: Build demo component
         run: bash build.sh
