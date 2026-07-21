@@ -2,38 +2,37 @@
 
 Write [Golem Cloud](https://golem.cloud) agents in [Roc](https://roc-lang.org).
 
-This is a Roc platform that compiles to a valid [Golem WASM component](https://component-model.dev). The platform handles all WIT type serialization, canonical ABI encoding, and memory management — Roc app code deals only with simple `Str` and `I32` types.
-
-## How it works
+A Roc platform that handles all WIT type serialization, canonical ABI encoding, and memory management — your app code deals with simple `Str` and `I32`.
 
 ```
-(Golem Runtime) → (Rust Host: WIT bridge + canonical ABI) → (Roc Platform: dispatch) → (Roc App: business logic)
+(Golem Runtime) → (Rust Host: WIT bridge + ABI) → (Roc Platform: dispatch) → (Your App: business logic)
 ```
 
-- **`host/`** — Rust crate (`no_std`, `wasm32-unknown-unknown`). Implements Golem guest exports, canonical ABI encoding, delegates to Roc.
-- **`platform/`** — Roc platform package. Declares `provides {}` matching the Rust host's `extern "C"` imports, dispatches to the app via `requires {}`.
-- **`app/`** — Your Roc agent. Implement the 6 required functions.
+## Using the platform
 
-## Requirements
-
-- [Roc nightly](https://roc-lang.org/install) (`release-fast-afef9119` or later)
-- [wasm-tools](https://github.com/bytecodealliance/wasm-tools) (`cargo install wasm-tools`)
-- Python 3 (for memory export fix)
-- Rust nightly + `wasm32-unknown-unknown` target (only if rebuilding the host)
-
-## Quick start
+Download the latest `roc-golem.tar.gz` from [Releases](https://github.com/<your-org>/roc-golem/releases), then extract and edit the app:
 
 ```bash
-# Build the example agent
+tar xzf roc-golem.tar.gz
+cd roc-golem
+
+# Edit app/main.roc with your agent logic
+# Then build:
 bash build.sh
 
 # Output: out/golem-component.wasm — a valid Golem component
 wasm-tools validate out/golem-component.wasm
 ```
 
-## App API
+Your app can reference this platform:
 
-Edit `app/main.roc` to implement your agent. The platform requires:
+```roc
+app [main, getAgentType, initialize, invoke, discoverTypes, save, load] {
+    pf: platform "../platform/main.roc"
+}
+```
+
+## App API
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -45,16 +44,33 @@ Edit `app/main.roc` to implement your agent. The platform requires:
 | `save` | `{} -> Str` | () → JSON snapshot payload |
 | `load` | `Str -> I32` | (snapshot) → 0=ok |
 
-## Platform API (for the platform developer)
+## Repo structure
 
-Edit `app/main.roc` for your agent. The `build.sh` script:
+| Path | Purpose |
+|------|---------|
+| `platform/main.roc` | Platform declaration + provides→requires dispatch |
+| `platform/targets/wasm32/host.wasm` | Pre-built Rust host binary |
+| `app/main.roc` | Demo agent — start here |
+| `host/src/lib.rs` | Rust host source (Golem exports + canonical ABI) |
+| `wit/` | WIT dependency files (golem 1.5.0 + wasi) |
+| `build.sh` | Full build pipeline |
+| `golem.yaml` | Golem app manifest |
+
+## Requirements
+
+- [Roc nightly](https://roc-lang.org/install) (`release-fast-afef9119` or later)
+- [wasm-tools](https://github.com/bytecodealliance/wasm-tools) (`cargo install wasm-tools`)
+- Python 3 (for memory export fix)
+- Rust nightly + `wasm32-unknown-unknown` (only if rebuilding the host)
+
+## Build pipeline
 
 1. Builds Rust host → wasm32 relocatable object
 2. Links host + platform + app via `roc build --target=wasm32`
 3. Fixes memory import → export (Roc imports memory from `env`)
 4. Embeds WIT metadata via `wasm-tools component embed`
-5. Wraps as a WASM component via `wasm-tools component new`
-6. Validates the output
+5. Wraps as WASM component via `wasm-tools component new`
+6. Validates output
 
 ## License
 
