@@ -1,0 +1,7 @@
+package roc-golem:agent;
+
+world agent {
+  export golem:api/save-snapshot@1.5.0;
+  export golem:api/load-snapshot@1.5.0;
+  export golem:agent/guest@1.5.0;
+}

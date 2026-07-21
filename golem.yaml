@@ -1,0 +1,15 @@
+manifestVersion: 1.5.0
+
+app: roc-golem
+
+environments:
+  local:
+    server: local
+
+build:
+  commands:
+    default:
+      - bash build.sh
+  artifacts:
+    wasm:
+      - out/golem-component.wasm

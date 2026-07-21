@@ -1,0 +1,62 @@
+package golem:api@1.5.0 {
+  interface host {
+    use golem:core/types@1.5.0.{promise-id};
+    use wasi:io/poll@0.2.12.{pollable};
+    use golem:core/types@1.5.0.{agent-id, uuid};
+
+    resource get-promise-result {
+      subscribe: func() -> pollable;
+      get: func() -> option<list<u8>>;
+    }
+
+    enum agent-status {
+      running,
+      idle,
+      suspended,
+      interrupted,
+      retrying,
+      failed,
+      exited,
+    }
+
+    record environment-id {
+      uuid: uuid,
+    }
+
+    record agent-metadata {
+      agent-id: agent-id,
+      args: list<string>,
+      env: list<tuple<string, string>>,
+      config: list<tuple<string, string>>,
+      status: agent-status,
+      component-revision: u64,
+      retry-count: u64,
+      environment-id: environment-id,
+    }
+
+    record snapshot {
+      payload: list<u8>,
+      mime-type: string,
+    }
+
+    create-promise: func() -> promise-id;
+
+    get-promise: func(promise-id: promise-id) -> get-promise-result;
+
+    complete-promise: func(promise-id: promise-id, data: list<u8>) -> bool;
+
+    get-self-metadata: func() -> agent-metadata;
+  }
+  interface save-snapshot {
+    use host.{snapshot};
+
+    save: func() -> snapshot;
+  }
+  interface load-snapshot {
+    use host.{snapshot};
+
+    load: func(snapshot: snapshot) -> result<_, string>;
+  }
+}
+
+

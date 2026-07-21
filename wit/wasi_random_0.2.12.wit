@@ -1,0 +1,10 @@
+package wasi:random@0.2.12 {
+  interface random {
+    get-random-u64: func() -> u64;
+  }
+  interface insecure-seed {
+    insecure-seed: func() -> tuple<u64, u64>;
+  }
+}
+
+

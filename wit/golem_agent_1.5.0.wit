@@ -1,0 +1,222 @@
+package golem:agent@1.5.0 {
+  interface common {
+    use golem:core/types@1.5.0.{data-schema};
+    use wasi:clocks/monotonic-clock@0.2.12.{duration};
+    use golem:core/types@1.5.0.{wit-type, component-id, data-value, value-and-type, agent-id, account-id};
+
+    record agent-constructor {
+      name: option<string>,
+      description: string,
+      prompt-hint: option<string>,
+      input-schema: data-schema,
+    }
+
+    variant http-method {
+      get,
+      head,
+      post,
+      put,
+      delete,
+      connect,
+      options,
+      trace,
+      patch,
+      custom(string),
+    }
+
+    enum system-variable {
+      agent-type,
+      agent-version,
+    }
+
+    record path-variable {
+      variable-name: string,
+    }
+
+    variant path-segment {
+      literal(string),
+      system-variable(system-variable),
+      path-variable(path-variable),
+      remaining-path-variable(path-variable),
+    }
+
+    record header-variable {
+      header-name: string,
+      variable-name: string,
+    }
+
+    record query-variable {
+      query-param-name: string,
+      variable-name: string,
+    }
+
+    record auth-details {
+      required: bool,
+    }
+
+    record cors-options {
+      allowed-patterns: list<string>,
+    }
+
+    record http-endpoint-details {
+      http-method: http-method,
+      path-suffix: list<path-segment>,
+      header-vars: list<header-variable>,
+      query-vars: list<query-variable>,
+      auth-details: option<auth-details>,
+      cors-options: cors-options,
+    }
+
+    record agent-method {
+      name: string,
+      description: string,
+      http-endpoint: list<http-endpoint-details>,
+      prompt-hint: option<string>,
+      input-schema: data-schema,
+      output-schema: data-schema,
+    }
+
+    record agent-dependency {
+      type-name: string,
+      description: option<string>,
+      %constructor: agent-constructor,
+      methods: list<agent-method>,
+    }
+
+    enum agent-mode {
+      durable,
+      ephemeral,
+    }
+
+    record http-mount-details {
+      path-prefix: list<path-segment>,
+      auth-details: option<auth-details>,
+      phantom-agent: bool,
+      cors-options: cors-options,
+      webhook-suffix: list<path-segment>,
+    }
+
+    variant snapshotting-config {
+      default,
+      periodic(duration),
+      every-n-invocation(u16),
+    }
+
+    variant snapshotting {
+      disabled,
+      enabled(snapshotting-config),
+    }
+
+    enum agent-config-source {
+      local,
+      secret,
+    }
+
+    record agent-config-declaration {
+      source: agent-config-source,
+      path: list<string>,
+      value-type: wit-type,
+    }
+
+    record agent-type {
+      type-name: string,
+      description: string,
+      source-language: string,
+      %constructor: agent-constructor,
+      methods: list<agent-method>,
+      dependencies: list<agent-dependency>,
+      mode: agent-mode,
+      http-mount: option<http-mount-details>,
+      snapshotting: snapshotting,
+      config: list<agent-config-declaration>,
+    }
+
+    record registered-agent-type {
+      agent-type: agent-type,
+      implemented-by: component-id,
+    }
+
+    variant agent-error {
+      invalid-input(string),
+      invalid-method(string),
+      invalid-type(string),
+      invalid-agent-id(string),
+      custom-error(value-and-type),
+    }
+
+    record typed-agent-config-value {
+      path: list<string>,
+      value: value-and-type,
+    }
+
+    record oidc-principal {
+      sub: string,
+      issuer: string,
+      email: option<string>,
+      name: option<string>,
+      email-verified: option<bool>,
+      given-name: option<string>,
+      family-name: option<string>,
+      picture: option<string>,
+      preferred-username: option<string>,
+      claims: string,
+    }
+
+    record agent-principal {
+      agent-id: agent-id,
+    }
+
+    record golem-user-principal {
+      account-id: account-id,
+    }
+
+    variant principal {
+      oidc(oidc-principal),
+      agent(agent-principal),
+      golem-user(golem-user-principal),
+      anonymous,
+    }
+  }
+  interface host {
+    use common.{registered-agent-type, data-value};
+    use golem:core/types@1.5.0.{uuid};
+    use common.{agent-error};
+    use wasi:io/poll@0.2.12.{pollable};
+    use common.{typed-agent-config-value};
+
+    resource wasm-rpc {
+      constructor(agent-type-name: string, %constructor: data-value, phantom-id: option<uuid>, agent-config: list<typed-agent-config-value>);
+      async-invoke-and-await: func(method-name: string, input: data-value) -> future-invoke-result;
+    }
+
+    resource future-invoke-result {
+      subscribe: func() -> pollable;
+      get: func() -> option<result<data-value, rpc-error>>;
+    }
+
+    variant rpc-error {
+      protocol-error(string),
+      denied(string),
+      not-found(string),
+      remote-internal-error(string),
+      remote-agent-error(agent-error),
+    }
+
+    get-agent-type: func(agent-type-name: string) -> option<registered-agent-type>;
+
+    parse-agent-id: func(agent-id: string) -> result<tuple<string, data-value, option<uuid>>, agent-error>;
+  }
+  interface guest {
+    use common.{agent-error, agent-type, data-value, principal};
+
+    initialize: func(agent-type: string, input: data-value, principal: principal) -> result<_, agent-error>;
+
+    invoke: func(method-name: string, input: data-value, principal: principal) -> result<data-value, agent-error>;
+
+    get-definition: func() -> agent-type;
+
+    discover-agent-types: func() -> result<list<agent-type>, agent-error>;
+  }
+}
+
+

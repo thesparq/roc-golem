@@ -1,0 +1,23 @@
+# Build output
+out/
+
+# Rust build artifacts
+host/target/
+
+# Roc output (stale builds)
+main.wasm
+
+# WASM debug output
+platform/targets/wasm32/*.wat
+
+# Editor temp files
+*~
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Agent config
+.claude
+

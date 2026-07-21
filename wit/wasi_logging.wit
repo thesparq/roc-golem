@@ -1,0 +1,16 @@
+package wasi:logging {
+  interface logging {
+    enum level {
+      trace,
+      debug,
+      info,
+      warn,
+      error,
+      critical,
+    }
+
+    log: func(level: level, context: string, message: string);
+  }
+}
+
+
