@@ -9,7 +9,7 @@ environments:
 build:
   commands:
     default:
-      - bash build.sh
+      - bash bundle.sh
   artifacts:
     wasm:
       - out/golem-component.wasm

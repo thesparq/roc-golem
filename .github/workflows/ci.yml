@@ -34,15 +34,17 @@ jobs:
         with:
           version: nightly-new-compiler
 
-      - name: Build demo component
-        run: bash build.sh
+      - name: Build platform bundle + demo component
+        run: bash bundle.sh
 
-      - name: Validate component
+      - name: Validate demo component
         run: wasm-tools validate out/golem-component.wasm
 
-      - name: Upload demo component
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: golem-component
-          path: out/golem-component.wasm
+          name: build-artifacts
+          path: |
+            out/golem-component.wasm
+            out/platform-bundle.tar.zst
           if-no-files-found: error

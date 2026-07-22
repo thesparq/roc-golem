@@ -29,8 +29,11 @@ jobs:
         with:
           version: nightly-new-compiler
 
-      - name: Build & validate demo component
-        run: bash build.sh
+      - name: Build platform bundle + demo component
+        run: bash bundle.sh
+
+      - name: Validate
+        run: wasm-tools validate out/golem-component.wasm
 
       - name: Create release
         env:
@@ -41,4 +44,5 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "$VERSION" \
             --generate-notes \
-            out/golem-component.wasm
+            out/golem-component.wasm \
+            out/platform-bundle.tar.zst
