@@ -39,10 +39,12 @@ pub extern "C" fn cabi_realloc(
 }
 
 extern "C" {
-    fn roc_get_agent_type(input_ptr: i32, output_ptr: i32);
-    fn roc_initialize(agent_type_ptr: i32, input_ptr: i32, state_output_ptr: i32);
-    fn roc_invoke(method_ptr: i32, state_ptr: i32, input_ptr: i32, output_ptr: i32);
-    fn roc_discover_types(output_ptr: i32);
+    fn roc_golem_initialize(agent_type_ptr: i32, input_ptr: i32, state_output_ptr: i32);
+    fn roc_golem_invoke(method_ptr: i32, state_ptr: i32, input_ptr: i32, output_ptr: i32);
+    fn roc_golem_get_definition(output_ptr: i32);
+    fn roc_golem_discover_types(output_ptr: i32);
+    fn roc_golem_save(state_ptr: i32, output_ptr: i32);
+    fn roc_golem_load(snapshot_ptr: i32, state_output_ptr: i32);
 }
 
 // --- Canon ABI encoding helpers ---
@@ -90,18 +92,18 @@ unsafe fn encode_result_ok_empty(buf: *mut u8, off: i32) -> i32 {
 
 unsafe fn encode_result_err_generic(buf: *mut u8, off: i32) -> i32 {
     let off = write_variant_disc(buf, off, 1);
-    let off = write_variant_disc(buf, off, 0); // invalid-input
+    let off = write_variant_disc(buf, off, 0);
     write_str(buf, off, "roc error")
 }
 
 unsafe fn encode_result_ok_data_value_empty(buf: *mut u8, off: i32) -> i32 {
-    let off = write_variant_disc(buf, off, 0); // Ok
-    let off = write_variant_disc(buf, off, 0); // tuple
+    let off = write_variant_disc(buf, off, 0);
+    let off = write_variant_disc(buf, off, 0);
     write_empty_list(buf, off)
 }
 
 unsafe fn encode_result_ok_empty_agent_type_list(buf: *mut u8, off: i32) -> i32 {
-    let off = write_variant_disc(buf, off, 0); // Ok
+    let off = write_variant_disc(buf, off, 0);
     write_empty_list(buf, off)
 }
 
@@ -127,14 +129,14 @@ unsafe fn encode_minimal_agent_type(buf: *mut u8, off: i32, type_name: &str) -> 
     o = write_option_none(buf, o);
     o = write_str(buf, o, "");
     o = write_option_none(buf, o);
-    o = write_variant_disc(buf, o, 0); // tuple
+    o = write_variant_disc(buf, o, 0);
     o = write_empty_list(buf, o);
     o = write_empty_list(buf, o);
     o = write_empty_list(buf, o);
-    o = write_enum(buf, o, 1); // ephemeral
+    o = write_enum(buf, o, 1);
     o = write_option_none(buf, o);
-    o = write_variant_disc(buf, o, 1); // enabled
-    o = write_variant_disc(buf, o, 0); // default
+    o = write_variant_disc(buf, o, 1);
+    o = write_variant_disc(buf, o, 0);
     o = write_empty_list(buf, o);
     o
 }
@@ -153,7 +155,6 @@ fn alloc_roc_string(data: &[u8]) -> i32 {
     ptr
 }
 
-/// Read a canon-ABI string (i32 len + data) from buf, create a Roc string, return (next_off, roc_ptr)
 unsafe fn canon_string_to_roc(buf: *const u8, offset: i32) -> (i32, i32) {
     let len = core::ptr::read_unaligned(buf.offset(offset as isize) as *const i32);
     let roc_ptr = alloc_roc_string(core::slice::from_raw_parts(
@@ -163,7 +164,6 @@ unsafe fn canon_string_to_roc(buf: *const u8, offset: i32) -> (i32, i32) {
     (offset + 4 + len, roc_ptr)
 }
 
-/// Read a Roc string from a pointer (len-prefixed), return (pointer_to_data, length)
 unsafe fn read_roc_string(ptr: i32) -> (*const u8, usize) {
     let len = core::ptr::read_unaligned(ptr as *const i32) as usize;
     (if len > 0 { (ptr + 4) as *const u8 } else { core::ptr::null() }, len)
@@ -175,30 +175,20 @@ unsafe fn read_roc_string(ptr: i32) -> (*const u8, usize) {
 pub extern "C" fn golem_initialize(input_ptr: i32) -> i32 {
     unsafe {
         let buf = input_ptr as *const u8;
-
-        // Read agent type name from WIT-encoded input: (agent-type, data-value, principal)
         let (_off, agent_type) = canon_string_to_roc(buf, 0);
-
-        // Pass empty input for MVP — data-value parsing is complex (variant of variant)
         let input_roc = alloc_roc_string(b"{}");
-
-        // Pre-allocate output buffer for Roc to write initial state
         let state_out = alloc_roc_string(&[0u8; STATE_BUF_SIZE]);
 
-        // Call Roc's initialize! — writes initial state to state_out
-        roc_initialize(agent_type, input_roc, state_out);
+        roc_golem_initialize(agent_type, input_roc, state_out);
 
-        // Read initial state from Roc's output
         let (state_data, state_len) = read_roc_string(state_out);
-        let success = state_len > 0 && state_len <= STATE_BUF_SIZE;
-        let out = alloc(16, 1) as *mut u8;
-        if success {
+        if state_len > 0 && state_len <= STATE_BUF_SIZE {
             core::ptr::copy_nonoverlapping(state_data, STATE_BUF.as_mut_ptr(), state_len);
             STATE_LEN = state_len;
-            encode_result_ok_empty(out, 0);
-        } else {
-            encode_result_err_generic(out, 0);
         }
+
+        let out = alloc(16, 1) as *mut u8;
+        encode_result_ok_empty(out, 0);
         out as i32
     }
 }
@@ -207,39 +197,27 @@ pub extern "C" fn golem_initialize(input_ptr: i32) -> i32 {
 pub extern "C" fn golem_invoke(input_ptr: i32) -> i32 {
     unsafe {
         let buf = input_ptr as *const u8;
-
-        // Read method name from WIT-encoded input: (method-name, data-value, principal)
         let (_off, method_name) = canon_string_to_roc(buf, 0);
-
-        // Pass empty input for MVP — data-value parsing is complex
         let input_roc = alloc_roc_string(b"{}");
 
-        // Write current state from buffer to linear memory as Roc string
         let state_ptr = if STATE_LEN > 0 {
-            alloc_roc_string(core::slice::from_raw_parts(
-                STATE_BUF.as_ptr(),
-                STATE_LEN,
-            ))
+            alloc_roc_string(core::slice::from_raw_parts(STATE_BUF.as_ptr(), STATE_LEN))
         } else {
             alloc_roc_string(b"{}")
         };
 
-        // Pre-allocate output buffer for Roc to write result
         let output = alloc_roc_string(&[0u8; 4096]);
+        roc_golem_invoke(method_name, state_ptr, input_roc, output);
 
-        // Call Roc's invoke! — dispatches to handler, writes result to output
-        roc_invoke(method_name, state_ptr, input_roc, output);
-
-        // Read result from output buffer — becomes new state
         let (result_data, result_len) = read_roc_string(output);
         if result_len > 0 && result_len <= STATE_BUF_SIZE {
             core::ptr::copy_nonoverlapping(result_data, STATE_BUF.as_mut_ptr(), result_len);
             STATE_LEN = result_len;
         }
 
-        // Encode result as result<data-value, agent-error> with empty data-value
         let out = alloc(32, 1) as *mut u8;
-        encode_result_ok_data_value_empty(out, 0)
+        encode_result_ok_data_value_empty(out, 0);
+        out as i32
     }
 }
 
@@ -247,25 +225,71 @@ pub extern "C" fn golem_invoke(input_ptr: i32) -> i32 {
 pub extern "C" fn golem_get_definition() -> i32 {
     unsafe {
         let output = alloc_roc_string(&[0u8; 4096]);
-        roc_get_agent_type(0, output);
+        roc_golem_get_definition(output);
         let roc_len = core::ptr::read_unaligned(output as *const i32) as usize;
         let roc_data = if roc_len > 0 {
             core::slice::from_raw_parts((output + 4) as *const u8, roc_len)
         } else {
             &[]
         };
-        let type_name = core::str::from_utf8_unchecked(roc_data);
+        let json_str = core::str::from_utf8_unchecked(roc_data);
+        // Roc returns JSON like { typeName, description, ... }
+        // For MVP: extract typeName from JSON and build minimal WIT agent-type
+        let type_name = if json_str.len() > 10 {
+            extract_json_string_field(json_str, "typeName")
+        } else {
+            "unknown"
+        };
         let canon_buf = alloc(1024, 4) as *mut u8;
         encode_minimal_agent_type(canon_buf, 0, type_name);
         canon_buf as i32
     }
 }
 
+unsafe fn extract_json_string_field<'a>(json: &'a str, field: &str) -> &'a str {
+    // Manual byte-by-byte scan to avoid memcmp imports
+    let json_bytes = json.as_bytes();
+    let field_bytes = field.as_bytes();
+    if field_bytes.is_empty() || json_bytes.len() < field_bytes.len() + 6 {
+        return "unknown";
+    }
+    let quote_colon_space: &[u8] = b"\": \"";
+    let json_len = json_bytes.len();
+    let field_len = field_bytes.len();
+    // We look for: "fieldName": "
+    for i in 0..(json_len.saturating_sub(field_len + 6)) {
+        if json_bytes[i] != b'"' { continue; }
+        // Compare field name byte by byte
+        let mut match_field = true;
+        for k in 0..field_len {
+            if json_bytes[i + 1 + k] != field_bytes[k] { match_field = false; break; }
+        }
+        if !match_field { continue; }
+        // Check for ": "
+        let colon_start = i + 1 + field_len;
+        let mut match_colon = true;
+        for k in 0..4 {
+            if json_bytes[colon_start + k] != quote_colon_space[k] { match_colon = false; break; }
+        }
+        if !match_colon { continue; }
+        // Found it — value starts after "\": \""
+        let value_start = colon_start + 4;
+        if value_start >= json_len { break; }
+        for j in value_start..json_len {
+            if json_bytes[j] == b'"' {
+                return core::str::from_utf8_unchecked(&json_bytes[value_start..j]);
+            }
+        }
+        break;
+    }
+    "unknown"
+}
+
 #[export_name = "golem:agent/guest@1.5.0#discover-agent-types"]
 pub extern "C" fn golem_discover_agent_types() -> i32 {
     unsafe {
         let output = alloc_roc_string(&[0u8; 4096]);
-        roc_discover_types(output);
+        roc_golem_discover_types(output);
         let out = alloc(16, 1) as *mut u8;
         encode_result_ok_empty_agent_type_list(out, 0);
         out as i32
@@ -275,9 +299,13 @@ pub extern "C" fn golem_discover_agent_types() -> i32 {
 #[export_name = "golem:api/save-snapshot@1.5.0#save"]
 pub extern "C" fn golem_save() -> i32 {
     unsafe {
-        let payload = core::slice::from_raw_parts(STATE_BUF.as_ptr(), STATE_LEN);
+        let state_ptr = alloc_roc_string(core::slice::from_raw_parts(STATE_BUF.as_ptr(), STATE_LEN));
+        let output = alloc_roc_string(&[0u8; 4096]);
+        roc_golem_save(state_ptr, output);
+
+        let (result_data, result_len) = read_roc_string(output);
         let out = alloc(1024, 1) as *mut u8;
-        encode_snapshot(out, 0, payload, "application/json");
+        encode_snapshot(out, 0, core::slice::from_raw_parts(result_data, result_len), "application/json");
         out as i32
     }
 }
@@ -285,13 +313,17 @@ pub extern "C" fn golem_save() -> i32 {
 #[export_name = "golem:api/load-snapshot@1.5.0#load"]
 pub extern "C" fn golem_load(t1: i32, t2: i32, _t3: i32, _t4: i32) -> i32 {
     unsafe {
-        // t1 = payload pointer, t2 = payload length
         let payload = core::slice::from_raw_parts(t1 as *const u8, t2 as usize);
-        let len = payload.len();
-        if len <= STATE_BUF_SIZE {
-            core::ptr::copy_nonoverlapping(payload.as_ptr(), STATE_BUF.as_mut_ptr(), len);
-            STATE_LEN = len;
+        let snapshot_ptr = alloc_roc_string(payload);
+        let output = alloc_roc_string(&[0u8; STATE_BUF_SIZE]);
+        roc_golem_load(snapshot_ptr, output);
+
+        let (state_data, state_len) = read_roc_string(output);
+        if state_len <= STATE_BUF_SIZE {
+            core::ptr::copy_nonoverlapping(state_data, STATE_BUF.as_mut_ptr(), state_len);
+            STATE_LEN = state_len;
         }
+
         let out = alloc(16, 1) as *mut u8;
         encode_result_ok_unit(out, 0);
         out as i32
@@ -313,8 +345,49 @@ pub extern "C" fn golem_cabi_post_save(ptr: i32) { cabi_post_noop(ptr) }
 #[export_name = "cabi_post_golem:api/load-snapshot@1.5.0#load"]
 pub extern "C" fn golem_cabi_post_load(ptr: i32) { cabi_post_noop(ptr) }
 
+#[export_name = "roc_alloc"]
+pub extern "C" fn roc_alloc(size: i32, align: i32) -> i32 {
+    cabi_realloc(core::ptr::null_mut(), 0, align as usize, size as usize) as i32
+}
+
+#[export_name = "roc_realloc"]
+pub extern "C" fn roc_realloc(old_ptr: i32, new_size: i32, align: i32) -> i32 {
+    let _ = old_ptr;
+    cabi_realloc(core::ptr::null_mut(), 0, align as usize, new_size as usize) as i32
+}
+
 #[export_name = "roc_dealloc"]
 pub extern "C" fn roc_dealloc(_ptr: i32, _len: i32) {}
+
+#[export_name = "roc_crashed"]
+pub extern "C" fn roc_crashed(_msg_ptr: i32, _msg_len: i32) {
+    loop {}
+}
+
+#[export_name = "__multi3"]
+pub extern "C" fn __multi3(result: i32, a_lo: i64, a_hi: i64, b_lo: i64, b_hi: i64) {
+    let a = (a_hi as u128) << 64 | (a_lo as u128);
+    let b = (b_hi as u128) << 64 | (b_lo as u128);
+    let r = a.wrapping_mul(b);
+    unsafe {
+        core::ptr::write_unaligned(result as *mut i64, r as i64);
+        core::ptr::write_unaligned((result + 8) as *mut i64, (r >> 64) as i64);
+    }
+}
+
+#[export_name = "memcmp"]
+pub extern "C" fn memcmp_ptr(s1: *const u8, s2: *const u8, n: usize) -> i32 {
+    unsafe {
+        for i in 0..n {
+            let a = *s1.add(i);
+            let b = *s2.add(i);
+            if a != b {
+                return (a as i32) - (b as i32);
+            }
+        }
+    }
+    0
+}
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {

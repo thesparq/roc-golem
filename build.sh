@@ -39,30 +39,21 @@ cp "$HOST_OBJ" "$TARGETS_DIR/host.wasm"
 echo "  -> host object placed at $TARGETS_DIR/host.wasm"
 
 # Step 3: Build Roc app → linked WASM (host + app)
-echo "==> Building Roc app (--target=wasm32 --opt=dev)"
-roc build --target=wasm32 --opt=dev "$APP_DIR/main.roc" \
+echo "==> Building Roc app (--target=wasm32 --opt=speed)"
+roc build --target=wasm32 --opt=speed "$APP_DIR/main.roc" \
   --output="$TMPDIR/stage1.wasm"
 
-# Step 4: Fix memory (import → export)
-# All imports must come before non-imports in WASM. We remove the memory import
-# and insert a memory export after all remaining imports.
-echo "==> Fixing memory & roc_dealloc"
-wasm-tools print "$TMPDIR/stage1.wasm" > "$TMPDIR/stage1.wat"
-python3 "$ROOT/scripts/fix_wasm.py" "$TMPDIR/stage1.wat"
-
-wasm-tools parse "$TMPDIR/stage1.wat" -o "$TMPDIR/stage2.wasm"
-
-# Step 5: Embed WIT metadata
+# Step 4: Embed WIT metadata
 echo "==> Embedding WIT metadata"
-wasm-tools component embed "$WIT_DIR" "$TMPDIR/stage2.wasm" \
-  -o "$TMPDIR/stage3.wasm"
+wasm-tools component embed "$WIT_DIR" "$TMPDIR/stage1.wasm" \
+  -o "$TMPDIR/stage2.wasm"
 
-# Step 6: Wrap as WASM component
+# Step 5: Wrap as WASM component
 echo "==> Creating component"
-wasm-tools component new "$TMPDIR/stage3.wasm" \
+wasm-tools component new "$TMPDIR/stage2.wasm" \
   -o "$OUTDIR/golem-component.wasm"
 
-# Step 7: Validate
+# Step 6: Validate
 echo "==> Validating"
 wasm-tools validate "$OUTDIR/golem-component.wasm"
 
