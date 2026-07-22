@@ -40,7 +40,7 @@ pub extern "C" fn cabi_realloc(
 
 extern "C" {
     fn roc_golem_initialize(agent_type_ptr: i32, input_ptr: i32, state_output_ptr: i32);
-    fn roc_golem_invoke(method_ptr: i32, state_ptr: i32, input_ptr: i32, output_ptr: i32);
+    fn roc_golem_invoke(ret_area: i32, method_ptr: i32, state_ptr: i32, input_ptr: i32, output_ptr: i32);
     fn roc_golem_get_definition(output_ptr: i32);
     fn roc_golem_discover_types(output_ptr: i32);
     fn roc_golem_save(state_ptr: i32, output_ptr: i32);
@@ -206,8 +206,9 @@ pub extern "C" fn golem_invoke(input_ptr: i32) -> i32 {
             alloc_roc_string(b"{}")
         };
 
+        let ret_area = alloc(16, 4);
         let output = alloc_roc_string(&[0u8; 4096]);
-        roc_golem_invoke(method_name, state_ptr, input_roc, output);
+        roc_golem_invoke(ret_area, method_name, state_ptr, input_roc, output);
 
         let (result_data, result_len) = read_roc_string(output);
         if result_len > 0 && result_len <= STATE_BUF_SIZE {
