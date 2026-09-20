@@ -22,36 +22,35 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.5.2/VU_st80mYniYXX8EqN4JHtwZEiGju08tS1y_opryOqE.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.5.3/eeMpVwjUcEouRIA_ZvHSP4dvTO-GaNheHL1lUf91YLs.tar.zst",
 }
-
-
 
 import pf.Golem exposing [Agent, defineAgent]
 
 State : { count : I64 }
 
-agent : Agent State
-agent = defineAgent {
-    init: |_config| Ok { count: 0 },
+agent : Agent(State)
+agent = defineAgent({
+    init: |_config| Ok({ count: 0 }),
     handleMessage: |state, msg|
-        when msg is
-            "increment" -> Ok { state: { count: state.count + 1 }, response: "Incremented" }
-            _ -> Ok { state, response: "Count is ${Num.to_str state.count}" },
-    handleToolCall: |state, call|
-        Ok {
-            state,
-            result: { id: call.id, success: Bool.true, output: "{\"count\":${Num.to_str state.count}}" },
+        match msg {
+            "increment" => Ok({ state: { count: state.count + 1 }, response: "Incremented" }),
+            _ => Ok({ state, response: "Count is ${Num.to_str(state.count)}" }),
         },
+    handleToolCall: |state, call|
+        Ok({
+            state,
+            result: { id: call.id, success: Bool.true, output: "{\"count\":${Num.to_str(state.count)}}" },
+        }),
     metadata: {
         name: "counter-agent",
         version: "1.0.0",
         description: "Durable Roc Counter Agent on Golem Cloud",
         tools: [],
     },
-    serializeState: |state| "{\"count\":${Num.to_str state.count}}",
-    deserializeState: |_json| Ok { count: 0 },
-}
+    serializeState: |state| "{\"count\":${Num.to_str(state.count)}}",
+    deserializeState: |_json| Ok({ count: 0 }),
+})
 ```
 
 For local platform development, you can point to the local path:
