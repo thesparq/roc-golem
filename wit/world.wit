@@ -1,0 +1,114 @@
+package golem:agent-platform@1.0.0;
+
+interface agent-types {
+    record tool-parameter {
+        name: string,
+        description: string,
+        param-type: string,
+        required: bool,
+    }
+
+    record tool-definition {
+        name: string,
+        description: string,
+        parameters: list<tool-parameter>,
+    }
+
+    record agent-metadata {
+        name: string,
+        version: string,
+        description: string,
+        tools: list<tool-definition>,
+    }
+
+    record tool-call {
+        id: string,
+        name: string,
+        arguments-json: string,
+    }
+
+    record tool-result {
+        id: string,
+        success: bool,
+        output-json: string,
+    }
+}
+
+interface agent-api {
+    use agent-types.{agent-metadata, tool-call, tool-result};
+
+    /// Initialize the agent with configuration JSON/string
+    init: func(config: string) -> result<string, string>;
+
+    /// Handle a generic message (chat, command, or event)
+    handle-message: func(message: string) -> result<string, string>;
+
+    /// Handle a specific tool invocation
+    handle-tool-call: func(call: tool-call) -> result<tool-result, string>;
+
+    /// Get current serialized state for inspection or snapshotting
+    get-state: func() -> result<string, string>;
+
+    /// Get metadata and exposed tool definitions
+    get-metadata: func() -> agent-metadata;
+}
+
+interface host-api {
+    enum log-level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    enum persistence-mode {
+        persist-nothing,
+        persist-state-only,
+        persist-everything,
+    }
+
+    /// Log a message through Golem/WASI host logging
+    log: func(level: log-level, message: string);
+
+    /// Get current worker ID / URN
+    get-worker-id: func() -> string;
+
+    /// Durable worker-to-worker RPC call
+    rpc-invoke: func(target-worker: string, function-name: string, payload: string) -> result<string, string>;
+
+    /// Configure persistence mode for durable execution
+    set-persistence-mode: func(mode: persistence-mode);
+
+    /// Make outgoing HTTP request
+    http-request: func(request-json: string) -> result<string, string>;
+}
+
+interface websocket-api {
+    /// Connect to a WebSocket endpoint. Returns connection handle or error
+    connect: func(url: string) -> result<u32, string>;
+
+    /// Send text message over WebSocket connection
+    send: func(handle: u32, message: string) -> result<_, string>;
+
+    /// Receive text message from WebSocket connection
+    receive: func(handle: u32) -> result<string, string>;
+
+    /// Close WebSocket connection
+    close: func(handle: u32) -> result<_, string>;
+}
+
+interface timer-api {
+    /// Sleep for duration in milliseconds (durable execution aware)
+    sleep-millis: func(millis: u64);
+
+    /// Get current timestamp in milliseconds
+    now-millis: func() -> u64;
+}
+
+world golem-agent {
+    import host-api;
+    import websocket-api;
+    import timer-api;
+    export agent-api;
+}

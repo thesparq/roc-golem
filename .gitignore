@@ -1,0 +1,11 @@
+target/
+host/target/
+build/
+*.wasm
+*.tar.gz
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+.DS_Store

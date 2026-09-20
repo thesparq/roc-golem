@@ -1,0 +1,19 @@
+[package]
+name = "roc-golem-host"
+version = "0.1.0"
+edition = "2021"
+description = "Rust Host translation layer for Roc Golem Cloud platform"
+authors = ["Roc Golem Platform Contributors"]
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen = { version = "0.36.0", features = ["macros", "realloc"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
