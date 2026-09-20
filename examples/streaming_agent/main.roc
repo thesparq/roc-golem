@@ -1,21 +1,14 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [
-    Agent,
-    defineAgent,
-    websocketConnect,
-    websocketSend,
-    websocketReceive,
-    websocketClose,
-]
+import pf.Golem exposing [Agent, defineAgent]
 import pf.Types exposing [ToolCall, ToolResult]
 
 # Agent State
 State : {
     connected : Bool,
     handle : U32,
-    messagesSent : List Str,
-    messagesReceived : List Str,
+    sent : U64,
+    received : U64,
 }
 
 agent : Agent State
@@ -24,8 +17,8 @@ agent = defineAgent {
         Ok {
             connected: Bool.false,
             handle: 0u32,
-            messagesSent: [],
-            messagesReceived: [],
+            sent: 0u64,
+            received: 0u64,
         },
 
     handleMessage: |state, message|
@@ -40,14 +33,13 @@ agent = defineAgent {
                 statusStr = if state.connected then "connected" else "disconnected"
                 Ok {
                     state,
-                    response: "WebSocket is ${statusStr}. Sent ${Num.toStr (List.len state.messagesSent)}, Received ${Num.toStr (List.len state.messagesReceived)}",
+                    response: "WebSocket is ${statusStr}. Sent ${Num.toStr state.sent}, Received ${Num.toStr state.received}",
                 }
 
             _ ->
                 if state.connected then
-                    nextSent = List.append state.messagesSent message
                     Ok {
-                        state: { state & messagesSent: nextSent },
+                        state: { state & sent: state.sent + 1u64 },
                         response: "Queued message for WebSocket: ${message}",
                     }
                 else
@@ -64,7 +56,7 @@ agent = defineAgent {
                     result: {
                         id: toolCall.id,
                         success: Bool.true,
-                        output: "{\"status\": \"stream_active\", \"sent_count\": ${Num.toStr (List.len state.messagesSent)}}",
+                        output: "{\"status\": \"stream_active\", \"sent_count\": ${Num.toStr state.sent}}",
                     },
                 }
 
@@ -100,7 +92,7 @@ agent = defineAgent {
 
     serializeState: |state|
         connStr = if state.connected then "true" else "false"
-        "{\"connected\":${connStr},\"handle\":${Num.toStr state.handle},\"sent\":${Num.toStr (List.len state.messagesSent)}}",
+        "{\"connected\":${connStr},\"handle\":${Num.toStr state.handle},\"sent\":${Num.toStr state.sent},\"received\":${Num.toStr state.received}}",
 
     deserializeState: |stateJson|
         connected =
@@ -115,10 +107,27 @@ agent = defineAgent {
                         Err _ -> 0u32
 
                 Err _ -> 0u32
+        sent =
+            when Str.splitFirst stateJson "\"sent\":" is
+                Ok { after } ->
+                    when Str.splitFirst after "," is
+                        Ok { before } -> Str.toU64 (Str.trim before) |> Result.withDefault 0u64
+                        Err _ -> 0u64
+
+                Err _ -> 0u64
+        received =
+            when Str.splitFirst stateJson "\"received\":" is
+                Ok { after } ->
+                    cleaned = Str.trim after
+                    when Str.splitFirst cleaned "}" is
+                        Ok { before } -> Str.toU64 (Str.trim before) |> Result.withDefault 0u64
+                        Err _ -> 0u64
+
+                Err _ -> 0u64
         Ok {
             connected,
             handle,
-            messagesSent: [],
-            messagesReceived: [],
+            sent,
+            received,
         },
 }

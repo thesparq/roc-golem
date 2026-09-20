@@ -6,35 +6,26 @@ import pf.Types exposing [ToolCall, ToolResult]
 # Agent State
 State : {
     count : I64,
-    history : List Str,
 }
 
 agent : Agent State
 agent = defineAgent {
     init: |_config|
-        Ok { count: 0, history: [] },
+        Ok { count: 0 },
 
     handleMessage: |state, message|
         when message is
             "increment" ->
                 nextCount = state.count + 1
-                nextState = {
-                    count: nextCount,
-                    history: List.append state.history "increment",
-                }
                 Ok {
-                    state: nextState,
+                    state: { count: nextCount },
                     response: "Counter incremented to ${Num.toStr nextCount}",
                 }
 
             "decrement" ->
                 nextCount = state.count - 1
-                nextState = {
-                    count: nextCount,
-                    history: List.append state.history "decrement",
-                }
                 Ok {
-                    state: nextState,
+                    state: { count: nextCount },
                     response: "Counter decremented to ${Num.toStr nextCount}",
                 }
 
@@ -98,5 +89,6 @@ agent = defineAgent {
                         Err _ -> 0
 
                 Err _ -> 0
-        Ok { count, history: [] },
+        Ok { count },
 }
+

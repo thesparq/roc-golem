@@ -1,11 +1,34 @@
+#[cfg(feature = "stub-guest")]
 pub mod guest_bridge;
 pub mod roc_std;
 
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
 use core::ptr;
-use guest_bridge::*;
 use roc_std::{RocResult, RocStr};
+
+#[cfg(feature = "stub-guest")]
+use guest_bridge::*;
+
+#[cfg(not(feature = "stub-guest"))]
+extern "C" {
+    pub fn roc__main_init_for_host_1_exposed_generic(
+        config: *mut RocStr,
+        out: *mut RocResult<RocStr, RocStr>,
+    );
+    pub fn roc__main_handle_message_for_host_1_exposed_generic(
+        state: *mut RocStr,
+        message: *mut RocStr,
+        out: *mut RocResult<RocStr, RocStr>,
+    );
+    pub fn roc__main_handle_tool_call_for_host_1_exposed_generic(
+        state: *mut RocStr,
+        tool_call_json: *mut RocStr,
+        out: *mut RocResult<RocStr, RocStr>,
+    );
+    pub fn roc__main_metadata_for_host_1_exposed_generic(out: *mut RocStr);
+}
+
 
 // Generate WIT bindings for the golem-agent world
 wit_bindgen::generate!({
