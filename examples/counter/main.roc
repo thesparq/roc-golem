@@ -86,10 +86,17 @@ agent = defineAgent {
     },
 
     serializeState: |state|
-        """
-        {"count":${Num.toStr state.count}}
-        """,
+        "{\"count\":${Num.toStr state.count}}",
 
-    deserializeState: |_stateJson|
-        Ok { count: 0, history: [] },
+    deserializeState: |stateJson|
+        count =
+            when Str.splitFirst stateJson "\"count\":" is
+                Ok { after } ->
+                    cleaned = Str.trim after
+                    when Str.splitFirst cleaned "}" is
+                        Ok { before } -> Str.toI64 (Str.trim before) |> Result.withDefault 0
+                        Err _ -> 0
+
+                Err _ -> 0
+        Ok { count, history: [] },
 }

@@ -7,11 +7,21 @@ use core::str;
 
 use std::alloc::{alloc, dealloc, realloc};
 
-/// Standard Roc Memory Allocator exported symbols for Roc ABI
+const HEADER_SIZE: usize = mem::size_of::<usize>();
+
+/// Standard Roc Memory Allocator exported symbols for Roc ABI.
+/// Uses a prefix header to store allocation size, ensuring roc_dealloc always uses the exact Layout.
 #[no_mangle]
 pub unsafe extern "C" fn roc_alloc(size: usize, alignment: u32) -> *mut u8 {
-    let layout = Layout::from_size_align_unchecked(size, alignment as usize);
-    alloc(layout)
+    let align = (alignment as usize).max(mem::align_of::<usize>());
+    let total_size = HEADER_SIZE + size;
+    let layout = Layout::from_size_align_unchecked(total_size, align);
+    let ptr = alloc(layout);
+    if ptr.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    *(ptr as *mut usize) = size;
+    ptr.add(HEADER_SIZE)
 }
 
 #[no_mangle]
@@ -21,14 +31,33 @@ pub unsafe extern "C" fn roc_realloc(
     old_size: usize,
     alignment: u32,
 ) -> *mut u8 {
-    let old_layout = Layout::from_size_align_unchecked(old_size, alignment as usize);
-    realloc(c_ptr, old_layout, new_size)
+    if c_ptr.is_null() {
+        return roc_alloc(new_size, alignment);
+    }
+    let align = (alignment as usize).max(mem::align_of::<usize>());
+    let ptr = c_ptr.sub(HEADER_SIZE);
+    let old_total = HEADER_SIZE + old_size;
+    let new_total = HEADER_SIZE + new_size;
+    let old_layout = Layout::from_size_align_unchecked(old_total, align);
+    let new_ptr = realloc(ptr, old_layout, new_total);
+    if new_ptr.is_null() {
+        let new_layout = Layout::from_size_align_unchecked(new_total, align);
+        std::alloc::handle_alloc_error(new_layout);
+    }
+    *(new_ptr as *mut usize) = new_size;
+    new_ptr.add(HEADER_SIZE)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn roc_dealloc(c_ptr: *mut u8, alignment: u32) {
-    let layout = Layout::from_size_align_unchecked(1, alignment as usize);
-    dealloc(c_ptr, layout);
+    if !c_ptr.is_null() {
+        let align = (alignment as usize).max(mem::align_of::<usize>());
+        let ptr = c_ptr.sub(HEADER_SIZE);
+        let size = *(ptr as *const usize);
+        let total_size = HEADER_SIZE + size;
+        let layout = Layout::from_size_align_unchecked(total_size, align);
+        dealloc(ptr, layout);
+    }
 }
 
 #[no_mangle]
@@ -206,14 +235,6 @@ impl<T> RocList<T> {
         }
     }
 
-    pub fn from_vec(mut v: Vec<T>) -> Self {
-        let len = v.len();
-        let capacity = v.capacity();
-        let ptr = v.as_mut_ptr();
-        mem::forget(v);
-        Self { ptr, len, capacity }
-    }
-
     pub fn as_slice(&self) -> &[T] {
         if self.ptr.is_null() || self.len == 0 {
             &[]
@@ -228,16 +249,6 @@ impl<T> RocList<T> {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
-    }
-}
-
-impl<T> Drop for RocList<T> {
-    fn drop(&mut self) {
-        if !self.ptr.is_null() && self.capacity > 0 {
-            unsafe {
-                let _ = Vec::from_raw_parts(self.ptr, self.len, self.capacity);
-            }
-        }
     }
 }
 

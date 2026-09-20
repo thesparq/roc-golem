@@ -34,12 +34,16 @@ agent = defineAgent {
                 }
 
             "echo" ->
+                escapedArgs =
+                    toolCall.arguments
+                    |> Str.replaceEach "\\" "\\\\"
+                    |> Str.replaceEach "\"" "\\\""
                 Ok {
                     state: { invocations: nextInvocations, lastTool: "echo" },
                     result: {
                         id: toolCall.id,
                         success: Bool.true,
-                        output: "{\"echo\": \"${toolCall.arguments}\"}",
+                        output: "{\"echo\": \"${escapedArgs}\"}",
                     },
                 }
 
@@ -86,10 +90,24 @@ agent = defineAgent {
     },
 
     serializeState: |state|
-        """
-        {"invocations":${Num.toStr state.invocations},"lastTool":"${state.lastTool}"}
-        """,
+        "{\"invocations\":${Num.toStr state.invocations},\"lastTool\":\"${state.lastTool}\"}",
 
-    deserializeState: |_stateJson|
-        Ok { invocations: 0, lastTool: "none" },
+    deserializeState: |stateJson|
+        invocations =
+            when Str.splitFirst stateJson "\"invocations\":" is
+                Ok { after } ->
+                    when Str.splitFirst after "," is
+                        Ok { before } -> Str.toI64 (Str.trim before) |> Result.withDefault 0
+                        Err _ -> 0
+
+                Err _ -> 0
+        lastTool =
+            when Str.splitFirst stateJson "\"lastTool\":\"" is
+                Ok { after } ->
+                    when Str.splitFirst after "\"" is
+                        Ok { before } -> before
+                        Err _ -> "none"
+
+                Err _ -> "none"
+        Ok { invocations, lastTool },
 }

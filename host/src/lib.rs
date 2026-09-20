@@ -3,6 +3,7 @@ pub mod roc_std;
 
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
+use core::ptr;
 use guest_bridge::*;
 use roc_std::{RocResult, RocStr};
 
@@ -64,7 +65,7 @@ pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
 #[no_mangle]
 pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
     let worker_id = golem::agent_platform::host_api::get_worker_id();
-    *out = RocStr::from_str(&worker_id);
+    ptr::write(out, RocStr::from_str(&worker_id));
 }
 
 #[no_mangle]
@@ -80,10 +81,10 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
 
     match golem::agent_platform::host_api::rpc_invoke(target_str, fn_str, payload_str) {
         Ok(res) => {
-            *out = RocResult::ok(RocStr::from_str(&res));
+            ptr::write(out, RocResult::ok(RocStr::from_str(&res)));
         }
         Err(err) => {
-            *out = RocResult::err(RocStr::from_str(&err));
+            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
         }
     }
 }
@@ -106,10 +107,10 @@ pub unsafe extern "C" fn rocFxHttpRequest(
     let req_str = if req_json.is_null() { "{}" } else { (*req_json).as_str() };
     match golem::agent_platform::host_api::http_request(req_str) {
         Ok(res) => {
-            *out = RocResult::ok(RocStr::from_str(&res));
+            ptr::write(out, RocResult::ok(RocStr::from_str(&res)));
         }
         Err(err) => {
-            *out = RocResult::err(RocStr::from_str(&err));
+            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
         }
     }
 }
@@ -123,10 +124,10 @@ pub unsafe extern "C" fn rocFxWsConnect(
     let url_str = if url.is_null() { "" } else { (*url).as_str() };
     match golem::agent_platform::websocket_api::connect(url_str) {
         Ok(handle) => {
-            *out = RocResult::ok(handle);
+            ptr::write(out, RocResult::ok(handle));
         }
         Err(err) => {
-            *out = RocResult::err(RocStr::from_str(&err));
+            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
         }
     }
 }
@@ -140,10 +141,10 @@ pub unsafe extern "C" fn rocFxWsSend(
     let msg_str = if msg.is_null() { "" } else { (*msg).as_str() };
     match golem::agent_platform::websocket_api::send(handle, msg_str) {
         Ok(()) => {
-            *out = RocResult::ok(());
+            ptr::write(out, RocResult::ok(()));
         }
         Err(err) => {
-            *out = RocResult::err(RocStr::from_str(&err));
+            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
         }
     }
 }
@@ -155,10 +156,10 @@ pub unsafe extern "C" fn rocFxWsReceive(
 ) {
     match golem::agent_platform::websocket_api::receive(handle) {
         Ok(res) => {
-            *out = RocResult::ok(RocStr::from_str(&res));
+            ptr::write(out, RocResult::ok(RocStr::from_str(&res)));
         }
         Err(err) => {
-            *out = RocResult::err(RocStr::from_str(&err));
+            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
         }
     }
 }
@@ -170,10 +171,10 @@ pub unsafe extern "C" fn rocFxWsClose(
 ) {
     match golem::agent_platform::websocket_api::close(handle) {
         Ok(()) => {
-            *out = RocResult::ok(());
+            ptr::write(out, RocResult::ok(()));
         }
         Err(err) => {
-            *out = RocResult::err(RocStr::from_str(&err));
+            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
         }
     }
 }
@@ -235,8 +236,13 @@ impl Guest for GolemAgentHost {
                         if let Some(next_state) = parsed.get("state") {
                             set_current_state(next_state.to_string());
                         }
-                        if let Some(resp) = parsed.get("response") {
-                            return Ok(resp.to_string());
+                        if let Some(resp_val) = parsed.get("response") {
+                            let resp_text = if let Some(s) = resp_val.as_str() {
+                                s.into()
+                            } else {
+                                resp_val.to_string()
+                            };
+                            return Ok(resp_text);
                         }
                     }
                     Ok(payload_str.into())
@@ -278,10 +284,15 @@ impl Guest for GolemAgentHost {
                             .get("success")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(true);
-                        let output = parsed
-                            .get("output")
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| String::from("{}"));
+                        let output = if let Some(out_val) = parsed.get("output") {
+                            if let Some(s) = out_val.as_str() {
+                                s.into()
+                            } else {
+                                out_val.to_string()
+                            }
+                        } else {
+                            String::from("{}")
+                        };
 
                         Ok(ToolResult {
                             id: call.id,
@@ -427,7 +438,7 @@ mod tests {
             let res = out.assume_init().into_result().expect("handle message failed");
             let payload = res.to_string();
             assert!(payload.contains("Counter incremented to 1"));
-            assert!(payload.contains("\"count\": 1"));
+            assert!(payload.contains("\"count\":1") || payload.contains("\"count\": 1"));
         }
     }
 
@@ -447,7 +458,7 @@ mod tests {
             );
             let res = out.assume_init().into_result().expect("handle tool failed");
             let payload = res.to_string();
-            assert!(payload.contains("\"success\": true"));
+            assert!(payload.contains("\"success\":true") || payload.contains("\"success\": true"));
             assert!(payload.contains("42"));
         }
     }

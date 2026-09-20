@@ -3,7 +3,6 @@ app [agent] { pf: platform "../../platform/main.roc" }
 import pf.Golem exposing [
     Agent,
     defineAgent,
-    logInfo,
     websocketConnect,
     websocketSend,
     websocketReceive,
@@ -32,7 +31,6 @@ agent = defineAgent {
     handleMessage: |state, message|
         when message is
             "connect" ->
-                # In Golem, we can initiate websocket connection
                 Ok {
                     state: { state & connected: Bool.true, handle: 1u32 },
                     response: "WebSocket connected (handle=1)",
@@ -102,14 +100,24 @@ agent = defineAgent {
 
     serializeState: |state|
         connStr = if state.connected then "true" else "false"
-        """
-        {"connected":${connStr},"handle":${Num.toStr state.handle},"sent":${Num.toStr (List.len state.messagesSent)}}
-        """,
+        "{\"connected\":${connStr},\"handle\":${Num.toStr state.handle},\"sent\":${Num.toStr (List.len state.messagesSent)}}",
 
-    deserializeState: |_stateJson|
+    deserializeState: |stateJson|
+        connected =
+            when Str.splitFirst stateJson "\"connected\":true" is
+                Ok _ -> Bool.true
+                Err _ -> Bool.false
+        handle =
+            when Str.splitFirst stateJson "\"handle\":" is
+                Ok { after } ->
+                    when Str.splitFirst after "," is
+                        Ok { before } -> Str.toU32 (Str.trim before) |> Result.withDefault 0u32
+                        Err _ -> 0u32
+
+                Err _ -> 0u32
         Ok {
-            connected: Bool.false,
-            handle: 0u32,
+            connected,
+            handle,
             messagesSent: [],
             messagesReceived: [],
         },

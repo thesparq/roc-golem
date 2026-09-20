@@ -43,11 +43,8 @@ main_handle_message_for_host = |state_json, message_str|
             when agent.handleMessage current_model message_str is
                 Ok { state: next_model, response } ->
                     next_state_json = agent.serializeState next_model
-                    # Format as JSON payload for host
-                    Ok
-                        """
-                        {"state":${next_state_json},"response":"${response}"}
-                        """
+                    escaped_response = escape_json_str response
+                    Ok "{\"state\":${next_state_json},\"response\":\"${escaped_response}\"}"
 
                 Err err ->
                     Err err
@@ -65,10 +62,8 @@ main_handle_tool_call_for_host = |state_json, tool_call_json|
                 Ok { state: next_model, result } ->
                     next_state_json = agent.serializeState next_model
                     success_str = if result.success then "true" else "false"
-                    Ok
-                        """
-                        {"state":${next_state_json},"success":${success_str},"output":"${result.output}"}
-                        """
+                    escaped_output = escape_json_str result.output
+                    Ok "{\"state\":${next_state_json},\"success\":${success_str},\"output\":\"${escaped_output}\"}"
 
                 Err err ->
                     Err err
@@ -81,9 +76,10 @@ main_metadata_for_host =
         meta.tools
         |> List.map format_tool_definition
         |> Str.joinWith ","
-    """
-    {"name":"${meta.name}","version":"${meta.version}","description":"${meta.description}","tools":[${tools_json}]}
-    """
+    name_escaped = escape_json_str meta.name
+    version_escaped = escape_json_str meta.version
+    desc_escaped = escape_json_str meta.description
+    "{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}]}"
 
 format_tool_definition : ToolDefinition -> Str
 format_tool_definition = |tool|
@@ -91,20 +87,42 @@ format_tool_definition = |tool|
         tool.parameters
         |> List.map format_tool_parameter
         |> Str.joinWith ","
-    """
-    {"name":"${tool.name}","description":"${tool.description}","parameters":[${params_json}]}
-    """
+    name_escaped = escape_json_str tool.name
+    desc_escaped = escape_json_str tool.description
+    "{\"name\":\"${name_escaped}\",\"description\":\"${desc_escaped}\",\"parameters\":[${params_json}]}"
 
 format_tool_parameter : ToolParameter -> Str
 format_tool_parameter = |param|
     req_str = if param.required then "true" else "false"
-    """
-    {"name":"${param.name}","description":"${param.description}","type":"${param.paramType}","required":${req_str}}
-    """
+    name_escaped = escape_json_str param.name
+    desc_escaped = escape_json_str param.description
+    type_escaped = escape_json_str param.paramType
+    "{\"name\":\"${name_escaped}\",\"description\":\"${desc_escaped}\",\"type\":\"${type_escaped}\",\"required\":${req_str}}"
+
+escape_json_str : Str -> Str
+escape_json_str = |input|
+    input
+    |> Str.replaceEach "\\" "\\\\"
+    |> Str.replaceEach "\"" "\\\""
+    |> Str.replaceEach "\n" "\\n"
+    |> Str.replaceEach "\r" "\\r"
+    |> Str.replaceEach "\t" "\\t"
 
 parse_tool_call : Str -> ToolCall
-parse_tool_call = |_raw_json| {
-    id: "call-1",
-    name: "default",
-    arguments: "{}",
+parse_tool_call = |raw_json| {
+    id: extract_json_field raw_json "id" |> Result.withDefault "call-1",
+    name: extract_json_field raw_json "name" |> Result.withDefault "default",
+    arguments: extract_json_field raw_json "arguments" |> Result.withDefault "{}",
 }
+
+extract_json_field : Str, Str -> Result Str [NotFound]
+extract_json_field = |json, field_name|
+    target = "\"${field_name}\":\""
+    when Str.splitFirst json target is
+        Ok { after } ->
+            when Str.splitFirst after "\"" is
+                Ok { before } -> Ok before
+                Err _ -> Err NotFound
+
+        Err _ ->
+            Err NotFound

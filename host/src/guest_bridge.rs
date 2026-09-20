@@ -1,4 +1,5 @@
 use crate::roc_std::{RocResult, RocStr};
+use core::ptr;
 
 // Default implementations of the Roc platform exposed entry points.
 // When linking with a compiled Roc application, these symbols can be overridden or mapped.
@@ -8,8 +9,8 @@ pub unsafe extern "C" fn roc__main_init_for_host_1_exposed_generic(
     _config: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let initial_state = RocStr::from_str("{\"count\": 0, \"invocations\": 0, \"history\": []}");
-    *out = RocResult::ok(initial_state);
+    let initial_state = RocStr::from_str("{\"count\": 0, \"invocations\": 0, \"history\": [], \"connected\": false, \"handle\": 0, \"sent\": 0}");
+    ptr::write(out, RocResult::ok(initial_state));
 }
 
 #[no_mangle]
@@ -18,18 +19,17 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
     message: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let msg = (*message).as_str();
-    let state_str = (*state).as_str();
+    let msg = if message.is_null() { "" } else { (*message).as_str() };
+    let state_str = if state.is_null() { "{}" } else { (*state).as_str() };
 
     let (next_state_json, resp) = if msg == "increment" {
-        // Parse count or increment
         let count: i64 = if let Ok(val) = serde_json::from_str::<serde_json::Value>(state_str) {
             val.get("count").and_then(|v| v.as_i64()).unwrap_or(0) + 1
         } else {
             1
         };
         (
-            format!("{{\"count\": {}, \"history\": [\"increment\"]}}", count),
+            serde_json::json!({ "count": count, "history": ["increment"] }),
             format!("Counter incremented to {}", count),
         )
     } else if msg == "decrement" {
@@ -39,7 +39,7 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
             -1
         };
         (
-            format!("{{\"count\": {}, \"history\": [\"decrement\"]}}", count),
+            serde_json::json!({ "count": count, "history": ["decrement"] }),
             format!("Counter decremented to {}", count),
         )
     } else if msg == "get" {
@@ -49,21 +49,29 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
             0
         };
         (
-            format!("{{\"count\": {}}}", count),
+            serde_json::json!({ "count": count }),
             format!("Current count is {}", count),
         )
-    } else {
+    } else if msg == "connect" {
         (
-            state_str.into(),
+            serde_json::json!({ "connected": true, "handle": 1, "sent": 0 }),
+            String::from("WebSocket connected (handle=1)"),
+        )
+    } else {
+        let parsed_state = serde_json::from_str::<serde_json::Value>(state_str)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        (
+            parsed_state,
             format!("Agent received message: '{}'", msg),
         )
     };
 
-    let payload = format!(
-        "{{\"state\": {}, \"response\": \"{}\"}}",
-        next_state_json, resp
-    );
-    *out = RocResult::ok(RocStr::from_str(&payload));
+    let payload_val = serde_json::json!({
+        "state": next_state_json,
+        "response": resp,
+    });
+    let payload_str = payload_val.to_string();
+    ptr::write(out, RocResult::ok(RocStr::from_str(&payload_str)));
 }
 
 #[no_mangle]
@@ -72,8 +80,8 @@ pub unsafe extern "C" fn roc__main_handle_tool_call_for_host_1_exposed_generic(
     tool_call_json: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let call_str = (*tool_call_json).as_str();
-    let state_str = (*state).as_str();
+    let call_str = if tool_call_json.is_null() { "{}" } else { (*tool_call_json).as_str() };
+    let state_str = if state.is_null() { "{}" } else { (*state).as_str() };
 
     let mut tool_name = String::from("default");
     let mut call_id = String::from("call-1");
@@ -91,41 +99,51 @@ pub unsafe extern "C" fn roc__main_handle_tool_call_for_host_1_exposed_generic(
         }
     }
 
-    let (next_state_json, output, success): (String, String, bool) = match tool_name.as_str() {
+    let parsed_state = serde_json::from_str::<serde_json::Value>(state_str)
+        .unwrap_or_else(|_| serde_json::json!({}));
+
+    let (next_state_json, output, success) = match tool_name.as_str() {
         "calculator" => (
-            state_str.into(),
-            "{\"result\": 42}".into(),
+            parsed_state,
+            String::from("{\"result\": 42}"),
             true,
         ),
         "echo" => (
-            state_str.into(),
-            format!("{{\"echo\": \"{}\"}}", args),
+            parsed_state,
+            serde_json::json!({ "echo": args }).to_string(),
             true,
         ),
         "get_count" => {
-            let count: i64 = if let Ok(val) = serde_json::from_str::<serde_json::Value>(state_str) {
-                val.get("count").and_then(|v| v.as_i64()).unwrap_or(0)
-            } else {
-                0
-            };
+            let count: i64 = parsed_state
+                .get("count")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             (
-                state_str.into(),
-                format!("{{\"count\": {}}}", count),
+                parsed_state,
+                serde_json::json!({ "count": count }).to_string(),
                 true,
             )
         }
+        "stream_message" => (
+            parsed_state,
+            String::from("{\"status\": \"stream_active\"}"),
+            true,
+        ),
         _ => (
-            state_str.into(),
-            format!("{{\"error\": \"Unknown tool {}\"}}", tool_name),
+            parsed_state,
+            serde_json::json!({ "error": format!("Unknown tool {}", tool_name) }).to_string(),
             false,
         ),
     };
 
-    let payload = format!(
-        "{{\"id\": \"{}\", \"state\": {}, \"success\": {}, \"output\": \"{}\"}}",
-        call_id, next_state_json, success, output.replace('\"', "\\\"")
-    );
-    *out = RocResult::ok(RocStr::from_str(&payload));
+    let payload_val = serde_json::json!({
+        "id": call_id,
+        "state": next_state_json,
+        "success": success,
+        "output": output,
+    });
+    let payload_str = payload_val.to_string();
+    ptr::write(out, RocResult::ok(RocStr::from_str(&payload_str)));
 }
 
 #[no_mangle]
@@ -163,9 +181,21 @@ pub unsafe extern "C" fn roc__main_metadata_for_host_1_exposed_generic(out: *mut
                 "name": "get_count",
                 "description": "Returns current counter value",
                 "parameters": []
+            },
+            {
+                "name": "stream_message",
+                "description": "Streams message via WebSocket",
+                "parameters": [
+                    {
+                        "name": "content",
+                        "description": "Message to stream",
+                        "type": "string",
+                        "required": true
+                    }
+                ]
             }
         ]
     }"#;
 
-    *out = RocStr::from_str(meta_json);
+    ptr::write(out, RocStr::from_str(meta_json));
 }
