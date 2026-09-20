@@ -22,8 +22,9 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.4.1/P5Cjkx-H1hnIg0Ujjsc5EQ7V2tbd0COVJk1OfFPK6aM.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.4.1/du7VEJ4B_bL_33nrbFBKrHbPMGzPF1DJMIgpQOxFzfc.tar.zst",
 }
+
 
 import pf.Golem exposing [Agent, defineAgent]
 
