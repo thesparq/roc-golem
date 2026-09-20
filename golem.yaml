@@ -1,18 +1,31 @@
-# Golem Cloud Application Manifest
-version: "1.0.0"
+# Schema for IDEA / VSCode:
+# $schema: https://schema.golem.cloud/app/golem/1.5.0/golem.schema.json
+
+manifestVersion: 1.5.0
+
+app: roc-golem
+
+environments:
+  local:
+    server: local
+    componentPresets: debug
+  cloud:
+    server: cloud
+    componentPresets: release
+
 components:
-  - name: roc-counter-agent
-    source: build/counter_agent.wasm
-    wit: wit/world.wit
+  roc-golem:counter:
+    dir: "examples/counter"
+    componentWasm: "../../build/counter_agent.wasm"
     build:
-      command: ./tooling/build.sh counter
-  - name: roc-ai-tool-agent
-    source: build/ai_tool_agent.wasm
-    wit: wit/world.wit
+      - command: "../../tooling/build.sh counter"
+  roc-golem:ai-tool:
+    dir: "examples/ai_tool"
+    componentWasm: "../../build/ai_tool_agent.wasm"
     build:
-      command: ./tooling/build.sh ai_tool
-  - name: roc-streaming-agent
-    source: build/streaming_agent_agent.wasm
-    wit: wit/world.wit
+      - command: "../../tooling/build.sh ai_tool"
+  roc-golem:streaming-agent:
+    dir: "examples/streaming_agent"
+    componentWasm: "../../build/streaming_agent_agent.wasm"
     build:
-      command: ./tooling/build.sh streaming_agent
+      - command: "../../tooling/build.sh streaming_agent"

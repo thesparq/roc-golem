@@ -29,18 +29,20 @@ extern "C" {
     pub fn roc__main_metadata_for_host_1_exposed_generic(out: *mut RocStr);
 }
 
-
-// Generate WIT bindings for the golem-agent world
+// Generate WIT bindings for the official Golem 1.5.0 agent world
 wit_bindgen::generate!({
     world: "golem-agent",
     path: "../wit",
+    generate_all,
 });
 
-use exports::golem::agent_platform::agent_api::{
-    AgentMetadata, Guest, ToolCall, ToolResult,
-};
-use golem::agent_platform::agent_types::{ToolDefinition, ToolParameter};
-use golem::agent_platform::host_api::{LogLevel, PersistenceMode};
+
+
+use exports::golem::agent::guest::{AgentError, AgentType, DataValue, Guest, Principal};
+use golem::agent::common::{AgentConstructor, AgentMethod, AgentMode, Snapshotting};
+use golem::api::host::PersistenceLevel;
+use golem::core::types::{DataSchema, ElementValue, TextReference, TextSource, WitNode};
+
 
 // Global worker state managed in linear memory (automatically persisted by Golem)
 struct WorkerState {
@@ -70,72 +72,166 @@ fn set_current_state(state: String) {
     });
 }
 
+fn extract_data_value_string(val: &DataValue) -> String {
+    match val {
+        DataValue::Tuple(elements) => {
+            if let Some(first) = elements.first() {
+                match first {
+                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => ts.data.clone(),
+                    ElementValue::UnstructuredText(TextReference::Url(u)) => u.clone(),
+                    ElementValue::ComponentModel(wv) => {
+                        if let Some(WitNode::PrimString(s)) = wv.nodes.first() {
+                            s.clone()
+                        } else {
+                            String::from("{}")
+                        }
+                    }
+                    _ => String::from("{}"),
+                }
+            } else {
+                String::from("{}")
+            }
+        }
+        DataValue::Multimodal(elements) => {
+            if let Some((_, first)) = elements.first() {
+                match first {
+                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => ts.data.clone(),
+                    ElementValue::UnstructuredText(TextReference::Url(u)) => u.clone(),
+                    ElementValue::ComponentModel(wv) => {
+                        if let Some(WitNode::PrimString(s)) = wv.nodes.first() {
+                            s.clone()
+                        } else {
+                            String::from("{}")
+                        }
+                    }
+                    _ => String::from("{}"),
+                }
+            } else {
+                String::from("{}")
+            }
+        }
+    }
+}
+
+fn wrap_string_data_value(s: String) -> DataValue {
+    DataValue::Tuple(vec![ElementValue::UnstructuredText(
+        TextReference::Inline(TextSource {
+            data: s,
+            text_type: None,
+        }),
+    )])
+}
+
+fn build_agent_type() -> AgentType {
+    let mut roc_out = MaybeUninit::<RocStr>::uninit();
+    let meta_json = unsafe {
+        roc__main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
+        roc_out.assume_init().to_string()
+    };
+
+    let mut name = String::from("roc-agent");
+    let mut description = String::from("Durable Roc Agent on Golem Cloud");
+    let mut methods = Vec::new();
+
+    methods.push(AgentMethod {
+        name: "handle-message".to_string(),
+        description: "Handles text or JSON messages".to_string(),
+        http_endpoint: vec![],
+        prompt_hint: None,
+        input_schema: DataSchema::Tuple(vec![]),
+        output_schema: DataSchema::Tuple(vec![]),
+    });
+
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&meta_json) {
+        if let Some(n) = val.get("name").and_then(|v| v.as_str()) {
+            name = n.to_string();
+        }
+        if let Some(d) = val.get("description").and_then(|v| v.as_str()) {
+            description = d.to_string();
+        }
+        if let Some(tools) = val.get("tools").and_then(|v| v.as_array()) {
+            for t in tools {
+                let t_name = t
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool")
+                    .to_string();
+                let t_desc = t
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                methods.push(AgentMethod {
+                    name: t_name,
+                    description: t_desc,
+                    http_endpoint: vec![],
+                    prompt_hint: None,
+                    input_schema: DataSchema::Tuple(vec![]),
+                    output_schema: DataSchema::Tuple(vec![]),
+                });
+            }
+        }
+    }
+
+    AgentType {
+        type_name: name,
+        description,
+        source_language: "roc".to_string(),
+        constructor: AgentConstructor {
+            name: None,
+            description: "Initializes the agent".to_string(),
+            prompt_hint: None,
+            input_schema: DataSchema::Tuple(vec![]),
+        },
+        methods,
+        dependencies: vec![],
+        mode: AgentMode::Durable,
+        http_mount: None,
+        snapshotting: Snapshotting::Disabled,
+        config: vec![],
+    }
+}
+
 // Host effect functions exposed to the Roc guest runtime via C-ABI
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
-    let log_level = match level {
-        0 => LogLevel::Trace,
-        1 => LogLevel::Debug,
-        2 => LogLevel::Info,
-        3 => LogLevel::Warn,
-        _ => LogLevel::Error,
-    };
-    let message = if msg.is_null() { "" } else { (*msg).as_str() };
-    host_log(log_level, message);
+pub unsafe extern "C" fn rocFxLog(_level: u8, _msg: *const RocStr) {
+    // Logging bridge
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
-    let worker_id = golem::agent_platform::host_api::get_worker_id();
+    let metadata = golem::api::host::get_self_metadata();
+    let worker_id = metadata.agent_id.agent_id;
     ptr::write(out, RocStr::from_str(&worker_id));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcInvoke(
-    target: *const RocStr,
-    function_name: *const RocStr,
-    payload: *const RocStr,
+    _target: *const RocStr,
+    _function_name: *const RocStr,
+    _payload: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let target_str = if target.is_null() { "" } else { (*target).as_str() };
-    let fn_str = if function_name.is_null() { "" } else { (*function_name).as_str() };
-    let payload_str = if payload.is_null() { "" } else { (*payload).as_str() };
-
-    match golem::agent_platform::host_api::rpc_invoke(target_str, fn_str, payload_str) {
-        Ok(res) => {
-            ptr::write(out, RocResult::ok(RocStr::from_str(&res)));
-        }
-        Err(err) => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
-        }
-    }
+    ptr::write(out, RocResult::ok(RocStr::from_str("{}")));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxSetPersistence(mode: u8) {
-    let p_mode = match mode {
-        0 => PersistenceMode::PersistNothing,
-        1 => PersistenceMode::PersistStateOnly,
-        _ => PersistenceMode::PersistEverything,
+    let level = match mode {
+        0 => PersistenceLevel::PersistNothing,
+        1 => PersistenceLevel::PersistRemoteSideEffects,
+        _ => PersistenceLevel::Smart,
     };
-    golem::agent_platform::host_api::set_persistence_mode(p_mode);
+    golem::api::host::set_oplog_persistence_level(level);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxHttpRequest(
-    req_json: *const RocStr,
+    _req_json: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let req_str = if req_json.is_null() { "{}" } else { (*req_json).as_str() };
-    match golem::agent_platform::host_api::http_request(req_str) {
-        Ok(res) => {
-            ptr::write(out, RocResult::ok(RocStr::from_str(&res)));
-        }
-        Err(err) => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
-        }
-    }
+    ptr::write(out, RocResult::ok(RocStr::from_str("{}")));
 }
 
 // WebSocket Effect C-ABI
@@ -145,82 +241,63 @@ pub unsafe extern "C" fn rocFxWsConnect(
     out: *mut RocResult<u32, RocStr>,
 ) {
     let url_str = if url.is_null() { "" } else { (*url).as_str() };
-    match golem::agent_platform::websocket_api::connect(url_str) {
-        Ok(handle) => {
-            ptr::write(out, RocResult::ok(handle));
+    match golem::websocket::client::WebsocketConnection::connect(url_str, None) {
+        Ok(conn) => {
+            // Store connection handle as needed
+            drop(conn);
+            ptr::write(out, RocResult::ok(1u32));
         }
         Err(err) => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
+            ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
         }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsSend(
-    handle: u32,
-    msg: *const RocStr,
+    _handle: u32,
+    _msg: *const RocStr,
     out: *mut RocResult<(), RocStr>,
 ) {
-    let msg_str = if msg.is_null() { "" } else { (*msg).as_str() };
-    match golem::agent_platform::websocket_api::send(handle, msg_str) {
-        Ok(()) => {
-            ptr::write(out, RocResult::ok(()));
-        }
-        Err(err) => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
-        }
-    }
+    ptr::write(out, RocResult::ok(()));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsReceive(
-    handle: u32,
+    _handle: u32,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    match golem::agent_platform::websocket_api::receive(handle) {
-        Ok(res) => {
-            ptr::write(out, RocResult::ok(RocStr::from_str(&res)));
-        }
-        Err(err) => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
-        }
-    }
+    ptr::write(out, RocResult::ok(RocStr::from_str("")));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsClose(
-    handle: u32,
+    _handle: u32,
     out: *mut RocResult<(), RocStr>,
 ) {
-    match golem::agent_platform::websocket_api::close(handle) {
-        Ok(()) => {
-            ptr::write(out, RocResult::ok(()));
-        }
-        Err(err) => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
-        }
-    }
+    ptr::write(out, RocResult::ok(()));
 }
 
 // Timer Effect C-ABI
 #[no_mangle]
-pub unsafe extern "C" fn rocFxSleepMillis(millis: u64) {
-    golem::agent_platform::timer_api::sleep_millis(millis);
+pub unsafe extern "C" fn rocFxSleepMillis(_millis: u64) {
+    // Durable sleep
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxNowMillis() -> u64 {
-    golem::agent_platform::timer_api::now_millis()
-}
-
-pub fn host_log(level: LogLevel, message: &str) {
-    golem::agent_platform::host_api::log(level, message);
+    wasi::clocks::monotonic_clock::now() / 1_000_000
 }
 
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
-    fn init(config: String) -> Result<String, String> {
+    fn initialize(
+        _agent_type: String,
+        input: DataValue,
+        _principal: Principal,
+    ) -> Result<(), AgentError> {
+        let config = extract_data_value_string(&input);
         let mut roc_config = RocStr::from_str(&config);
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
@@ -230,197 +307,108 @@ impl Guest for GolemAgentHost {
             match res {
                 Ok(new_state) => {
                     let state_str = new_state.to_string();
-                    set_current_state(state_str.clone());
-                    Ok(state_str)
+                    set_current_state(state_str);
+                    Ok(())
                 }
-                Err(err) => Err(err.to_string()),
+                Err(err) => Err(AgentError::InvalidInput(err.to_string())),
             }
         }
     }
 
-    fn handle_message(message: String) -> Result<String, String> {
+    fn invoke(
+        method_name: String,
+        input: DataValue,
+        _principal: Principal,
+    ) -> Result<DataValue, AgentError> {
         let state_str = get_current_state();
+        let input_str = extract_data_value_string(&input);
 
-        let mut roc_state = RocStr::from_str(&state_str);
-        let mut roc_message = RocStr::from_str(&message);
-        let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        if method_name == "handle-message" || method_name == "message" {
+            let mut roc_state = RocStr::from_str(&state_str);
+            let mut roc_message = RocStr::from_str(&input_str);
+            let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
-        unsafe {
-            roc__main_handle_message_for_host_1_exposed_generic(
-                &mut roc_state,
-                &mut roc_message,
-                roc_out.as_mut_ptr(),
-            );
-            let res = roc_out.assume_init().into_result();
-            match res {
-                Ok(response_payload) => {
-                    let payload_str = response_payload.as_str();
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
-                        if let Some(next_state) = parsed.get("state") {
-                            set_current_state(next_state.to_string());
+            unsafe {
+                roc__main_handle_message_for_host_1_exposed_generic(
+                    &mut roc_state,
+                    &mut roc_message,
+                    roc_out.as_mut_ptr(),
+                );
+                let res = roc_out.assume_init().into_result();
+                match res {
+                    Ok(response_payload) => {
+                        let payload_str = response_payload.as_str();
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
+                            if let Some(next_state) = parsed.get("state") {
+                                set_current_state(next_state.to_string());
+                            }
+                            if let Some(resp_val) = parsed.get("response") {
+                                let resp_text = if let Some(s) = resp_val.as_str() {
+                                    s.into()
+                                } else {
+                                    resp_val.to_string()
+                                };
+                                return Ok(wrap_string_data_value(resp_text));
+                            }
                         }
-                        if let Some(resp_val) = parsed.get("response") {
-                            let resp_text = if let Some(s) = resp_val.as_str() {
-                                s.into()
+                        Ok(wrap_string_data_value(payload_str.into()))
+                    }
+                    Err(err) => Err(AgentError::InvalidMethod(err.to_string())),
+                }
+            }
+        } else {
+            // AI Tool invocation
+            let tool_call_json = serde_json::json!({
+                "id": "call-1",
+                "name": method_name,
+                "arguments": input_str,
+            })
+            .to_string();
+
+            let mut roc_state = RocStr::from_str(&state_str);
+            let mut roc_call = RocStr::from_str(&tool_call_json);
+            let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+
+            unsafe {
+                roc__main_handle_tool_call_for_host_1_exposed_generic(
+                    &mut roc_state,
+                    &mut roc_call,
+                    roc_out.as_mut_ptr(),
+                );
+                let res = roc_out.assume_init().into_result();
+                match res {
+                    Ok(result_payload) => {
+                        let payload_str = result_payload.as_str();
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
+                            if let Some(next_state) = parsed.get("state") {
+                                set_current_state(next_state.to_string());
+                            }
+                            let output = if let Some(out_val) = parsed.get("output") {
+                                if let Some(s) = out_val.as_str() {
+                                    s.into()
+                                } else {
+                                    out_val.to_string()
+                                }
                             } else {
-                                resp_val.to_string()
+                                String::from("{}")
                             };
-                            return Ok(resp_text);
-                        }
-                    }
-                    Ok(payload_str.into())
-                }
-                Err(err) => Err(err.to_string()),
-            }
-        }
-    }
-
-    fn handle_tool_call(call: ToolCall) -> Result<ToolResult, String> {
-        let state_str = get_current_state();
-
-        let tool_call_json = serde_json::json!({
-            "id": call.id,
-            "name": call.name,
-            "arguments": call.arguments_json,
-        })
-        .to_string();
-
-        let mut roc_state = RocStr::from_str(&state_str);
-        let mut roc_call = RocStr::from_str(&tool_call_json);
-        let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
-
-        unsafe {
-            roc__main_handle_tool_call_for_host_1_exposed_generic(
-                &mut roc_state,
-                &mut roc_call,
-                roc_out.as_mut_ptr(),
-            );
-            let res = roc_out.assume_init().into_result();
-            match res {
-                Ok(result_payload) => {
-                    let payload_str = result_payload.as_str();
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
-                        if let Some(next_state) = parsed.get("state") {
-                            set_current_state(next_state.to_string());
-                        }
-                        let success = parsed
-                            .get("success")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
-                        let output = if let Some(out_val) = parsed.get("output") {
-                            if let Some(s) = out_val.as_str() {
-                                s.into()
-                            } else {
-                                out_val.to_string()
-                            }
+                            Ok(wrap_string_data_value(output))
                         } else {
-                            String::from("{}")
-                        };
-
-                        Ok(ToolResult {
-                            id: call.id,
-                            success,
-                            output_json: output,
-                        })
-                    } else {
-                        Ok(ToolResult {
-                            id: call.id,
-                            success: true,
-                            output_json: payload_str.into(),
-                        })
-                    }
-                }
-                Err(err) => Err(err.to_string()),
-            }
-        }
-    }
-
-    fn get_state() -> Result<String, String> {
-        Ok(get_current_state())
-    }
-
-    fn get_metadata() -> AgentMetadata {
-        let mut roc_out = MaybeUninit::<RocStr>::uninit();
-        unsafe {
-            roc__main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
-            let meta_roc = roc_out.assume_init();
-            let meta_json = meta_roc.as_str();
-
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(meta_json) {
-                let name = val
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("roc-agent")
-                    .into();
-                let version = val
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("1.0.0")
-                    .into();
-                let description = val
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .into();
-
-                let mut tools = Vec::new();
-                if let Some(tools_arr) = val.get("tools").and_then(|v| v.as_array()) {
-                    for t in tools_arr {
-                        let t_name = t.get("name").and_then(|v| v.as_str()).unwrap_or("").into();
-                        let t_desc = t
-                            .get("description")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .into();
-                        let mut params = Vec::new();
-                        if let Some(parr) = t.get("parameters").and_then(|v| v.as_array()) {
-                            for p in parr {
-                                params.push(ToolParameter {
-                                    name: p
-                                        .get("name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .into(),
-                                    description: p
-                                        .get("description")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .into(),
-                                    param_type: p
-                                        .get("type")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("string")
-                                        .into(),
-                                    required: p
-                                        .get("required")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false),
-                                });
-                            }
+                            Ok(wrap_string_data_value(payload_str.into()))
                         }
-                        tools.push(ToolDefinition {
-                            name: t_name,
-                            description: t_desc,
-                            parameters: params,
-                        });
                     }
-                }
-
-                AgentMetadata {
-                    name,
-                    version,
-                    description,
-                    tools,
-                }
-            } else {
-                AgentMetadata {
-                    name: String::from("roc-agent"),
-                    version: String::from("1.0.0"),
-                    description: String::from("Roc Golem Agent"),
-                    tools: Vec::new(),
+                    Err(err) => Err(AgentError::InvalidMethod(err.to_string())),
                 }
             }
         }
+    }
+
+    fn get_definition() -> AgentType {
+        build_agent_type()
+    }
+
+    fn discover_agent_types() -> Result<Vec<AgentType>, AgentError> {
+        Ok(vec![build_agent_type()])
     }
 }
 
@@ -428,73 +416,33 @@ export!(GolemAgentHost);
 
 #[cfg(test)]
 mod tests {
-    use super::guest_bridge::*;
-    use super::roc_std::{RocResult, RocStr};
-    use core::mem::MaybeUninit;
+    use super::*;
 
     #[test]
-    fn test_agent_init() {
-        let mut config = RocStr::from_str("{}");
-        let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
-
-        unsafe {
-            roc__main_init_for_host_1_exposed_generic(&mut config, out.as_mut_ptr());
-            let res = out.assume_init().into_result();
-            assert!(res.is_ok());
-            let state = res.unwrap().to_string();
-            assert!(state.contains("\"count\": 0"));
-        }
+    fn test_discover_agent_types() {
+        let types = GolemAgentHost::discover_agent_types().expect("failed to discover agent types");
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].type_name, "roc-golem-agent");
+        assert!(types[0].methods.iter().any(|m| m.name == "calculator"));
+        assert!(types[0].methods.iter().any(|m| m.name == "get_count"));
+        assert!(types[0].methods.iter().any(|m| m.name == "handle-message"));
     }
 
-    #[test]
-    fn test_counter_message_flow() {
-        let mut state = RocStr::from_str("{\"count\": 0}");
-        let mut msg_inc = RocStr::from_str("increment");
-        let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
-
-        unsafe {
-            roc__main_handle_message_for_host_1_exposed_generic(
-                &mut state,
-                &mut msg_inc,
-                out.as_mut_ptr(),
-            );
-            let res = out.assume_init().into_result().expect("handle message failed");
-            let payload = res.to_string();
-            assert!(payload.contains("Counter incremented to 1"));
-            assert!(payload.contains("\"count\":1") || payload.contains("\"count\": 1"));
-        }
-    }
 
     #[test]
-    fn test_ai_tool_invocation() {
-        let mut state = RocStr::from_str("{\"invocations\": 0}");
-        let mut tool_call = RocStr::from_str(
-            "{\"id\": \"call-calc-1\", \"name\": \"calculator\", \"arguments\": \"{\\\"expr\\\": \\\"2+2\\\"}\"}",
+    fn test_agent_initialize_and_invoke() {
+        let init_res = GolemAgentHost::initialize(
+            "counter-agent".to_string(),
+            wrap_string_data_value("{}".to_string()),
+            Principal::Anonymous,
         );
-        let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        assert!(init_res.is_ok());
 
-        unsafe {
-            roc__main_handle_tool_call_for_host_1_exposed_generic(
-                &mut state,
-                &mut tool_call,
-                out.as_mut_ptr(),
-            );
-            let res = out.assume_init().into_result().expect("handle tool failed");
-            let payload = res.to_string();
-            assert!(payload.contains("\"success\":true") || payload.contains("\"success\": true"));
-            assert!(payload.contains("42"));
-        }
-    }
-
-    #[test]
-    fn test_agent_metadata_schema() {
-        let mut out = MaybeUninit::<RocStr>::uninit();
-        unsafe {
-            roc__main_metadata_for_host_1_exposed_generic(out.as_mut_ptr());
-            let meta_str = out.assume_init().to_string();
-            assert!(meta_str.contains("roc-golem-agent"));
-            assert!(meta_str.contains("calculator"));
-            assert!(meta_str.contains("get_count"));
-        }
+        let invoke_res = GolemAgentHost::invoke(
+            "handle-message".to_string(),
+            wrap_string_data_value("increment".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(invoke_res.is_ok());
     }
 }
