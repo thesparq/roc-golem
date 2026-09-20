@@ -41,8 +41,9 @@ wit_bindgen::generate!({
 use exports::golem::agent::guest::{AgentError, AgentType, DataValue, Guest, Principal};
 use golem::agent::common::{AgentConstructor, AgentMethod, AgentMode, Snapshotting};
 use golem::api::host::PersistenceLevel;
-use golem::core::types::{DataSchema, ElementValue, TextReference, TextSource, WitNode};
-
+use golem::core::types::{
+    DataSchema, ElementSchema, ElementValue, TextDescriptor, TextReference, TextSource, WitNode,
+};
 
 // Global worker state managed in linear memory (automatically persisted by Golem)
 struct WorkerState {
@@ -70,6 +71,14 @@ fn set_current_state(state: String) {
     WORKER_STATE.with(|s| {
         s.borrow_mut().current_state_json = Some(state);
     });
+}
+
+fn string_element_schema() -> ElementSchema {
+    ElementSchema::UnstructuredText(TextDescriptor { restrictions: None })
+}
+
+fn single_string_schema(name: &str) -> DataSchema {
+    DataSchema::Tuple(vec![(name.to_string(), string_element_schema())])
 }
 
 fn extract_data_value_string(val: &DataValue) -> String {
@@ -138,8 +147,8 @@ fn build_agent_type() -> AgentType {
         description: "Handles text or JSON messages".to_string(),
         http_endpoint: vec![],
         prompt_hint: None,
-        input_schema: DataSchema::Tuple(vec![]),
-        output_schema: DataSchema::Tuple(vec![]),
+        input_schema: single_string_schema("message"),
+        output_schema: single_string_schema("response"),
     });
 
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&meta_json) {
@@ -166,8 +175,8 @@ fn build_agent_type() -> AgentType {
                     description: t_desc,
                     http_endpoint: vec![],
                     prompt_hint: None,
-                    input_schema: DataSchema::Tuple(vec![]),
-                    output_schema: DataSchema::Tuple(vec![]),
+                    input_schema: single_string_schema("input"),
+                    output_schema: single_string_schema("result"),
                 });
             }
         }
@@ -181,7 +190,7 @@ fn build_agent_type() -> AgentType {
             name: None,
             description: "Initializes the agent".to_string(),
             prompt_hint: None,
-            input_schema: DataSchema::Tuple(vec![]),
+            input_schema: single_string_schema("config"),
         },
         methods,
         dependencies: vec![],
@@ -423,9 +432,30 @@ mod tests {
         let types = GolemAgentHost::discover_agent_types().expect("failed to discover agent types");
         assert_eq!(types.len(), 1);
         assert_eq!(types[0].type_name, "roc-golem-agent");
+
+        let handle_msg = types[0]
+            .methods
+            .iter()
+            .find(|m| m.name == "handle-message")
+            .expect("handle-message method not found");
+        match &handle_msg.input_schema {
+            DataSchema::Tuple(elements) => {
+                assert_eq!(elements.len(), 1);
+                assert_eq!(elements[0].0, "message");
+            }
+            _ => panic!("Expected tuple input schema"),
+        }
+
+        match &types[0].constructor.input_schema {
+            DataSchema::Tuple(elements) => {
+                assert_eq!(elements.len(), 1);
+                assert_eq!(elements[0].0, "config");
+            }
+            _ => panic!("Expected tuple constructor input schema"),
+        }
+
         assert!(types[0].methods.iter().any(|m| m.name == "calculator"));
         assert!(types[0].methods.iter().any(|m| m.name == "get_count"));
-        assert!(types[0].methods.iter().any(|m| m.name == "handle-message"));
     }
 
 
