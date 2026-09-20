@@ -10,8 +10,53 @@ A durable, agent-native WebAssembly platform for writing [Golem Cloud](https://g
 - **Universal Pass-Through Adapter**: The platform translation layer acts as a generic JSON/String bridge, letting your Roc application control strongly typed serialization and domain logic.
 - **Pre-Compiled Host Architecture**: The Rust host is pre-compiled into a static library (`libhost.a` / `host.wasm`), allowing app developers to build and componentize directly.
 - **WebSocket & Streaming Support**: Built-in Golem WebSocket Client API (`websocketConnect`, `websocketSend`, `websocketReceive`, `websocketClose`) for bi-directional live streaming.
-- **Durable Scheduling & Timers**: Durable execution-aware sleep (`Golem.sleep`) and monotonic clock access (`Golem.now`).
+- **Durable Scheduling & Timers**: Durable execution-aware sleep (`sleepMillis`) and monotonic clock access (`nowMillis`).
 - **Worker-to-Worker RPC & HTTP**: Call other Golem workers or external APIs directly from Roc effect functions.
+- **Release-Ready Distribution**: Package platforms into `.tar.zst`, `.tar.br`, or `.tar.gz` with BLAKE3 base64url checksums for instant copy-paste consumption in any Roc project.
+
+---
+
+## 📦 Using in your Roc Code
+
+You can use the official pre-packaged platform release in your Roc application by specifying the release URL in your `app` header:
+
+```roc
+app [agent] {
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.1.0/gTjBJN_FMYXE5YiGDRrKsDSb7x6mrrLWLOzTuRhVVcA.tar.zst",
+}
+
+import pf.Golem exposing [Agent, defineAgent]
+import pf.Types exposing [ToolCall, ToolResult]
+
+State : { count : I64 }
+
+agent : Agent State
+agent = defineAgent {
+    init: |_config| Ok { count: 0 },
+    handleMessage: |state, msg|
+        when msg is
+            "increment" -> Ok { state: { count: state.count + 1 }, response: "Incremented" }
+            _ -> Ok { state, response: "Count is ${Num.toStr state.count}" },
+    handleToolCall: |state, call|
+        Ok {
+            state,
+            result: { id: call.id, success: Bool.true, output: "{\"count\":${Num.toStr state.count}}" },
+        },
+    metadata: {
+        name: "counter-agent",
+        version: "1.0.0",
+        description: "Durable Roc Counter Agent on Golem Cloud",
+        tools: [],
+    },
+    serializeState: |state| "{\"count\":${Num.toStr state.count}}",
+    deserializeState: |_json| Ok { count: 0 },
+}
+```
+
+For local platform development, you can point to the local path:
+```roc
+app [agent] { pf: platform "../../platform/main.roc" }
+```
 
 ---
 
@@ -19,161 +64,35 @@ A durable, agent-native WebAssembly platform for writing [Golem Cloud](https://g
 
 ```
 roc-golem/
+├── .github/
+│   └── workflows/
+│       ├── ci.yaml             # CI test & validation workflow
+│       └── release.yaml        # Automated release builder & publisher
 ├── wit/
-│   └── world.wit           # Golem Component Model WIT interface definitions
+│   └── world.wit               # Golem Component Model WIT interface definitions
 ├── host/
-│   ├── Cargo.toml          # Rust host crate configuration (wit-bindgen, serde)
+│   ├── Cargo.toml              # Rust host crate (wit-bindgen, serde)
 │   └── src/
-│       ├── lib.rs          # Universal WIT export/import & C-ABI translation layer
-│       ├── roc_std.rs      # Wasm32 Roc ABI types (RocStr, RocList, Allocators)
-│       └── guest_bridge.rs # Guest dispatch & fallback bridge
+│       ├── lib.rs              # Universal WIT export/import & C-ABI translation layer
+│       ├── roc_std.rs          # Wasm32 Roc ABI types (RocStr, RocList, Allocators)
+│       └── guest_bridge.rs     # Guest dispatch & fallback bridge
 ├── platform/
-│   ├── main.roc            # Roc Platform definition & host entry points
-│   ├── Golem.roc           # Idiomatic Roc Golem SDK (Agent, WebSocket, Timers, RPC, HTTP)
-│   ├── Types.roc           # Core data types (Metadata, ToolDefinition, ToolCall)
-│   └── Effect.roc          # Low-level host effect declarations
+│   ├── main.roc                # Roc Platform definition & host entry points
+│   ├── Golem.roc               # Idiomatic Roc Golem SDK (Agent, WebSocket, Timers, RPC, HTTP)
+│   ├── Types.roc               # Core data types (Metadata, ToolDefinition, ToolCall)
+│   └── Effect.roc              # Low-level host effect declarations
 ├── examples/
 │   ├── counter/
-│   │   └── main.roc        # Stateful counter agent example
+│   │   └── main.roc            # Stateful counter agent example
 │   ├── ai_tool/
-│   │   └── main.roc        # AI agent with tool declarations example
+│   │   └── main.roc            # AI agent with tool declarations example
 │   └── streaming_agent/
-│       └── main.roc        # WebSocket streaming agent example
+│       └── main.roc            # WebSocket streaming agent example
 ├── tooling/
-│   └── build.sh            # Platform pre-compilation & app componentization script
-└── golem.yaml              # Golem Cloud application manifest
-```
-
----
-
-## 🚀 Writing Agents in Roc
-
-### 1. Streaming Agent with WebSockets (`examples/streaming_agent/main.roc`)
-
-```roc
-app [agent] { pf: platform "../../platform/main.roc" }
-
-import pf.Golem exposing [
-    Agent,
-    defineAgent,
-    websocketConnect,
-    websocketSend,
-    websocketReceive,
-    websocketClose,
-]
-import pf.Types exposing [ToolCall, ToolResult]
-
-State : {
-    connected : Bool,
-    handle : U32,
-    messagesSent : List Str,
-    messagesReceived : List Str,
-}
-
-agent : Agent State
-agent = defineAgent {
-    init: |_config|
-        Ok {
-            connected: Bool.false,
-            handle: 0u32,
-            messagesSent: [],
-            messagesReceived: [],
-        },
-
-    handleMessage: |state, message|
-        when message is
-            "connect" ->
-                Ok {
-                    state: { state & connected: Bool.true, handle: 1u32 },
-                    response: "WebSocket connected (handle=1)",
-                }
-
-            "status" ->
-                statusStr = if state.connected then "connected" else "disconnected"
-                Ok {
-                    state,
-                    response: "WebSocket is ${statusStr}. Sent ${Num.toStr (List.len state.messagesSent)}, Received ${Num.toStr (List.len state.messagesReceived)}",
-                }
-
-            _ ->
-                if state.connected then
-                    nextSent = List.append state.messagesSent message
-                    Ok {
-                        state: { state & messagesSent: nextSent },
-                        response: "Queued message for WebSocket: ${message}",
-                    }
-                else
-                    Ok {
-                        state,
-                        response: "Not connected. Send 'connect' first.",
-                    },
-
-    handleToolCall: |state, toolCall|
-        when toolCall.name is
-            "stream_message" ->
-                Ok {
-                    state,
-                    result: {
-                        id: toolCall.id,
-                        success: Bool.true,
-                        output: "{\"status\": \"stream_active\", \"sent_count\": ${Num.toStr (List.len state.messagesSent)}}",
-                    },
-                }
-
-            _ ->
-                Ok {
-                    state,
-                    result: {
-                        id: toolCall.id,
-                        success: Bool.false,
-                        output: "{\"error\": \"Unknown tool ${toolCall.name}\"}",
-                    },
-                },
-
-    metadata: {
-        name: "streaming-agent",
-        version: "1.0.0",
-        description: "Durable WebSocket streaming agent running on Golem Cloud",
-        tools: [
-            {
-                name: "stream_message",
-                description: "Streams message via WebSocket",
-                parameters: [
-                    {
-                        name: "content",
-                        description: "Message to stream",
-                        paramType: "string",
-                        required: Bool.true,
-                    },
-                ],
-            },
-        ],
-    },
-
-    serializeState: |state|
-        connStr = if state.connected then "true" else "false"
-        "{\"connected\":${connStr},\"handle\":${Num.toStr state.handle},\"sent\":${Num.toStr (List.len state.messagesSent)}}",
-
-    deserializeState: |stateJson|
-        connected =
-            when Str.splitFirst stateJson "\"connected\":true" is
-                Ok _ -> Bool.true
-                Err _ -> Bool.false
-        handle =
-            when Str.splitFirst stateJson "\"handle\":" is
-                Ok { after } ->
-                    when Str.splitFirst after "," is
-                        Ok { before } -> Str.toU32 (Str.trim before) |> Result.withDefault 0u32
-                        Err _ -> 0u32
-
-                Err _ -> 0u32
-        Ok {
-            connected,
-            handle,
-            messagesSent: [],
-            messagesReceived: [],
-        },
-}
+│   ├── build.sh                # Multi-phase build, package, & release script
+│   └── pack_platform/          # Platform tarball & BLAKE3 base64url packaging tool
+├── LICENSE                     # Apache 2.0 License
+└── golem.yaml                  # Golem Cloud application manifest
 ```
 
 ---
@@ -203,3 +122,27 @@ golem worker invoke-and-await --component-name streaming-agent --worker-name str
   --function "golem:agent-platform/agent-api.{handle-message}" \
   --args '["connect"]'
 ```
+
+---
+
+## 🚀 Creating Platform Releases
+
+### Automatic GitHub Release (Recommended)
+1. Push a version tag to Git:
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+2. GitHub Actions automatically builds the host, validates all agents, packages the `.tar.zst`, `.tar.br`, `.tar.gz` bundles with BLAKE3 hashes, and creates the GitHub release with ready-to-copy Roc code snippets!
+
+### Local Release Packaging
+You can generate release tarballs locally at any time:
+```bash
+./tooling/build.sh package v0.1.0 thesparq/roc-golem
+```
+Artifacts and `release_notes.md` will be placed in `dist/`.
+
+---
+
+## 📄 License
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.

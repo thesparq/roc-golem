@@ -1,11 +1,16 @@
 target/
 host/target/
+tooling/pack_platform/target/
 build/
+dist/
 *.wasm
 *.tar.gz
+*.tar.br
+*.tar.zst
 *.o
 *.a
 *.so
 *.dylib
 *.dll
 .DS_Store
+

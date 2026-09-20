@@ -4,12 +4,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
+DIST_DIR="$ROOT_DIR/dist"
 HOST_DIR="$ROOT_DIR/host"
 PLATFORM_DIR="$ROOT_DIR/platform"
+PACK_DIR="$ROOT_DIR/tooling/pack_platform"
 PRECOMPILED_HOST_A="$BUILD_DIR/libhost.a"
 PRECOMPILED_HOST_WASM="$BUILD_DIR/host.wasm"
 
 mkdir -p "$BUILD_DIR"
+mkdir -p "$DIST_DIR"
 
 build_platform() {
     echo "============================================================"
@@ -82,6 +85,26 @@ build_app() {
     echo "============================================================"
 }
 
+package_platform() {
+    local TAG="${1:-v0.1.0}"
+    local REPO="${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+
+    build_platform
+
+    echo "============================================================"
+    echo " [Phase: Platform Package] Packaging Release Artifacts"
+    echo " Tag:        $TAG"
+    echo " Repository: $REPO"
+    echo "============================================================"
+
+    cargo run --manifest-path "$PACK_DIR/Cargo.toml" --release -- \
+        --platform-dir "$PLATFORM_DIR" \
+        --build-dir "$BUILD_DIR" \
+        --out-dir "$DIST_DIR" \
+        --tag "$TAG" \
+        --repo "$REPO"
+}
+
 COMMAND="${1:-all}"
 
 case "$COMMAND" in
@@ -92,6 +115,18 @@ case "$COMMAND" in
         shift || true
         build_app "${1:-counter}"
         ;;
+    package)
+        shift || true
+        package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        ;;
+    release)
+        shift || true
+        build_platform
+        build_app "counter"
+        build_app "ai_tool"
+        build_app "streaming_agent"
+        package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        ;;
     counter|ai_tool|streaming_agent)
         build_app "$COMMAND"
         ;;
@@ -100,12 +135,13 @@ case "$COMMAND" in
         build_app "counter"
         build_app "ai_tool"
         build_app "streaming_agent"
+        package_platform "v0.1.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)
         if [[ -f "$COMMAND" ]]; then
             build_app "$COMMAND"
         else
-            echo "Usage: $0 [platform | app <name_or_file> | counter | ai_tool | streaming_agent | all]"
+            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | all]"
             exit 1
         fi
         ;;

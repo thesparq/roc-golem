@@ -1,0 +1,69 @@
+name: Release Platform
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build, Package & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install compression tools (brotli, zstd)
+        run: sudo apt-get update && sudo apt-get install -y brotli zstd
+
+      - name: Install wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: "1.220.0"
+
+      - name: Run Host Unit Tests
+        run: cargo test --manifest-path host/Cargo.toml --lib
+
+      - name: Determine Release Tag
+        id: vars
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build Platform & Package Release
+        run: |
+          ./tooling/build.sh release "${{ steps.vars.outputs.tag }}" "${{ github.repository }}"
+
+      - name: Create GitHub Release & Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: "Roc Golem Platform ${{ steps.vars.outputs.tag }}"
+          body_path: dist/release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.tar.zst
+            dist/*.tar.br
+            dist/*.tar.gz
+            dist/checksums.txt
+            build/*_agent.wasm

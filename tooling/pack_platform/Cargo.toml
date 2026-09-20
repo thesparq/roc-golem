@@ -1,0 +1,14 @@
+[package]
+name = "pack_platform"
+version = "0.1.0"
+edition = "2021"
+description = "Platform packaging and BLAKE3 base64url hashing tool for Roc Golem Cloud platform"
+
+[dependencies]
+blake3 = "1.5"
+base64 = "0.22"
+tar = "0.4"
+flate2 = "1.0"
+zstd = "0.13"
+brotli = "7.0"
+sha2 = "0.10"
