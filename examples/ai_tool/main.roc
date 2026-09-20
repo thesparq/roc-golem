@@ -1,7 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
-import pf.Types exposing [ToolCall, ToolResult]
 
 # Agent State
 State : {
@@ -36,8 +35,8 @@ agent = defineAgent {
             "echo" ->
                 escapedArgs =
                     toolCall.arguments
-                    |> Str.replaceEach "\\" "\\\\"
-                    |> Str.replaceEach "\"" "\\\""
+                    |> Str.replace_each "\\" "\\\\"
+                    |> Str.replace_each "\"" "\\\""
                 Ok {
                     state: { invocations: nextInvocations, lastTool: "echo" },
                     result: {
@@ -90,24 +89,25 @@ agent = defineAgent {
     },
 
     serializeState: |state|
-        "{\"invocations\":${Num.toStr state.invocations},\"lastTool\":\"${state.lastTool}\"}",
+        "{\"invocations\":${Num.to_str state.invocations},\"lastTool\":\"${state.lastTool}\"}",
 
     deserializeState: |stateJson|
         invocations =
-            when Str.splitFirst stateJson "\"invocations\":" is
+            when Str.split_first stateJson "\"invocations\":" is
                 Ok { after } ->
-                    when Str.splitFirst after "," is
-                        Ok { before } -> Str.toI64 (Str.trim before) |> Result.withDefault 0
+                    when Str.split_first after "," is
+                        Ok { before } -> Str.to_i64 (Str.trim before) |> Result.with_default 0
                         Err _ -> 0
 
                 Err _ -> 0
         lastTool =
-            when Str.splitFirst stateJson "\"lastTool\":\"" is
+            when Str.split_first stateJson "\"lastTool\":\"" is
                 Ok { after } ->
-                    when Str.splitFirst after "\"" is
+                    when Str.split_first after "\"" is
                         Ok { before } -> before
                         Err _ -> "none"
 
                 Err _ -> "none"
         Ok { invocations, lastTool },
 }
+

@@ -1,7 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
-import pf.Types exposing [ToolCall, ToolResult]
 
 # Agent State
 State : {
@@ -19,20 +18,20 @@ agent = defineAgent {
                 nextCount = state.count + 1
                 Ok {
                     state: { count: nextCount },
-                    response: "Counter incremented to ${Num.toStr nextCount}",
+                    response: "Counter incremented to ${Num.to_str nextCount}",
                 }
 
             "decrement" ->
                 nextCount = state.count - 1
                 Ok {
                     state: { count: nextCount },
-                    response: "Counter decremented to ${Num.toStr nextCount}",
+                    response: "Counter decremented to ${Num.to_str nextCount}",
                 }
 
             "get" ->
                 Ok {
                     state,
-                    response: "Current count is ${Num.toStr state.count}",
+                    response: "Current count is ${Num.to_str state.count}",
                 }
 
             _ ->
@@ -49,7 +48,7 @@ agent = defineAgent {
                     result: {
                         id: toolCall.id,
                         success: Bool.true,
-                        output: "{\"count\": ${Num.toStr state.count}}",
+                        output: "{\"count\": ${Num.to_str state.count}}",
                     },
                 }
 
@@ -77,15 +76,15 @@ agent = defineAgent {
     },
 
     serializeState: |state|
-        "{\"count\":${Num.toStr state.count}}",
+        "{\"count\":${Num.to_str state.count}}",
 
     deserializeState: |stateJson|
         count =
-            when Str.splitFirst stateJson "\"count\":" is
+            when Str.split_first stateJson "\"count\":" is
                 Ok { after } ->
                     cleaned = Str.trim after
-                    when Str.splitFirst cleaned "}" is
-                        Ok { before } -> Str.toI64 (Str.trim before) |> Result.withDefault 0
+                    when Str.split_first cleaned "}" is
+                        Ok { before } -> Str.to_i64 (Str.trim before) |> Result.with_default 0
                         Err _ -> 0
 
                 Err _ -> 0

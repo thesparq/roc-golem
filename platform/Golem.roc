@@ -20,12 +20,9 @@ module [
 
 import Types exposing [
     Metadata,
-    ToolDefinition,
-    ToolParameter,
     ToolCall,
     ToolResult,
     PersistenceMode,
-    LogLevel,
 ]
 import Effect
 

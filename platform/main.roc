@@ -14,13 +14,11 @@ platform "golem"
     ]
 
 import Types exposing [
-    Metadata,
     ToolDefinition,
     ToolParameter,
     ToolCall,
-    ToolResult,
 ]
-import Golem exposing [Agent]
+import Golem
 
 ## Entry point for agent initialization called by Rust Host
 main_init_for_host : Str -> Result Str Str
@@ -75,7 +73,7 @@ main_metadata_for_host =
     tools_json =
         meta.tools
         |> List.map format_tool_definition
-        |> Str.joinWith ","
+        |> Str.join_with ","
     name_escaped = escape_json_str meta.name
     version_escaped = escape_json_str meta.version
     desc_escaped = escape_json_str meta.description
@@ -86,7 +84,7 @@ format_tool_definition = |tool|
     params_json =
         tool.parameters
         |> List.map format_tool_parameter
-        |> Str.joinWith ","
+        |> Str.join_with ","
     name_escaped = escape_json_str tool.name
     desc_escaped = escape_json_str tool.description
     "{\"name\":\"${name_escaped}\",\"description\":\"${desc_escaped}\",\"parameters\":[${params_json}]}"
@@ -102,27 +100,28 @@ format_tool_parameter = |param|
 escape_json_str : Str -> Str
 escape_json_str = |input|
     input
-    |> Str.replaceEach "\\" "\\\\"
-    |> Str.replaceEach "\"" "\\\""
-    |> Str.replaceEach "\n" "\\n"
-    |> Str.replaceEach "\r" "\\r"
-    |> Str.replaceEach "\t" "\\t"
+    |> Str.replace_each "\\" "\\\\"
+    |> Str.replace_each "\"" "\\\""
+    |> Str.replace_each "\n" "\\n"
+    |> Str.replace_each "\r" "\\r"
+    |> Str.replace_each "\t" "\\t"
 
 parse_tool_call : Str -> ToolCall
 parse_tool_call = |raw_json| {
-    id: extract_json_field raw_json "id" |> Result.withDefault "call-1",
-    name: extract_json_field raw_json "name" |> Result.withDefault "default",
-    arguments: extract_json_field raw_json "arguments" |> Result.withDefault "{}",
+    id: extract_json_field raw_json "id" |> Result.with_default "call-1",
+    name: extract_json_field raw_json "name" |> Result.with_default "default",
+    arguments: extract_json_field raw_json "arguments" |> Result.with_default "{}",
 }
 
 extract_json_field : Str, Str -> Result Str [NotFound]
 extract_json_field = |json, field_name|
     target = "\"${field_name}\":\""
-    when Str.splitFirst json target is
+    when Str.split_first json target is
         Ok { after } ->
-            when Str.splitFirst after "\"" is
+            when Str.split_first after "\"" is
                 Ok { before } -> Ok before
                 Err _ -> Err NotFound
 
         Err _ ->
             Err NotFound
+

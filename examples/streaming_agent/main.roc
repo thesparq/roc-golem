@@ -1,7 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
-import pf.Types exposing [ToolCall, ToolResult]
 
 # Agent State
 State : {
@@ -33,7 +32,7 @@ agent = defineAgent {
                 statusStr = if state.connected then "connected" else "disconnected"
                 Ok {
                     state,
-                    response: "WebSocket is ${statusStr}. Sent ${Num.toStr state.sent}, Received ${Num.toStr state.received}",
+                    response: "WebSocket is ${statusStr}. Sent ${Num.to_str state.sent}, Received ${Num.to_str state.received}",
                 }
 
             _ ->
@@ -56,7 +55,7 @@ agent = defineAgent {
                     result: {
                         id: toolCall.id,
                         success: Bool.true,
-                        output: "{\"status\": \"stream_active\", \"sent_count\": ${Num.toStr state.sent}}",
+                        output: "{\"status\": \"stream_active\", \"sent_count\": ${Num.to_str state.sent}}",
                     },
                 }
 
@@ -92,35 +91,35 @@ agent = defineAgent {
 
     serializeState: |state|
         connStr = if state.connected then "true" else "false"
-        "{\"connected\":${connStr},\"handle\":${Num.toStr state.handle},\"sent\":${Num.toStr state.sent},\"received\":${Num.toStr state.received}}",
+        "{\"connected\":${connStr},\"handle\":${Num.to_str state.handle},\"sent\":${Num.to_str state.sent},\"received\":${Num.to_str state.received}}",
 
     deserializeState: |stateJson|
         connected =
-            when Str.splitFirst stateJson "\"connected\":true" is
+            when Str.split_first stateJson "\"connected\":true" is
                 Ok _ -> Bool.true
                 Err _ -> Bool.false
         handle =
-            when Str.splitFirst stateJson "\"handle\":" is
+            when Str.split_first stateJson "\"handle\":" is
                 Ok { after } ->
-                    when Str.splitFirst after "," is
-                        Ok { before } -> Str.toU32 (Str.trim before) |> Result.withDefault 0u32
+                    when Str.split_first after "," is
+                        Ok { before } -> Str.to_u32 (Str.trim before) |> Result.with_default 0u32
                         Err _ -> 0u32
 
                 Err _ -> 0u32
         sent =
-            when Str.splitFirst stateJson "\"sent\":" is
+            when Str.split_first stateJson "\"sent\":" is
                 Ok { after } ->
-                    when Str.splitFirst after "," is
-                        Ok { before } -> Str.toU64 (Str.trim before) |> Result.withDefault 0u64
+                    when Str.split_first after "," is
+                        Ok { before } -> Str.to_u64 (Str.trim before) |> Result.with_default 0u64
                         Err _ -> 0u64
 
                 Err _ -> 0u64
         received =
-            when Str.splitFirst stateJson "\"received\":" is
+            when Str.split_first stateJson "\"received\":" is
                 Ok { after } ->
                     cleaned = Str.trim after
-                    when Str.splitFirst cleaned "}" is
-                        Ok { before } -> Str.toU64 (Str.trim before) |> Result.withDefault 0u64
+                    when Str.split_first cleaned "}" is
+                        Ok { before } -> Str.to_u64 (Str.trim before) |> Result.with_default 0u64
                         Err _ -> 0u64
 
                 Err _ -> 0u64
@@ -131,3 +130,4 @@ agent = defineAgent {
             received,
         },
 }
+
