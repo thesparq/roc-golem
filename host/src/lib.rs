@@ -39,7 +39,10 @@ wit_bindgen::generate!({
 
 
 use exports::golem::agent::guest::{AgentError, AgentType, DataValue, Guest, Principal};
-use golem::agent::common::{AgentConstructor, AgentMethod, AgentMode, Snapshotting};
+use golem::agent::common::{
+    AgentConstructor, AgentMethod, AgentMode, CorsOptions, HttpEndpointDetails, HttpMethod,
+    PathSegment, Snapshotting,
+};
 use golem::api::host::PersistenceLevel;
 use golem::core::types::{
     DataSchema, ElementSchema, ElementValue, TextDescriptor, TextReference, TextSource, WitNode,
@@ -79,6 +82,25 @@ fn string_element_schema() -> ElementSchema {
 
 fn single_string_schema(name: &str) -> DataSchema {
     DataSchema::Tuple(vec![(name.to_string(), string_element_schema())])
+}
+
+fn post_endpoint(path: &str) -> HttpEndpointDetails {
+    let segments: Vec<PathSegment> = path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| PathSegment::Literal(s.to_string()))
+        .collect();
+
+    HttpEndpointDetails {
+        http_method: HttpMethod::Post,
+        path_suffix: segments,
+        header_vars: vec![],
+        query_vars: vec![],
+        auth_details: None,
+        cors_options: CorsOptions {
+            allowed_patterns: vec!["*".to_string()],
+        },
+    }
 }
 
 fn extract_data_value_string(val: &DataValue) -> String {
@@ -145,7 +167,7 @@ fn build_agent_type() -> AgentType {
     methods.push(AgentMethod {
         name: "handle-message".to_string(),
         description: "Handles text or JSON messages".to_string(),
-        http_endpoint: vec![],
+        http_endpoint: vec![post_endpoint("/api/chat")],
         prompt_hint: None,
         input_schema: single_string_schema("message"),
         output_schema: single_string_schema("response"),
@@ -170,10 +192,19 @@ fn build_agent_type() -> AgentType {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                let endpoint_path = t
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| t.get("endpoint").and_then(|v| v.as_str()));
+                let http_endpoint = if let Some(p) = endpoint_path {
+                    vec![post_endpoint(p)]
+                } else {
+                    vec![post_endpoint(&format!("/api/tools/{}", t_name))]
+                };
                 methods.push(AgentMethod {
                     name: t_name,
                     description: t_desc,
-                    http_endpoint: vec![],
+                    http_endpoint,
                     prompt_hint: None,
                     input_schema: single_string_schema("input"),
                     output_schema: single_string_schema("result"),
@@ -438,6 +469,13 @@ mod tests {
             .iter()
             .find(|m| m.name == "handle-message")
             .expect("handle-message method not found");
+        assert_eq!(handle_msg.http_endpoint.len(), 1);
+        assert!(matches!(
+            handle_msg.http_endpoint[0].http_method,
+            HttpMethod::Post
+        ));
+        assert_eq!(handle_msg.http_endpoint[0].path_suffix.len(), 2);
+
         match &handle_msg.input_schema {
             DataSchema::Tuple(elements) => {
                 assert_eq!(elements.len(), 1);
