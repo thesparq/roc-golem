@@ -246,10 +246,10 @@ pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcInvoke(
+    out: *mut RocResult<RocStr, RocStr>,
     _target: *const RocStr,
     _function_name: *const RocStr,
     _payload: *const RocStr,
-    out: *mut RocResult<RocStr, RocStr>,
 ) {
     ptr::write(out, RocResult::ok(RocStr::from_str("{}")));
 }
@@ -266,8 +266,8 @@ pub unsafe extern "C" fn rocFxSetPersistence(mode: u8) {
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxHttpRequest(
-    _req_json: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
+    _req_json: *const RocStr,
 ) {
     ptr::write(out, RocResult::ok(RocStr::from_str("{}")));
 }
@@ -275,8 +275,8 @@ pub unsafe extern "C" fn rocFxHttpRequest(
 // WebSocket Effect C-ABI
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsConnect(
-    url: *const RocStr,
     out: *mut RocResult<u32, RocStr>,
+    url: *const RocStr,
 ) {
     let url_str = if url.is_null() { "" } else { (*url).as_str() };
     match golem::websocket::client::WebsocketConnection::connect(url_str, None) {
@@ -293,25 +293,25 @@ pub unsafe extern "C" fn rocFxWsConnect(
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsSend(
+    out: *mut RocResult<(), RocStr>,
     _handle: u32,
     _msg: *const RocStr,
-    out: *mut RocResult<(), RocStr>,
 ) {
     ptr::write(out, RocResult::ok(()));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsReceive(
-    _handle: u32,
     out: *mut RocResult<RocStr, RocStr>,
+    _handle: u32,
 ) {
     ptr::write(out, RocResult::ok(RocStr::from_str("")));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsClose(
-    _handle: u32,
     out: *mut RocResult<(), RocStr>,
+    _handle: u32,
 ) {
     ptr::write(out, RocResult::ok(()));
 }

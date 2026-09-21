@@ -73,7 +73,7 @@ pub unsafe extern "C" fn roc_panic(msg: *mut RocStr, _tag_id: u32) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc_crashed(_loc: *mut RocStr, _msg: *mut RocStr) {
+pub unsafe extern "C" fn roc_crashed(_msg: *mut RocStr, _tag: u32) {
     panic!("Roc execution crashed");
 }
 
