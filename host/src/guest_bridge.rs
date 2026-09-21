@@ -5,8 +5,8 @@ use core::ptr;
 
 #[no_mangle]
 pub unsafe extern "C" fn main_init_for_host_1_exposed_generic(
-    _config: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
+    _config: *const RocStr,
 ) {
     let initial_state = RocStr::from_str("{\"count\": 0, \"invocations\": 0, \"history\": [], \"connected\": false, \"handle\": 0, \"sent\": 0}");
     ptr::write(out, RocResult::ok(initial_state));
@@ -14,9 +14,9 @@ pub unsafe extern "C" fn main_init_for_host_1_exposed_generic(
 
 #[no_mangle]
 pub unsafe extern "C" fn main_handle_message_for_host_1_exposed_generic(
-    state: *mut RocStr,
-    message: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
+    state: *const RocStr,
+    message: *const RocStr,
 ) {
     let msg = if message.is_null() { "" } else { (*message).as_str() };
     let state_str = if state.is_null() { "{}" } else { (*state).as_str() };
@@ -75,9 +75,9 @@ pub unsafe extern "C" fn main_handle_message_for_host_1_exposed_generic(
 
 #[no_mangle]
 pub unsafe extern "C" fn main_handle_tool_call_for_host_1_exposed_generic(
-    state: *mut RocStr,
-    tool_call_json: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
+    state: *const RocStr,
+    tool_call_json: *const RocStr,
 ) {
     let call_str = if tool_call_json.is_null() { "{}" } else { (*tool_call_json).as_str() };
     let state_str = if state.is_null() { "{}" } else { (*state).as_str() };

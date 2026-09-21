@@ -10,18 +10,18 @@ use roc_std::{RocResult, RocStr};
 #[cfg(not(any(feature = "stub-guest", test)))]
 extern "C" {
     pub fn main_init_for_host_1_exposed_generic(
-        config: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
+        config: *const RocStr,
     );
     pub fn main_handle_message_for_host_1_exposed_generic(
-        state: *mut RocStr,
-        message: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
+        state: *const RocStr,
+        message: *const RocStr,
     );
     pub fn main_handle_tool_call_for_host_1_exposed_generic(
-        state: *mut RocStr,
-        tool_call_json: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
+        state: *const RocStr,
+        tool_call_json: *const RocStr,
     );
     pub fn main_metadata_for_host_1_exposed_generic(out: *mut RocStr);
 }
@@ -336,11 +336,11 @@ impl Guest for GolemAgentHost {
         _principal: Principal,
     ) -> Result<(), AgentError> {
         let config = extract_data_value_string(&input);
-        let mut roc_config = RocStr::from_str(&config);
+        let roc_config = RocStr::from_str(&config);
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
         unsafe {
-            main_init_for_host_1_exposed_generic(&mut roc_config, roc_out.as_mut_ptr());
+            main_init_for_host_1_exposed_generic(roc_out.as_mut_ptr(), &roc_config);
             let res = roc_out.assume_init().into_result();
             match res {
                 Ok(new_state) => {
@@ -362,15 +362,15 @@ impl Guest for GolemAgentHost {
         let input_str = extract_data_value_string(&input);
 
         if method_name == "handle-message" || method_name == "message" {
-            let mut roc_state = RocStr::from_str(&state_str);
-            let mut roc_message = RocStr::from_str(&input_str);
+            let roc_state = RocStr::from_str(&state_str);
+            let roc_message = RocStr::from_str(&input_str);
             let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
             unsafe {
                 main_handle_message_for_host_1_exposed_generic(
-                    &mut roc_state,
-                    &mut roc_message,
                     roc_out.as_mut_ptr(),
+                    &roc_state,
+                    &roc_message,
                 );
                 let res = roc_out.assume_init().into_result();
                 match res {
@@ -403,15 +403,15 @@ impl Guest for GolemAgentHost {
             })
             .to_string();
 
-            let mut roc_state = RocStr::from_str(&state_str);
-            let mut roc_call = RocStr::from_str(&tool_call_json);
+            let roc_state = RocStr::from_str(&state_str);
+            let roc_call = RocStr::from_str(&tool_call_json);
             let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
             unsafe {
                 main_handle_tool_call_for_host_1_exposed_generic(
-                    &mut roc_state,
-                    &mut roc_call,
                     roc_out.as_mut_ptr(),
+                    &roc_state,
+                    &roc_call,
                 );
                 let res = roc_out.assume_init().into_result();
                 match res {
