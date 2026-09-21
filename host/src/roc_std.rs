@@ -148,12 +148,16 @@ impl RocStr {
             roc_str
         } else {
             let align = mem::align_of::<usize>() as u32;
-            let header_size = mem::size_of::<isize>();
+            let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
             let total_size = header_size + len;
             unsafe {
-                let data_ptr = roc_alloc(total_size, align);
-                *(data_ptr as *mut isize) = 1;
-                let str_bytes_ptr = data_ptr.add(header_size);
+                let alloc_ptr = roc_alloc(total_size, align);
+                let refcount_ptr = alloc_ptr as *mut isize;
+                let capacity_ptr = alloc_ptr.add(mem::size_of::<isize>()) as *mut usize;
+                *refcount_ptr = 1;
+                *capacity_ptr = len;
+
+                let str_bytes_ptr = alloc_ptr.add(header_size);
                 ptr::copy_nonoverlapping(s.as_ptr(), str_bytes_ptr, len);
 
                 let mut roc_str = Self::empty();
@@ -200,6 +204,19 @@ impl Clone for RocStr {
         if self.is_small() {
             Self { words: self.words }
         } else {
+            let data_ptr = self.words[0] as *mut u8;
+            let capacity = self.words[2];
+            if !data_ptr.is_null() && capacity > 0 {
+                unsafe {
+                    let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
+                    let alloc_ptr = data_ptr.sub(header_size);
+                    let ref_count = alloc_ptr as *mut isize;
+                    if *ref_count > 0 {
+                        *ref_count += 1;
+                        return Self { words: self.words };
+                    }
+                }
+            }
             Self::from_str(self.as_str())
         }
     }
@@ -212,13 +229,15 @@ impl Drop for RocStr {
             let capacity = self.words[2];
             if !data_ptr.is_null() && capacity > 0 {
                 unsafe {
-                    let header_size = mem::size_of::<isize>();
-                    let ptr = data_ptr.sub(header_size);
-                    let ref_count = ptr as *mut isize;
-                    *ref_count -= 1;
-                    if *ref_count <= 0 {
-                        let align = mem::align_of::<usize>() as u32;
-                        roc_dealloc(ptr, align);
+                    let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
+                    let alloc_ptr = data_ptr.sub(header_size);
+                    let ref_count = alloc_ptr as *mut isize;
+                    if *ref_count > 0 {
+                        *ref_count -= 1;
+                        if *ref_count == 0 {
+                            let align = mem::align_of::<usize>() as u32;
+                            roc_dealloc(alloc_ptr, align);
+                        }
                     }
                 }
             }
@@ -356,8 +375,26 @@ mod tests {
         assert_eq!(roc_str.as_str(), s);
         assert_eq!(roc_str.to_string(), s);
 
+        // Verify Roc 2026 seamless slice header layout: [refcount: isize, capacity: usize, bytes...]
+        unsafe {
+            let data_ptr = roc_str.words[0] as *const u8;
+            let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
+            let alloc_ptr = data_ptr.sub(header_size);
+            let refcount = *(alloc_ptr as *const isize);
+            let capacity = *(alloc_ptr.add(mem::size_of::<isize>()) as *const usize);
+            assert_eq!(refcount, 1);
+            assert_eq!(capacity, s.len());
+        }
+
         let cloned = roc_str.clone();
         assert_eq!(cloned.as_str(), s);
+        unsafe {
+            let data_ptr = roc_str.words[0] as *const u8;
+            let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
+            let alloc_ptr = data_ptr.sub(header_size);
+            let refcount = *(alloc_ptr as *const isize);
+            assert_eq!(refcount, 2);
+        }
     }
 
     #[test]
