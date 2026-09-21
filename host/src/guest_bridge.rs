@@ -1,11 +1,10 @@
 use crate::roc_std::{RocResult, RocStr};
 use core::ptr;
 
-// Default implementations of the Roc platform exposed entry points.
-// When linking with a compiled Roc application, these symbols can be overridden or mapped.
+// Mock implementations for testing purposes only.
 
 #[no_mangle]
-pub unsafe extern "C" fn roc__main_init_for_host_1_exposed_generic(
+pub unsafe extern "C" fn main_init_for_host_1_exposed_generic(
     _config: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
@@ -14,7 +13,7 @@ pub unsafe extern "C" fn roc__main_init_for_host_1_exposed_generic(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
+pub unsafe extern "C" fn main_handle_message_for_host_1_exposed_generic(
     state: *mut RocStr,
     message: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
@@ -75,7 +74,7 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc__main_handle_tool_call_for_host_1_exposed_generic(
+pub unsafe extern "C" fn main_handle_tool_call_for_host_1_exposed_generic(
     state: *mut RocStr,
     tool_call_json: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
@@ -147,7 +146,7 @@ pub unsafe extern "C" fn roc__main_handle_tool_call_for_host_1_exposed_generic(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc__main_metadata_for_host_1_exposed_generic(out: *mut RocStr) {
+pub unsafe extern "C" fn main_metadata_for_host_1_exposed_generic(out: *mut RocStr) {
     let meta_json = r#"{
         "name": "roc-golem-agent",
         "version": "1.0.0",

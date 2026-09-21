@@ -26,6 +26,8 @@ Agent(state) : {
 	handleMessage! : state, Str => { state : state, replies : List(Str) },
 	handleToolCall! : state, ToolCall => { state : state, result : ToolResult },
 	metadata : Metadata,
+	serializeState : state -> Str,
+	deserializeState : Str -> Try(state, Str),
 }
 
 defineAgent : Agent(state) -> Agent(state)

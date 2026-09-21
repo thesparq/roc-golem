@@ -3,59 +3,59 @@ app [agent] { pf: platform "../../platform/main.roc" }
 import pf.Golem exposing [Agent, defineAgent]
 
 # Agent State
-State : {
+State :: {
 	invocations : I64,
 	lastTool : Str,
 }
 
 agent : Agent(State)
 agent = defineAgent({
-	init: |_config|
-		Ok({ invocations: 0, lastTool: "none" }),
+	init!: |_config|
+		{ invocations: 0, lastTool: "none" },
 
-	handleMessage: |state, _message|
-		Ok({
+	handleMessage!: |state, _message|
+		{
 			state,
-			response: "I am an AI assistant agent. You can invoke my tools (calculator, echo, memory).",
-		}),
+			replies: ["I am an AI assistant agent. You can invoke my tools (calculator, echo, memory)."],
+		},
 
-	handleToolCall: |state, toolCall| {
+	handleToolCall!: |state, toolCall| {
 		nextInvocations = state.invocations + 1
 		match toolCall.name {
 			"calculator" =>
-				Ok({
+				{
 					state: { invocations: nextInvocations, lastTool: "calculator" },
 					result: {
 						id: toolCall.id,
-						success: Bool.true,
+						success: True,
 						output: "{\"result\": 42}",
 					},
-				})
+				}
 
 			"echo" => {
 				escapedArgs =
 					toolCall.arguments
 						|> Str.replace_each("\\", "\\\\")
 						|> Str.replace_each("\"", "\\\"")
-				Ok({
+				{
 					state: { invocations: nextInvocations, lastTool: "echo" },
 					result: {
 						id: toolCall.id,
-						success: Bool.true,
+						success: True,
 						output: "{\"echo\": \"${escapedArgs}\"}",
 					},
-				})
+				}
 			}
 
 			_ =>
-				Ok({
+				{
 					state,
 					result: {
 						id: toolCall.id,
-						success: Bool.false,
+						success: False,
 						output: "{\"error\": \"Tool not found\"}",
 					},
-				})
+				}
 			}
 	},
 
@@ -72,7 +72,7 @@ agent = defineAgent({
 						name: "expression",
 						description: "Math expression to evaluate",
 						paramType: "string",
-						required: Bool.true,
+						required: True,
 					},
 				],
 			},
@@ -84,7 +84,7 @@ agent = defineAgent({
 						name: "text",
 						description: "Text to echo",
 						paramType: "string",
-						required: Bool.true,
+						required: True,
 					},
 				],
 			},
@@ -92,14 +92,14 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"invocations\":${Num.to_str(state.invocations)},\"lastTool\":\"${state.lastTool}\"}",
+		"{\"invocations\":${I64.to_str(state.invocations)},\"lastTool\":\"${state.lastTool}\"}",
 
 	deserializeState: |stateJson| {
 		invocations =
 			match Str.split_first(stateJson, "\"invocations\":") {
-				Ok({ after }) =>
+				Ok({ before: _, after }) =>
 					match Str.split_first(after, ",") {
-						Ok({ before }) => Str.to_i64(Str.trim(before)) ?? 0
+						Ok({ before, after: _ }) => I64.from_str(Str.trim(before)) ?? 0
 						Err(_) => 0
 					}
 
@@ -107,9 +107,9 @@ agent = defineAgent({
 			}
 		lastTool =
 			match Str.split_first(stateJson, "\"lastTool\":\"") {
-				Ok({ after }) =>
+				Ok({ before: _, after }) =>
 					match Str.split_first(after, "\"") {
-						Ok({ before }) => before
+						Ok({ before, after: _ }) => before
 						Err(_) => "none"
 					}
 

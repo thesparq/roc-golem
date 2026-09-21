@@ -10,8 +10,6 @@ use std::alloc::{alloc, dealloc, realloc};
 const HEADER_SIZE: usize = mem::size_of::<usize>();
 
 /// Standard Roc Memory Allocator exported symbols for Roc ABI.
-/// Uses an alignment-aware prefix header to store the total allocation size,
-/// ensuring roc_dealloc releases the exact Layout.
 #[no_mangle]
 pub unsafe extern "C" fn roc_alloc(size: usize, alignment: u32) -> *mut u8 {
     let align = (alignment as usize).max(mem::align_of::<usize>());
@@ -31,7 +29,6 @@ pub unsafe extern "C" fn roc_alloc(size: usize, alignment: u32) -> *mut u8 {
 pub unsafe extern "C" fn roc_realloc(
     c_ptr: *mut u8,
     new_size: usize,
-    _old_size: usize,
     alignment: u32,
 ) -> *mut u8 {
     if c_ptr.is_null() {
@@ -76,7 +73,17 @@ pub unsafe extern "C" fn roc_panic(msg: *mut RocStr, _tag_id: u32) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc_dbg(_loc: *mut RocStr, msg: *mut RocStr, _src: *mut RocStr) {
+pub unsafe extern "C" fn roc_crashed(_loc: *mut RocStr, _msg: *mut RocStr) {
+    panic!("Roc execution crashed");
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn roc_expect_failed(_loc: *mut RocStr, _msg: *mut RocStr) {
+    eprintln!("Roc expect failed");
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn roc_dbg(_loc: *mut RocStr, msg: *mut RocStr) {
     if !msg.is_null() {
         let m = (*msg).as_str();
         eprintln!("[ROC_DBG] {}", m);
@@ -93,6 +100,20 @@ pub unsafe extern "C" fn roc_memset(dst: *mut u8, c: i32, length: usize) -> *mut
 pub unsafe extern "C" fn roc_memcpy(dst: *mut u8, src: *const u8, length: usize) -> *mut u8 {
     ptr::copy_nonoverlapping(src, dst, length);
     dst
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cabi_realloc(
+    old_ptr: *mut u8,
+    _old_size: usize,
+    alignment: usize,
+    new_size: usize,
+) -> *mut u8 {
+    if old_ptr.is_null() {
+        roc_alloc(new_size, alignment as u32)
+    } else {
+        roc_realloc(old_ptr, new_size, alignment as u32)
+    }
 }
 
 /// Roc String (RocStr) supporting Small String Optimization (SSO) and heap refcounted strings.

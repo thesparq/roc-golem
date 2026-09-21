@@ -2,68 +2,67 @@ app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
 
-# Agent State
-State : {
+State :: {
 	count : I64,
 }
 
 agent : Agent(State)
 agent = defineAgent({
-	init: |_config|
-		Ok({ count: 0 }),
+	init!: |_config|
+		{ count: 0 },
 
-	handleMessage: |state, message|
+	handleMessage!: |state, message|
 		match message {
 			"increment" => {
 				nextCount = state.count + 1
-				Ok({
+				{
 					state: { count: nextCount },
-					response: "Counter incremented to ${Num.to_str(nextCount)}",
-				})
+					replies: ["Counter incremented to ${I64.to_str(nextCount)}"],
+				}
 			}
 
 			"decrement" => {
 				nextCount = state.count - 1
-				Ok({
+				{
 					state: { count: nextCount },
-					response: "Counter decremented to ${Num.to_str(nextCount)}",
-				})
+					replies: ["Counter decremented to ${I64.to_str(nextCount)}"],
+				}
 			}
 
 			"get" =>
-				Ok({
+				{
 					state,
-					response: "Current count is ${Num.to_str(state.count)}",
-				})
+					replies: ["Current count is ${I64.to_str(state.count)}"],
+				}
 
 			_ =>
-				Ok({
+				{
 					state,
-					response: "Unknown command '${message}'. Available: increment, decrement, get",
-				})
+					replies: ["Unknown command '${message}'. Available: increment, decrement, get"],
+				}
 			},
 
-	handleToolCall: |state, toolCall|
+	handleToolCall!: |state, toolCall|
 		match toolCall.name {
 			"get_count" =>
-				Ok({
+				{
 					state,
 					result: {
 						id: toolCall.id,
-						success: Bool.true,
-						output: "{\"count\": ${Num.to_str(state.count)}}",
+						success: True,
+						output: "{\"count\": ${I64.to_str(state.count)}}",
 					},
-				})
+				}
 
 			_ =>
-				Ok({
+				{
 					state,
 					result: {
 						id: toolCall.id,
-						success: Bool.false,
+						success: False,
 						output: "Unknown tool ${toolCall.name}",
 					},
-				})
+				}
 			},
 
 	metadata: {
@@ -80,25 +79,21 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"count\":${Num.to_str(state.count)}}",
+		"{\"count\":${I64.to_str(state.count)}}",
 
-	deserializeState: |stateJson| {
-		count =
-			match Str.split_first(stateJson, "\"count\":") {
-				Ok({ after }) => {
-					cleaned = Str.trim(after)
-					match Str.split_first(cleaned, "}") {
-						Ok({ before }) => Str.to_i64(Str.trim(before)) ?? 0
-						Err(_) => 0
-					}
+	deserializeState: |stateJson|
+		match Str.split_first(stateJson, "\"count\":") {
+			Ok({ before: _, after }) =>
+				match Str.split_first(after, "}") {
+					Ok({ before, after: _ }) =>
+						match I64.from_str(Str.trim(before)) {
+							Ok(c) => Ok({ count: c })
+							Err(_) => Err("Failed to parse count integer")
+						}
+
+					Err(_) => Err("Invalid JSON format")
 				}
 
-				Err(_) => 0
-			}
-		Ok(
-			{
-				count
-			},
-		)
-	},
+			Err(_) => Err("Missing count field")
+		},
 })

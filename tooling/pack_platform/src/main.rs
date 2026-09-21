@@ -113,9 +113,8 @@ app [agent] {{
 ```
 
 ### Included Platform Artifacts
-- `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`
-- Precompiled `libhost.a` (static library for Wasm32 Golem Cloud host)
-- Precompiled `host.wasm` (Wasm core module)
+- `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`, `platform/Host.roc`
+- Precompiled `targets/wasm32/libhost.a` (static library for Wasm32 Golem Cloud host)
 - Integrity Hash: BLAKE3 (base64url unpadded)
 "#
     );
@@ -137,33 +136,37 @@ fn compute_blake3_base64url(data: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(hash.as_bytes())
 }
 
+fn add_dir_recursive(dir: &Path, base: &Path, files: &mut Vec<(PathBuf, String)>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            let rel = path.strip_prefix(base).unwrap().to_string_lossy().into_owned();
+            files.push((path, rel));
+        } else if path.is_dir() {
+            add_dir_recursive(&path, base, files)?;
+        }
+    }
+    Ok(())
+}
+
 fn create_reproducible_tar(
     root_dir: &Path,
     platform_dir: &Path,
     build_dir: &Path,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut tar_builder = tar::Builder::new(Vec::new());
-
     let mut files_to_add: Vec<(PathBuf, String)> = Vec::new();
 
-    // 1. Platform roc files
-    for entry in fs::read_dir(platform_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() {
-            let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
-            files_to_add.push((path, file_name));
-        }
+    // 1. Platform directory files (including targets/wasm32/libhost.a)
+    if platform_dir.exists() {
+        add_dir_recursive(platform_dir, platform_dir, &mut files_to_add)?;
     }
 
-    // 2. Precompiled host files
+    // 2. Precompiled host files in build_dir as fallback
     let libhost_a = build_dir.join("libhost.a");
-    if libhost_a.exists() {
+    if libhost_a.exists() && !files_to_add.iter().any(|(_, name)| name == "libhost.a") {
         files_to_add.push((libhost_a, String::from("libhost.a")));
-    }
-    let host_wasm = build_dir.join("host.wasm");
-    if host_wasm.exists() {
-        files_to_add.push((host_wasm, String::from("host.wasm")));
     }
 
     // 3. License & Readme if available

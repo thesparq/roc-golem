@@ -9,7 +9,7 @@ HOST_DIR="$ROOT_DIR/host"
 PLATFORM_DIR="$ROOT_DIR/platform"
 PACK_DIR="$ROOT_DIR/tooling/pack_platform"
 PRECOMPILED_HOST_A="$BUILD_DIR/libhost.a"
-PRECOMPILED_HOST_WASM="$BUILD_DIR/host.wasm"
+TARGET_HOST_A="$PLATFORM_DIR/targets/wasm32/libhost.a"
 
 mkdir -p "$BUILD_DIR"
 mkdir -p "$DIST_DIR"
@@ -24,15 +24,16 @@ build_platform() {
     fi
 
     echo "==> Compiling Rust Host for WebAssembly target (wasm32-unknown-unknown)..."
-    cd "$HOST_DIR"
-    cargo build --target wasm32-unknown-unknown --release
+    cargo build --manifest-path "$HOST_DIR/Cargo.toml" --target wasm32-unknown-unknown --release
 
+    mkdir -p "$PLATFORM_DIR/targets/wasm32"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$TARGET_HOST_A"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PLATFORM_DIR/wasm32.a"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PLATFORM_DIR/libhost.a"
     cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PRECOMPILED_HOST_A"
-    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/roc_golem_host.wasm" "$PRECOMPILED_HOST_WASM"
 
     echo "==> Platform pre-compiled successfully:"
-    echo "    Static Library: $PRECOMPILED_HOST_A"
-    echo "    Core Module:    $PRECOMPILED_HOST_WASM"
+    echo "    Static Library: $TARGET_HOST_A"
 }
 
 build_app() {
@@ -52,6 +53,7 @@ build_app() {
         exit 1
     fi
 
+    local RAW_WASM="$BUILD_DIR/${TARGET_APP}_raw.wasm"
     local OUTPUT_COMPONENT="$BUILD_DIR/${TARGET_APP}_agent.wasm"
 
     echo "============================================================"
@@ -59,7 +61,7 @@ build_app() {
     echo "============================================================"
 
     # Ensure pre-compiled host exists
-    if [[ ! -f "$PRECOMPILED_HOST_WASM" ]]; then
+    if [[ ! -f "$TARGET_HOST_A" ]]; then
         echo "==> Pre-compiled host not found. Building platform host first..."
         build_platform
     fi
@@ -70,9 +72,20 @@ build_app() {
         roc fmt --check "$APP_FILE" "$PLATFORM_DIR/main.roc"
     fi
 
-    # Step 2: Componentize WASM module with generic Golem WIT interfaces
+    # Step 2: Compile Roc application and link with the Rust platform host
+    echo "==> Compiling and linking Roc app with Rust Host..."
+    set +e
+    roc build --target=wasm32 --output="$RAW_WASM" "$APP_FILE"
+    local ROC_STATUS=$?
+    set -e
+    if [[ $ROC_STATUS -ne 0 && $ROC_STATUS -ne 2 ]]; then
+        echo "Error: Roc build failed with status $ROC_STATUS" >&2
+        exit "$ROC_STATUS"
+    fi
+
+    # Step 3: Componentize WASM module into Golem Component Model
     echo "==> Componentizing WASM module into Golem Component Model..."
-    wasm-tools component new "$PRECOMPILED_HOST_WASM" -o "$OUTPUT_COMPONENT"
+    wasm-tools component new "$RAW_WASM" -o "$OUTPUT_COMPONENT"
 
     echo "==> Validating Component Model compatibility..."
     wasm-tools validate "$OUTPUT_COMPONENT"

@@ -1,4 +1,4 @@
-#[cfg(feature = "stub-guest")]
+#[cfg(any(feature = "stub-guest", test))]
 pub mod guest_bridge;
 pub mod roc_std;
 
@@ -7,27 +7,27 @@ use core::mem::MaybeUninit;
 use core::ptr;
 use roc_std::{RocResult, RocStr};
 
-#[cfg(feature = "stub-guest")]
-use guest_bridge::*;
-
-#[cfg(not(feature = "stub-guest"))]
+#[cfg(not(any(feature = "stub-guest", test)))]
 extern "C" {
-    pub fn roc__main_init_for_host_1_exposed_generic(
+    pub fn main_init_for_host_1_exposed_generic(
         config: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
     );
-    pub fn roc__main_handle_message_for_host_1_exposed_generic(
+    pub fn main_handle_message_for_host_1_exposed_generic(
         state: *mut RocStr,
         message: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
     );
-    pub fn roc__main_handle_tool_call_for_host_1_exposed_generic(
+    pub fn main_handle_tool_call_for_host_1_exposed_generic(
         state: *mut RocStr,
         tool_call_json: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
     );
-    pub fn roc__main_metadata_for_host_1_exposed_generic(out: *mut RocStr);
+    pub fn main_metadata_for_host_1_exposed_generic(out: *mut RocStr);
 }
+
+#[cfg(any(feature = "stub-guest", test))]
+use guest_bridge::*;
 
 // Generate WIT bindings for the official Golem 1.5.0 agent world
 wit_bindgen::generate!({
@@ -35,8 +35,6 @@ wit_bindgen::generate!({
     path: "../wit",
     generate_all,
 });
-
-
 
 use exports::golem::agent::guest::{AgentError, AgentType, DataValue, Guest, Principal};
 use golem::agent::common::{
@@ -156,7 +154,7 @@ fn wrap_string_data_value(s: String) -> DataValue {
 fn build_agent_type() -> AgentType {
     let mut roc_out = MaybeUninit::<RocStr>::uninit();
     let meta_json = unsafe {
-        roc__main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
+        main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
         roc_out.assume_init().to_string()
     };
 
@@ -342,7 +340,7 @@ impl Guest for GolemAgentHost {
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
         unsafe {
-            roc__main_init_for_host_1_exposed_generic(&mut roc_config, roc_out.as_mut_ptr());
+            main_init_for_host_1_exposed_generic(&mut roc_config, roc_out.as_mut_ptr());
             let res = roc_out.assume_init().into_result();
             match res {
                 Ok(new_state) => {
@@ -369,7 +367,7 @@ impl Guest for GolemAgentHost {
             let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
             unsafe {
-                roc__main_handle_message_for_host_1_exposed_generic(
+                main_handle_message_for_host_1_exposed_generic(
                     &mut roc_state,
                     &mut roc_message,
                     roc_out.as_mut_ptr(),
@@ -410,7 +408,7 @@ impl Guest for GolemAgentHost {
             let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
             unsafe {
-                roc__main_handle_tool_call_for_host_1_exposed_generic(
+                main_handle_tool_call_for_host_1_exposed_generic(
                     &mut roc_state,
                     &mut roc_call,
                     roc_out.as_mut_ptr(),
@@ -495,7 +493,6 @@ mod tests {
         assert!(types[0].methods.iter().any(|m| m.name == "calculator"));
         assert!(types[0].methods.iter().any(|m| m.name == "get_count"));
     }
-
 
     #[test]
     fn test_agent_initialize_and_invoke() {
