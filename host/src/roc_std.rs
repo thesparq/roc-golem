@@ -334,3 +334,35 @@ impl<T, E> Drop for RocResult<T, E> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_small_roc_str() {
+        let s = "hello";
+        let roc_str = RocStr::from_str(s);
+        assert!(roc_str.is_small());
+        assert_eq!(roc_str.as_str(), s);
+        assert_eq!(roc_str.to_string(), s);
+    }
+
+    #[test]
+    fn test_large_roc_str() {
+        let s = "This is a large string that exceeds small string optimization limits in Roc standard library.";
+        let roc_str = RocStr::from_str(s);
+        assert!(!roc_str.is_small());
+        assert_eq!(roc_str.as_str(), s);
+        assert_eq!(roc_str.to_string(), s);
+
+        let cloned = roc_str.clone();
+        assert_eq!(cloned.as_str(), s);
+    }
+
+    #[test]
+    fn test_empty_roc_str() {
+        let roc_str = RocStr::empty();
+        assert_eq!(roc_str.as_str(), "");
+    }
+}

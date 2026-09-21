@@ -341,6 +341,7 @@ impl Guest for GolemAgentHost {
 
         unsafe {
             main_init_for_host_1_exposed_generic(roc_out.as_mut_ptr(), &roc_config);
+            core::mem::forget(roc_config);
             let res = roc_out.assume_init().into_result();
             match res {
                 Ok(new_state) => {
@@ -372,6 +373,8 @@ impl Guest for GolemAgentHost {
                     &roc_state,
                     &roc_message,
                 );
+                core::mem::forget(roc_state);
+                core::mem::forget(roc_message);
                 let res = roc_out.assume_init().into_result();
                 match res {
                     Ok(response_payload) => {
@@ -413,6 +416,8 @@ impl Guest for GolemAgentHost {
                     &roc_state,
                     &roc_call,
                 );
+                core::mem::forget(roc_state);
+                core::mem::forget(roc_call);
                 let res = roc_out.assume_init().into_result();
                 match res {
                     Ok(result_payload) => {
