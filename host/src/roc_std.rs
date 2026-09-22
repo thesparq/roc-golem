@@ -7,13 +7,15 @@ use core::str;
 
 use std::alloc::{alloc, dealloc, realloc};
 
-const HEADER_SIZE: usize = mem::size_of::<usize>();
+const ALLOC_HEADER_SIZE: usize = 4 * mem::size_of::<usize>();
 
 /// Standard Roc Memory Allocator exported symbols for Roc ABI.
+/// A 16-byte allocation header (4 words) ensures Rust's total_size metadata stored at (data_ptr - ALLOC_HEADER_SIZE)
+/// is completely isolated from Roc 2026's refcount/capacity metadata at (data_ptr - 2*word) and (data_ptr - 1*word).
 #[no_mangle]
 pub unsafe extern "C" fn roc_alloc(size: usize, alignment: u32) -> *mut u8 {
-    let align = (alignment as usize).max(mem::align_of::<usize>());
-    let header_size = HEADER_SIZE.max(align);
+    let align = (alignment as usize).max(mem::align_of::<usize>()).max(ALLOC_HEADER_SIZE);
+    let header_size = ALLOC_HEADER_SIZE.max(align);
     let total_size = header_size + size;
     let layout = Layout::from_size_align_unchecked(total_size, align);
     let ptr = alloc(layout);
@@ -21,7 +23,8 @@ pub unsafe extern "C" fn roc_alloc(size: usize, alignment: u32) -> *mut u8 {
         std::alloc::handle_alloc_error(layout);
     }
     let data_ptr = ptr.add(header_size);
-    *((data_ptr as *mut usize).sub(1)) = total_size;
+    let total_size_ptr = (data_ptr.sub(ALLOC_HEADER_SIZE)) as *mut usize;
+    *total_size_ptr = total_size;
     data_ptr
 }
 
@@ -34,9 +37,10 @@ pub unsafe extern "C" fn roc_realloc(
     if c_ptr.is_null() {
         return roc_alloc(new_size, alignment);
     }
-    let align = (alignment as usize).max(mem::align_of::<usize>());
-    let header_size = HEADER_SIZE.max(align);
-    let old_total = *((c_ptr as *const usize).sub(1));
+    let align = (alignment as usize).max(mem::align_of::<usize>()).max(ALLOC_HEADER_SIZE);
+    let header_size = ALLOC_HEADER_SIZE.max(align);
+    let total_size_ptr = (c_ptr.sub(ALLOC_HEADER_SIZE)) as *const usize;
+    let old_total = *total_size_ptr;
     let new_total = header_size + new_size;
     let ptr = c_ptr.sub(header_size);
     let old_layout = Layout::from_size_align_unchecked(old_total, align);
@@ -46,16 +50,18 @@ pub unsafe extern "C" fn roc_realloc(
         std::alloc::handle_alloc_error(new_layout);
     }
     let data_ptr = new_ptr.add(header_size);
-    *((data_ptr as *mut usize).sub(1)) = new_total;
+    let new_total_size_ptr = (data_ptr.sub(ALLOC_HEADER_SIZE)) as *mut usize;
+    *new_total_size_ptr = new_total;
     data_ptr
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn roc_dealloc(c_ptr: *mut u8, alignment: u32) {
     if !c_ptr.is_null() {
-        let align = (alignment as usize).max(mem::align_of::<usize>());
-        let header_size = HEADER_SIZE.max(align);
-        let total_size = *((c_ptr as *const usize).sub(1));
+        let align = (alignment as usize).max(mem::align_of::<usize>()).max(ALLOC_HEADER_SIZE);
+        let header_size = ALLOC_HEADER_SIZE.max(align);
+        let total_size_ptr = (c_ptr.sub(ALLOC_HEADER_SIZE)) as *const usize;
+        let total_size = *total_size_ptr;
         let ptr = c_ptr.sub(header_size);
         let layout = Layout::from_size_align_unchecked(total_size, align);
         dealloc(ptr, layout);
@@ -147,21 +153,18 @@ impl RocStr {
             bytes[Self::SIZE - 1] = (len as u8) | Self::MASK;
             roc_str
         } else {
-            let align = mem::align_of::<usize>() as u32;
-            let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
-            let total_size = header_size + len;
+            let align = 8;
             unsafe {
-                let alloc_ptr = roc_alloc(total_size, align);
-                let refcount_ptr = alloc_ptr as *mut isize;
-                let capacity_ptr = alloc_ptr.add(mem::size_of::<isize>()) as *mut usize;
+                let data_ptr = roc_alloc(len, align);
+                let refcount_ptr = (data_ptr as *mut isize).sub(2);
+                let capacity_ptr = (data_ptr as *mut usize).sub(1);
                 *refcount_ptr = 1;
                 *capacity_ptr = len;
 
-                let str_bytes_ptr = alloc_ptr.add(header_size);
-                ptr::copy_nonoverlapping(s.as_ptr(), str_bytes_ptr, len);
+                ptr::copy_nonoverlapping(s.as_ptr(), data_ptr, len);
 
                 let mut roc_str = Self::empty();
-                roc_str.words[0] = str_bytes_ptr as usize;
+                roc_str.words[0] = data_ptr as usize;
                 roc_str.words[1] = len;
                 roc_str.words[2] = len; // capacity
                 roc_str
@@ -208,11 +211,10 @@ impl Clone for RocStr {
             let capacity = self.words[2];
             if !data_ptr.is_null() && capacity > 0 {
                 unsafe {
-                    let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
-                    let alloc_ptr = data_ptr.sub(header_size);
-                    let ref_count = alloc_ptr as *mut isize;
-                    if *ref_count > 0 {
-                        *ref_count += 1;
+                    let refcount_ptr = (data_ptr as *mut isize).sub(2);
+                    let ref_count = *refcount_ptr;
+                    if ref_count > 0 {
+                        *refcount_ptr += 1;
                         return Self { words: self.words };
                     }
                 }
@@ -229,14 +231,12 @@ impl Drop for RocStr {
             let capacity = self.words[2];
             if !data_ptr.is_null() && capacity > 0 {
                 unsafe {
-                    let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
-                    let alloc_ptr = data_ptr.sub(header_size);
-                    let ref_count = alloc_ptr as *mut isize;
-                    if *ref_count > 0 {
-                        *ref_count -= 1;
-                        if *ref_count == 0 {
-                            let align = mem::align_of::<usize>() as u32;
-                            roc_dealloc(alloc_ptr, align);
+                    let refcount_ptr = (data_ptr as *mut isize).sub(2);
+                    let ref_count = *refcount_ptr;
+                    if ref_count > 0 {
+                        *refcount_ptr -= 1;
+                        if *refcount_ptr == 0 {
+                            roc_dealloc(data_ptr, 8);
                         }
                     }
                 }
@@ -375,24 +375,25 @@ mod tests {
         assert_eq!(roc_str.as_str(), s);
         assert_eq!(roc_str.to_string(), s);
 
-        // Verify Roc 2026 seamless slice header layout: [refcount: isize, capacity: usize, bytes...]
+        // Verify Roc 2026 header layout:
+        // - Rust allocator total_size is at (data_ptr - 16)
+        // - Roc refcount is at (data_ptr - 8) / (data_ptr - 2*word)
+        // - Roc capacity is at (data_ptr - 4) / (data_ptr - 1*word)
         unsafe {
             let data_ptr = roc_str.words[0] as *const u8;
-            let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
-            let alloc_ptr = data_ptr.sub(header_size);
-            let refcount = *(alloc_ptr as *const isize);
-            let capacity = *(alloc_ptr.add(mem::size_of::<isize>()) as *const usize);
+            let refcount = *((data_ptr as *const isize).sub(2));
+            let capacity = *((data_ptr as *const usize).sub(1));
+            let total_size = *(data_ptr.sub(ALLOC_HEADER_SIZE) as *const usize);
             assert_eq!(refcount, 1);
             assert_eq!(capacity, s.len());
+            assert!(total_size >= ALLOC_HEADER_SIZE + s.len());
         }
 
         let cloned = roc_str.clone();
         assert_eq!(cloned.as_str(), s);
         unsafe {
             let data_ptr = roc_str.words[0] as *const u8;
-            let header_size = mem::size_of::<isize>() + mem::size_of::<usize>();
-            let alloc_ptr = data_ptr.sub(header_size);
-            let refcount = *(alloc_ptr as *const isize);
+            let refcount = *((data_ptr as *const isize).sub(2));
             assert_eq!(refcount, 2);
         }
     }
