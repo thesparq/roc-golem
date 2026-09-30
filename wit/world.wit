@@ -5,6 +5,7 @@ world golem-agent {
     import golem:agent/common@1.5.0;
     import golem:websocket/client@1.5.0;
     import wasi:clocks/monotonic-clock@0.2.3;
+    import wasi:http/outgoing-handler@0.2.3;
 
     export golem:agent/guest@1.5.0;
 }
