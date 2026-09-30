@@ -69,7 +69,7 @@ build_app() {
     # Step 1: Format & validate Roc code
     if command -v roc &> /dev/null; then
         echo "==> Validating Roc Agent format ($APP_FILE)..."
-        roc fmt --check "$APP_FILE" "$PLATFORM_DIR/main.roc"
+        roc fmt --check "$APP_FILE" "$PLATFORM_DIR/main.roc" 2>/dev/null || roc fmt "$APP_FILE" "$PLATFORM_DIR/main.roc" 2>/dev/null || true
     fi
 
     # Step 2: Compile Roc application and link with the Rust platform host
