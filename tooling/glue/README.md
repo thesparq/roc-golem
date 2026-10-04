@@ -20,7 +20,6 @@ cat /tmp/glue-out/abi_surface.txt /tmp/glue-out/abi_facts.txt
   refcountedness.
 
 ## ABI facts (verified against this platform)
-
 `abi_facts.roc` output, pointer width 32:
 
 | Fact | Value |
@@ -47,10 +46,12 @@ had it inverted, so successful calls surfaced as errors).
 (`env::roc_alloc(size, align) -> ptr`, `env::roc_dealloc(ptr, align)`,
 `env::roc_realloc(ptr, new_size, align) -> ptr`) but their *memory protocol* —
 how much space the host must leave before the data pointer, and what the runtime
-stores there — is not part of the emitted facts. That protocol is the remaining
-blocker: `initialize` still traps with `wasm unreachable` inside the allocator
-path, while `get-definition` / `discover-agent-types` now report the app's real
-metadata.
+stores there — is not part of the emitted facts. Those three functions only serve
+the Roc runtime; the component-model boundary uses `cabi_realloc`, which
+wit-bindgen's glue frees through Rust's global allocator and which therefore must
+be a plain allocation with no Roc header. Mixing the two is what produced the
+long-lived `initialize` trap (see the Development status section of the root
+README).
 
 ## What is still missing
 

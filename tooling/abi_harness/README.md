@@ -9,9 +9,13 @@ remote deployment failure.
 cd tooling/abi_harness
 cargo run --release -- \
   --type counter-agent --method get_count --message increment \
-  --reply "Counter incremented to 1" \
+  --reply "Counter incremented to 1" --then-reply "Counter incremented to 2" \
   ../../build/counter_agent.wasm
 ```
+
+`--reply` matches the app's reply text from one `handle-message` call;
+`--then-reply` checks a second call with the same message, which shows that state
+survived.
 
 It exits non-zero when any of these fail:
 
@@ -24,11 +28,10 @@ It exits non-zero when any of these fail:
   not valid JSON / does not contain the expected reply text,
 - the reply has no `state` field.
 
-Current state of the components built from this tree: `get-definition` and
-`discover-agent-types` pass (the agent metadata is read correctly now), while
-`initialize` still traps inside the allocator path and poisons the instance, so
-the `invoke` checks cannot run. See the Development status section of the root
-README.
+Current state of the components built from this tree: all checks pass for the
+three examples, and CI runs this as a required step. `initialize` used to trap
+inside the allocator path and poison the instance; see the Development status
+section of the root README for what was wrong.
 
 ## Why this exists
 

@@ -175,34 +175,34 @@ golem -L agent invoke 'counter-agent("{}")' handle-message 'increment'
 
 ## ⚠️ Development status
 
-The pre-compiled host is currently **not** fully ABI-compatible with the pinned
-Roc nightly, so the components built here do not run on Golem yet:
+The components built from this tree work on Golem again: `get-definition` /
+`discover-agent-types` report the app's real agent type and tools, `initialize`
+succeeds, and `handle-message` round-trips state (all three examples are covered
+by the `tooling/abi_harness` smoke test in CI).
 
-- **Fixed**: agent metadata. A heap `Str` carries its length in word 3, not
-  word 2, and `Try` uses `1` for `Ok`, not `0`; with both corrected,
-  `get-definition` / `discover-agent-types` report the app's real agent type and
-  tools, which also unblocks multi-component deployments. The authoritative
-  values come from `tooling/glue/abi_facts.roc`.
-- **Open**: `initialize` traps with `wasm unreachable` inside the allocator path,
-  which poisons the instance — every later call fails with
-  `cannot enter component instance`. The compiler declares
-  `env::roc_alloc` / `roc_dealloc` / `roc_realloc` but does not emit the memory
-  protocol around them, and the host's guess (a 16-byte header with a size word
-  at `data - 16`) does not satisfy it.
+Three defects were fixed to get there, all in the hand-written Roc ABI in
+`host/src/roc_std.rs`:
 
-`tooling/abi_harness` reproduces this locally in seconds, and CI runs it
-(report-only until it passes). The durable fix is to stop hand-writing the ABI:
-generate the Rust side from the compiler with `roc glue` instead of matching
-`host/src/roc_std.rs` against each nightly by hand. `tooling/glue/` holds the
-working first step of that migration (specs that run on the pinned nightly and
-dump the ABI surface and layout facts) plus the list of API changes still needed
-for a full Rust generator.
+- `cabi_realloc` handed out pointers carrying the Roc allocation header, but
+  wit-bindgen's glue drops those buffers through Rust's global allocator, so
+  `initialize` aborted inside dlmalloc while dropping its incoming `DataValue`
+  and poisoned the instance. It is now a plain allocation.
+- A heap `Str` carries its length in word 3, not word 2, so every string longer
+  than the 11-byte small-string limit came back garbled — which is why the agent
+  metadata failed to parse and every component reported the fallback `roc-agent`
+  type (`Wrapper agent type name roc-agent is defined by multiple components`).
+- `Try` uses `1` for `Ok`, not `0`, so successful calls surfaced as errors.
 
-Also note that the HTTP, WebSocket, timer and RPC effect functions in
-`host/src/lib.rs` are still stubs (`rocFxWsSend` / `rocFxWsReceive` return `Ok`
-without doing anything, `rocFxSleepMillis` is a no-op, `rocFxRpcInvoke` returns
-`{}`), and the linker drops them from the built components because nothing calls
-them yet.
+The layout values now match the compiler's own emitted facts, dumped by
+`tooling/glue/abi_facts.roc`.
+
+Still open: the HTTP, WebSocket, timer and RPC effect functions in
+`host/src/lib.rs` are stubs (`rocFxWsSend` / `rocFxWsReceive` return `Ok` without
+doing anything, `rocFxSleepMillis` is a no-op, `rocFxRpcInvoke` returns `{}`),
+and the linker drops them from the built components because nothing calls them
+yet. Longer term, `host/src/roc_std.rs` should be replaced by generated glue
+(`roc glue`) so these layouts stop being maintained by hand — see
+`tooling/glue/`.
 
 ---
 

@@ -57,12 +57,10 @@ jobs:
           echo "Package build verified successfully!"
 
       - name: ABI smoke test
-        # Runs each built component outside Golem (see tooling/abi_harness).
-        # Expected to fail until the Roc-to-Rust ABI matches the pinned
-        # compiler: today the components trap in `initialize` and report the
-        # fallback `roc-agent` type, which also breaks `golem deploy`. Drop
-        # `continue-on-error` once this reports PASS.
-        continue-on-error: true
+        # Runs each built component outside Golem (see tooling/abi_harness):
+        # agent metadata, initialize, and message round-trips. This is what
+        # catches the hand-written ABI drifting from the pinned compiler before
+        # a release ships it.
         run: |
           cargo build --release --manifest-path tooling/abi_harness/Cargo.toml
           HARNESS=tooling/abi_harness/target/release/abi_harness
@@ -71,7 +69,9 @@ jobs:
 
           check "$HARNESS" build/counter_agent.wasm \
             --type counter-agent --method get_count \
-            --message increment --reply "Counter incremented to 1"
+            --message increment \
+            --reply "Counter incremented to 1" \
+            --then-reply "Counter incremented to 2"
 
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \

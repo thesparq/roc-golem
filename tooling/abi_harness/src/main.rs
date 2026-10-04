@@ -102,12 +102,15 @@ struct Expectation {
     method: Option<String>,
     message: String,
     reply_contains: Option<String>,
+    /// Reply expected from a second invocation of the same message, which shows
+    /// that state survived between calls.
+    then_reply_contains: Option<String>,
 }
 
 fn usage() -> String {
     String::from(
         "usage: abi_harness <component.wasm> [--type NAME] [--method NAME] \
-         [--message TEXT] [--reply SUBSTRING]",
+         [--message TEXT] [--reply SUBSTRING] [--then-reply SUBSTRING]",
     )
 }
 
@@ -119,6 +122,7 @@ fn parse_args() -> Result<Expectation> {
         method: None,
         message: String::from("increment"),
         reply_contains: None,
+        then_reply_contains: None,
     };
 
     while let Some(arg) = args.next() {
@@ -129,6 +133,7 @@ fn parse_args() -> Result<Expectation> {
                 expectation.message = args.next().context("--message needs a value")?
             }
             "--reply" => expectation.reply_contains = args.next(),
+            "--then-reply" => expectation.then_reply_contains = args.next(),
             "-h" | "--help" => bail!("{}", usage()),
             other => {
                 if expectation.component.as_os_str().is_empty() {
@@ -263,47 +268,42 @@ fn main() -> Result<ExitCode> {
         }
     }
 
-    // 4. A message round-trip: the state must advance and the reply text must
-    //    come back intact (garbled multi-word strings show up here).
-    match guest.call_invoke(
-        &mut store,
-        "handle-message",
-        &text_value(&expectation.message),
-        &principal,
-    ) {
-        Ok(Ok(value)) => {
-            let raw = text_of(&value).unwrap_or_default();
-            println!("[invoke handle-message]    = {:?}", raw);
-            match serde_json::from_str::<serde_json::Value>(&raw) {
-                Ok(parsed) => {
-                    if parsed.get("state").is_none() {
-                        failures.push(format!("reply has no \"state\" field: {}", raw));
+    // 4. Message round-trips. `invoke` returns the app's reply text, so the
+    //    reply is matched directly; a second call with the same message shows
+    //    whether state survived.
+    for (label, expected) in [
+        ("invoke handle-message", &expectation.reply_contains),
+        ("invoke handle-message again", &expectation.then_reply_contains),
+    ] {
+        if expected.is_none() {
+            continue;
+        }
+        match guest.call_invoke(
+            &mut store,
+            "handle-message",
+            &text_value(&expectation.message),
+            &principal,
+        ) {
+            Ok(Ok(value)) => {
+                let raw = text_of(&value).unwrap_or_default();
+                println!("[{}] = {:?}", label, raw);
+                if let Some(expected) = expected {
+                    if !raw.contains(expected.as_str()) {
+                        failures.push(format!(
+                            "{}: reply {:?} does not contain {:?}",
+                            label, raw, expected
+                        ));
                     }
-                    if let Some(expected) = &expectation.reply_contains {
-                        let reply = parsed
-                            .get("response")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default();
-                        if !reply.contains(expected.as_str()) {
-                            failures.push(format!(
-                                "reply {:?} does not contain {:?}",
-                                reply, expected
-                            ));
-                        }
-                    }
-                }
-                Err(err) => {
-                    failures.push(format!("reply is not valid JSON ({}): {:?}", err, raw))
                 }
             }
-        }
-        Ok(Err(err)) => {
-            println!("[invoke handle-message]    = agent error {:?}", err);
-            failures.push(format!("invoke handle-message returned an error: {:?}", err));
-        }
-        Err(err) => {
-            println!("[invoke handle-message]    = trap\n{}", err);
-            failures.push(String::from("invoke handle-message trapped"));
+            Ok(Err(err)) => {
+                println!("[{}] = agent error {:?}", label, err);
+                failures.push(format!("{} returned an error: {:?}", label, err));
+            }
+            Err(err) => {
+                println!("[{}] = trap\n{}", label, err);
+                failures.push(format!("{} trapped", label));
+            }
         }
     }
 

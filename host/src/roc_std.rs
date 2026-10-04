@@ -108,17 +108,45 @@ pub unsafe extern "C" fn roc_memcpy(dst: *mut u8, src: *const u8, length: usize)
     dst
 }
 
+/// Component-model boundary allocator (`cabi_realloc`).
+///
+/// wit-bindgen's generated glue builds Rust `String`/`Vec` values straight from
+/// these pointers and drops them through Rust's global allocator, so this
+/// function must behave like a plain allocation. It must NOT hand out pointers
+/// carrying the Roc header that `roc_alloc` reserves: doing so made `initialize`
+/// abort inside dlmalloc while dropping the incoming `DataValue`, which then
+/// poisoned the whole instance (`wasm unreachable`, and every later call failing
+/// with `cannot enter component instance`).
 #[no_mangle]
 pub unsafe extern "C" fn cabi_realloc(
     old_ptr: *mut u8,
-    _old_size: usize,
+    old_size: usize,
     alignment: usize,
     new_size: usize,
 ) -> *mut u8 {
+    let align = alignment.max(1);
     if old_ptr.is_null() {
-        roc_alloc(new_size, alignment as u32)
+        if new_size == 0 {
+            return align as *mut u8;
+        }
+        let layout = Layout::from_size_align_unchecked(new_size, align);
+        let ptr = alloc(layout);
+        if ptr.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        ptr
+    } else if new_size == 0 {
+        let layout = Layout::from_size_align_unchecked(old_size, align);
+        dealloc(old_ptr, layout);
+        align as *mut u8
     } else {
-        roc_realloc(old_ptr, new_size, alignment as u32)
+        let layout = Layout::from_size_align_unchecked(old_size, align);
+        let ptr = realloc(old_ptr, layout, new_size);
+        if ptr.is_null() {
+            let new_layout = Layout::from_size_align_unchecked(new_size, align);
+            std::alloc::handle_alloc_error(new_layout);
+        }
+        ptr
     }
 }
 

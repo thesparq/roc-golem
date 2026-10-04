@@ -67,10 +67,7 @@ jobs:
 
       - name: ABI smoke test
         # Same check as CI: a release must not ship components that trap on
-        # their first call. Non-blocking only until the hand-written ABI in
-        # `host/src/roc_std.rs` matches the pinned compiler; make this step
-        # required once it reports PASS.
-        continue-on-error: true
+        # their first call (v0.5.9 did).
         run: |
           cargo build --release --manifest-path tooling/abi_harness/Cargo.toml
           HARNESS=tooling/abi_harness/target/release/abi_harness
@@ -79,7 +76,9 @@ jobs:
 
           check "$HARNESS" build/counter_agent.wasm \
             --type counter-agent --method get_count \
-            --message increment --reply "Counter incremented to 1"
+            --message increment \
+            --reply "Counter incremented to 1" \
+            --then-reply "Counter incremented to 2"
 
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
