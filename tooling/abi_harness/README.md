@@ -18,9 +18,13 @@ Flags:
 - `--reply` matches the app's reply text from one `handle-message` call.
 - `--then-message` / `--then-reply` send a second (possibly different) message,
   which is how state persistence and multi-step flows are checked.
-- `--expect-log` matches a line the agent emitted through `logInfo!` etc., and
-  `--expect-sent` matches a WebSocket message the agent sent. Both are recorded
-  by the stubs, so effect wiring is verified, not just reply text.
+- `--config` is the agent config handed to `initialize` (the effects example
+  takes its base URL from it).
+- `--expect-log` matches a line the agent emitted through `logInfo!` etc.,
+  `--expect-sent` matches a WebSocket message the agent sent, `--expect-http`
+  matches a request line the HTTP stub received, and `--expect-rpc` matches a
+  remote call the agent made. All of them are recorded by the stubs, so effect
+  wiring is verified, not just reply text.
 
 It exits non-zero when any of these fail:
 
@@ -31,13 +35,14 @@ It exits non-zero when any of these fail:
 - `initialize` traps or returns an error,
 - `invoke handle-message` traps, returns an error, or returns a reply that does
   not contain the expected text,
-- an expected log line or WebSocket send was never recorded.
+- an expected log line, WebSocket send, HTTP request or RPC call was never
+  recorded.
 
 Current state of the components built from this tree: all checks pass for the
-three examples, including the streaming agent's connect-then-send flow, and CI
-runs this as a required step. `initialize` used to trap inside the allocator path
-and poison the instance; see the Development status section of the root README
-for what was wrong.
+four examples — including the streaming agent's connect-then-send flow and the
+effects agent's HTTP and RPC calls — and CI runs this as a required step.
+`initialize` used to trap inside the allocator path and poison the instance; see
+the Development status section of the root README for what was wrong.
 
 ## Why this exists
 
@@ -49,14 +54,19 @@ release is an example: `counter_agent.wasm` from that release traps inside
 `initialize` and reports the fallback agent type. `tooling/glue/abi_facts.roc`
 dumps the compiler's own layout facts for comparison.
 
-## WIT copies
+## WIT copies and stubs
 
 `wit/` holds a small, self-contained world (`harness-world`) describing what the
 examples' components import, so the harness can supply the missing host
-interfaces with no Golem runtime present: agent types, the monotonic clock, the
-WebSocket client (stubbed with a recording connection) and `wasi:logging`
-(recorded). `wit/deps/` is copied from the repo's `wit/deps/`, trimmed to those
-interfaces. When the upstream WIT changes, re-copy these files; the only intended
-difference is that `golem-agent/guest.wit` keeps just the `guest` interface and
-drops the `agent-guest` / `agent-host` worlds, which import Golem host interfaces
-the harness does not model.
+interfaces with no Golem runtime present: agent types, the clocks, `wasi:io`,
+`wasi:http` (answered from a canned response while recording the request),
+`golem:agent/host` (RPC calls recorded), the WebSocket client (a recording
+connection) and `wasi:logging` (recorded).
+
+`src/stubs.rs` implements the WASI interfaces by hand. wasmtime's own
+`wasi:http` implementation tracks a newer WASI version (`wasi:http@0.2.12`) than
+Golem's WIT bundle pins (`@0.2.3`), so that crate cannot be linked here; the
+stubs were generated from this crate's `bindgen!` expansion and then hand-tuned.
+
+`wit/deps/` is copied from the repo's `wit/deps/`. When the upstream WIT
+changes, re-copy these files.

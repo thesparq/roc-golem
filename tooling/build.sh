@@ -140,9 +140,10 @@ case "$COMMAND" in
         build_app "counter"
         build_app "ai_tool"
         build_app "streaming_agent"
+        build_app "effects"
         package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
-    counter|ai_tool|streaming_agent)
+    counter|ai_tool|streaming_agent|effects)
         build_app "$COMMAND"
         ;;
     all)
@@ -150,13 +151,14 @@ case "$COMMAND" in
         build_app "counter"
         build_app "ai_tool"
         build_app "streaming_agent"
+        build_app "effects"
         package_platform "v0.1.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)
         if [[ -f "$COMMAND" ]]; then
             build_app "$COMMAND"
         else
-            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | all]"
+            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | effects | all]"
             exit 1
         fi
         ;;

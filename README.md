@@ -120,8 +120,10 @@ roc-golem/
 │   │   └── main.roc            # Stateful counter agent example
 │   ├── ai_tool/
 │   │   └── main.roc            # AI agent with tool declarations example
-│   └── streaming_agent/
-│       └── main.roc            # WebSocket streaming agent example
+│   ├── streaming_agent/
+│   │   └── main.roc            # WebSocket streaming agent example
+│   └── effects/
+│       └── main.roc            # HTTP + agent-to-agent RPC example
 ├── tooling/
 │   ├── build.sh                # Multi-phase build, package, & release script
 │   ├── pack_platform/          # Platform tarball & BLAKE3 base64url packaging tool
@@ -196,13 +198,12 @@ Three defects were fixed to get there, all in the hand-written Roc ABI in
 The layout values now match the compiler's own emitted facts, dumped by
 `tooling/glue/abi_facts.roc`.
 
-Still open: `http!` and `rpc!` are implemented in the host (WASI outgoing-handler and
-`golem:agent/host`'s `wasm-rpc`) but are not exercised by the harness yet, so they
-are unverified; `golem -L deploy` against a local server currently fails at
-`Applying changes to the staging area` with a CLI/server protocol error that
-reproduces independently of these components. Longer term, `host/src/roc_std.rs`
-should be replaced by generated glue (`roc glue`) so the layout constants stop
-being maintained by hand — see `tooling/glue/`.
+Still open: `golem -L deploy` against a local server fails at `Applying changes
+to the staging area` with a CLI/server protocol error that reproduces
+independently of these components (a single-component deploy against a fresh
+server fails the same way). Longer term, `host/src/roc_std.rs` should be replaced
+by generated glue (`roc glue`) so the layout constants stop being maintained by
+hand — see `tooling/glue/`.
 
 ## ✨ Effects
 
@@ -217,8 +218,7 @@ apps call them through `pf.Golem`.
 | `now!` | `wasi:clocks/monotonic-clock` | monotonic milliseconds |
 | `sleep!` | `wasi:clocks/monotonic-clock` | blocking wait; Golem records it in the oplog, so a resumed agent does not repeat it |
 | `http!` | `wasi:http/outgoing-handler` | request/response as JSON; response is `{status, headers, body}` |
-| `rpc!` | `golem:agent/host` | target is an agent id such as `counter-agent("{}")`; returns the reply text |
-| `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
+| `rpc!` | `golem:agent/host` | target is an agent id such as `counter-agent("{}")`; returns the reply text || `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.

@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use wasmtime::component::{bindgen, Component, Linker};
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
+use wasmtime::component::ResourceTable;
+
+mod stubs;
 
 bindgen!({
     path: "wit",
@@ -25,29 +27,53 @@ use golem::core::types::{DataValue, ElementValue, TextReference, TextSource};
 /// set, a logging sink and WebSocket connections; the recorded effects are what
 /// the checks below assert on.
 struct Ctx {
-    wasi: WasiCtx,
-    table: wasmtime_wasi::ResourceTable,
+    table: ResourceTable,
     logs: Vec<String>,
     sent: Vec<String>,
     connections: Vec<StubConnection>,
+    /// Remote calls the agent made through `rpc!`.
+    rpc_calls: Vec<String>,
+    /// HTTP state used by the `wasi:http` stubs in `stubs.rs`.
+    fields_table: Vec<std::collections::HashMap<String, Vec<Vec<u8>>>>,
+    requests_table: Vec<StubRequest>,
+    body_slots: Vec<()>,
+    request_body: Vec<u8>,
+    response_body: Vec<u8>,
+    response_cursor: usize,
+    /// Request lines the HTTP stubs saw, for `--expect-http`.
+    http_request_lines: Vec<String>,
+}
+
+/// An outgoing request as recorded by the `wasi:http` stubs.
+#[derive(Clone, Default)]
+pub struct StubRequest {
+    pub method: String,
+    pub scheme: String,
+    pub authority: String,
+    pub path: String,
+}
+
+/// Name of a `wasi:http/types` method, as it appears on the wire.
+pub fn method_name(method: &wasi::http::types::Method) -> String {
+    match method {
+        wasi::http::types::Method::Get => "GET",
+        wasi::http::types::Method::Head => "HEAD",
+        wasi::http::types::Method::Post => "POST",
+        wasi::http::types::Method::Put => "PUT",
+        wasi::http::types::Method::Delete => "DELETE",
+        wasi::http::types::Method::Connect => "CONNECT",
+        wasi::http::types::Method::Options => "OPTIONS",
+        wasi::http::types::Method::Trace => "TRACE",
+        wasi::http::types::Method::Patch => "PATCH",
+        wasi::http::types::Method::Other(other) => other.as_str(),
+    }
+    .to_string()
 }
 
 /// A stand-in WebSocket connection that records what the agent sends.
 struct StubConnection {
     sent: Vec<String>,
     closed: bool,
-}
-
-/// Stand-in pollable returned by `subscribe`.
-struct StubPollable;
-
-impl WasiView for Ctx {
-    fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView {
-            ctx: &mut self.wasi,
-            table: &mut self.table,
-        }
-    }
 }
 
 impl wasmtime::component::HasData for Ctx {
@@ -76,13 +102,28 @@ impl wasi::clocks::monotonic_clock::Host for Ctx {
         &mut self,
         _when: u64,
     ) -> wasmtime::component::Resource<wasi::io::poll::Pollable> {
-        unimplemented!("not used by roc-golem components")
+        unsafe { wasmtime::component::Resource::new_own(0) }
     }
     fn subscribe_instant(
         &mut self,
         _when: u64,
     ) -> wasmtime::component::Resource<wasi::io::poll::Pollable> {
-        unimplemented!("not used by roc-golem components")
+        unsafe { wasmtime::component::Resource::new_own(0) }
+    }
+}
+
+impl wasi::clocks::wall_clock::Host for Ctx {
+    fn now(&mut self) -> wasi::clocks::wall_clock::Datetime {
+        wasi::clocks::wall_clock::Datetime {
+            seconds: 0,
+            nanoseconds: 0,
+        }
+    }
+    fn resolution(&mut self) -> wasi::clocks::wall_clock::Datetime {
+        wasi::clocks::wall_clock::Datetime {
+            seconds: 1,
+            nanoseconds: 0,
+        }
     }
 }
 
@@ -223,6 +264,179 @@ impl golem::websocket::client::HostWebsocketConnection for Ctx {
     }
 }
 
+/// A stand-in for the host's RPC client, recording what the agent invoked.
+struct StubRpc {
+    target: String,
+}
+
+impl golem::agent::host::Host for Ctx {
+    fn get_all_agent_types(&mut self) -> Vec<golem::agent::common::RegisteredAgentType> {
+        Vec::new()
+    }
+
+    fn get_agent_type(
+        &mut self,
+        _agent_type_name: String,
+    ) -> Option<golem::agent::common::RegisteredAgentType> {
+        None
+    }
+
+    fn make_agent_id(
+        &mut self,
+        agent_type_name: String,
+        _input: golem::agent::common::DataValue,
+        _phantom_id: Option<golem::core::types::Uuid>,
+    ) -> Result<String, golem::agent::common::AgentError> {
+        Ok(format!("{agent_type_name}(\"{{}}\")"))
+    }
+
+    fn parse_agent_id(
+        &mut self,
+        agent_id: String,
+    ) -> Result<
+        (
+            String,
+            golem::agent::common::DataValue,
+            Option<golem::core::types::Uuid>,
+        ),
+        golem::agent::common::AgentError,
+    > {
+        // Accept whatever the agent passes and treat it as the stub target, so
+        // the call reaches `invoke-and-await` below.
+        Ok((
+            agent_id,
+            golem::agent::common::DataValue::Tuple(Vec::new()),
+            None,
+        ))
+    }
+
+    fn create_webhook(&mut self, _promise_id: golem::core::types::PromiseId) -> String {
+        String::from("http://stub/webhook")
+    }
+
+    fn get_config_value(
+        &mut self,
+        _key: Vec<String>,
+        _expected_type: golem::core::types::WitType,
+    ) -> golem::core::types::WitValue {
+        unimplemented!("get-config-value is not used by roc-golem components")
+    }
+}
+
+impl golem::agent::host::HostWasmRpc for Ctx {
+    fn new(
+        &mut self,
+        agent_type_name: String,
+        _constructor: golem::agent::common::DataValue,
+        _phantom_id: Option<golem::core::types::Uuid>,
+        _agent_config: Vec<golem::agent::common::TypedAgentConfigValue>,
+    ) -> wasmtime::component::Resource<golem::agent::host::WasmRpc> {
+        let rep = self.rpc_calls.len() as u32;
+        self.rpc_calls.push(format!("new({agent_type_name})"));
+        unsafe { wasmtime::component::Resource::new_own(rep) }
+    }
+
+    fn invoke_and_await(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
+        method_name: String,
+        _input: golem::agent::common::DataValue,
+    ) -> Result<golem::agent::common::DataValue, golem::agent::host::RpcError> {
+        self.rpc_calls.push(format!("invoke-and-await({method_name})"));
+        Ok(golem::agent::common::DataValue::Tuple(vec![
+            golem::core::types::ElementValue::UnstructuredText(
+                golem::core::types::TextReference::Inline(golem::core::types::TextSource {
+                    data: String::from("stub-rpc-reply"),
+                    text_type: None,
+                }),
+            ),
+        ]))
+    }
+
+    fn invoke(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
+        method_name: String,
+        _input: golem::agent::common::DataValue,
+    ) -> Result<(), golem::agent::host::RpcError> {
+        self.rpc_calls.push(format!("invoke({method_name})"));
+        Ok(())
+    }
+
+    fn async_invoke_and_await(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
+        method_name: String,
+        _input: golem::agent::common::DataValue,
+    ) -> wasmtime::component::Resource<golem::agent::host::FutureInvokeResult> {
+        self.rpc_calls.push(format!("async-invoke-and-await({method_name})"));
+        unsafe { wasmtime::component::Resource::new_own(0) }
+    }
+
+    fn schedule_invocation(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
+        _scheduled_time: wasi::clocks::wall_clock::Datetime,
+        _method_name: String,
+        _input: golem::agent::common::DataValue,
+    ) {
+        unimplemented!("schedule-invocation is not used by roc-golem components")
+    }
+
+    fn schedule_cancelable_invocation(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
+        _scheduled_time: wasi::clocks::wall_clock::Datetime,
+        _method_name: String,
+        _input: golem::agent::common::DataValue,
+    ) -> wasmtime::component::Resource<golem::agent::host::CancellationToken> {
+        unimplemented!("schedule-cancelable-invocation is not used by roc-golem components")
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::agent::host::HostFutureInvokeResult for Ctx {
+    fn subscribe(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>,
+    ) -> wasmtime::component::Resource<wasi::io::poll::Pollable> {
+        unsafe { wasmtime::component::Resource::new_own(0) }
+    }
+
+    fn get(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>,
+    ) -> Option<Result<golem::agent::common::DataValue, golem::agent::host::RpcError>> {
+        None
+    }
+
+    fn cancel(&mut self, _self_: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>) {}
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::agent::host::HostCancellationToken for Ctx {
+    fn cancel(&mut self, _self_: wasmtime::component::Resource<golem::agent::host::CancellationToken>) {}
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::agent::host::CancellationToken>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
 /// What the component under test is expected to report and do.
 struct Expectation {
     component: PathBuf,
@@ -239,13 +453,21 @@ struct Expectation {
     expect_log: Option<String>,
     /// Substring expected in a WebSocket message the agent sent.
     expect_sent: Option<String>,
+    /// Agent config passed to `initialize`; defaults to the stub HTTP server URL
+    /// when `--http-stub` is set, otherwise `{}`.
+    config: Option<String>,
+    /// Substring expected in a request line the stub HTTP server received.
+    expect_http: Option<String>,
+    /// Substring expected in the remote calls the agent made through `rpc!`.
+    expect_rpc: Option<String>,
 }
 
 fn usage() -> String {
     String::from(
         "usage: abi_harness <component.wasm> [--type NAME] [--method NAME] \
          [--message TEXT] [--reply SUBSTRING] [--then-message TEXT] \
-         [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING]",
+         [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING] \\
+         [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING]",
     )
 }
 
@@ -261,6 +483,9 @@ fn parse_args() -> Result<Expectation> {
         then_reply_contains: None,
         expect_log: None,
         expect_sent: None,
+        config: None,
+        expect_http: None,
+        expect_rpc: None,
     };
 
     while let Some(arg) = args.next() {
@@ -275,6 +500,9 @@ fn parse_args() -> Result<Expectation> {
             "--then-reply" => expectation.then_reply_contains = args.next(),
             "--expect-log" => expectation.expect_log = args.next(),
             "--expect-sent" => expectation.expect_sent = args.next(),
+            "--config" => expectation.config = args.next(),
+            "--expect-http" => expectation.expect_http = args.next(),
+            "--expect-rpc" => expectation.expect_rpc = args.next(),
             "-h" | "--help" => bail!("{}", usage()),
             other => {
                 if expectation.component.as_os_str().is_empty() {
@@ -329,18 +557,32 @@ fn main() -> Result<ExitCode> {
         anyhow::anyhow!("failed to load {}: {err}", expectation.component.display())
     })?;
 
+    let agent_config = expectation
+        .config
+        .clone()
+        .unwrap_or_else(|| String::from("{}"));
+
+    // Every import the components use is implemented by this harness (see
+    // `stubs.rs`), so no wasmtime-wasi linker is involved: wasmtime's own
+    // `wasi:http` implementation tracks a newer WASI version than Golem pins.
     let mut linker = Linker::<Ctx>::new(&engine);
-    wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
     HarnessWorld::add_to_linker::<Ctx, Ctx>(&mut linker, |ctx: &mut Ctx| ctx)?;
 
     let mut store = Store::new(
         &engine,
         Ctx {
-            wasi: WasiCtx::builder().build(),
             table: Default::default(),
             logs: Vec::new(),
             sent: Vec::new(),
             connections: Vec::new(),
+            rpc_calls: Vec::new(),
+            fields_table: Vec::new(),
+            requests_table: Vec::new(),
+            body_slots: Vec::new(),
+            request_body: Vec::new(),
+            response_body: Vec::new(),
+            response_cursor: 0,
+            http_request_lines: Vec::new(),
         },
     );
     let bindings = HarnessWorld::instantiate(&mut store, &component, &linker).map_err(|err| {
@@ -400,7 +642,7 @@ fn main() -> Result<ExitCode> {
 
     // 3. initialize: the first call that runs app code and allocates. A trap
     //    here poisons the instance, so every later call fails too.
-    match guest.call_initialize(&mut store, "harness", &text_value("{}"), &principal) {
+    match guest.call_initialize(&mut store, "harness", &text_value(&agent_config), &principal) {
         Ok(Ok(())) => println!("[initialize]               = ok"),
         Ok(Err(err)) => {
             println!("[initialize]               = agent error {:?}", err);
@@ -469,6 +711,27 @@ fn main() -> Result<ExitCode> {
                 failures.push(format!(
                     "no log line contains {:?} (recorded: {:?})",
                     expected, ctx.logs
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_http {
+            let requests = ctx.http_request_lines.clone();
+            let hit = requests.iter().any(|line| line.contains(expected.as_str()));
+            println!("[http requests] {:?}", requests);
+            if !hit {
+                failures.push(format!(
+                    "no HTTP request line contains {:?} (received: {:?})",
+                    expected, requests
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_rpc {
+            let hit = ctx.rpc_calls.iter().any(|call| call.contains(expected.as_str()));
+            println!("[rpc calls] {:?}", ctx.rpc_calls);
+            if !hit {
+                failures.push(format!(
+                    "no rpc call contains {:?} (made: {:?})",
+                    expected, ctx.rpc_calls
                 ));
             }
         }

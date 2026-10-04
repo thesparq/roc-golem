@@ -91,6 +91,13 @@ jobs:
             --then-message hello --then-reply "Sent: hello" \
             --expect-sent hello
 
+          check "$HARNESS" build/effects_agent.wasm \
+            --type effects-agent --config "http://example.test/" \
+            --message fetch --reply "HTTP 200" \
+            --expect-http "GET / host=example.test" \
+            --then-message rpc --then-reply "RPC reply: stub-rpc-reply" \
+            --expect-rpc "invoke-and-await(handle-message)"
+
           exit $status
 
       - name: Create GitHub Release & Upload Assets

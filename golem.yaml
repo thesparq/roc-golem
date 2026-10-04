@@ -29,3 +29,8 @@ components:
     componentWasm: "../../build/streaming_agent_agent.wasm"
     build:
       - command: "../../tooling/build.sh streaming_agent"
+  roc-golem:effects:
+    dir: "examples/effects"
+    componentWasm: "../../build/effects_agent.wasm"
+    build:
+      - command: "../../tooling/build.sh effects"
