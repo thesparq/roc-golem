@@ -233,8 +233,16 @@ fn build_agent_type() -> AgentType {
 // Host effect functions exposed to the Roc guest runtime via C-ABI
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxLog(_level: u8, _msg: *const RocStr) {
-    // Logging bridge
+pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
+    let text = if msg.is_null() { "" } else { (*msg).as_str() };
+    let level = match level {
+        0 => wasi::logging::logging::Level::Trace,
+        1 => wasi::logging::logging::Level::Debug,
+        2 => wasi::logging::logging::Level::Info,
+        3 => wasi::logging::logging::Level::Warn,
+        _ => wasi::logging::logging::Level::Error,
+    };
+    wasi::logging::logging::log(level, "roc-agent", text);
 }
 
 #[no_mangle]
@@ -247,11 +255,36 @@ pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcInvoke(
     out: *mut RocResult<RocStr, RocStr>,
-    _target: *const RocStr,
-    _function_name: *const RocStr,
-    _payload: *const RocStr,
+    target: *const RocStr,
+    function_name: *const RocStr,
+    payload: *const RocStr,
 ) {
-    ptr::write(out, RocResult::ok(RocStr::from_str("{}")));
+    let target_str = if target.is_null() { "" } else { (*target).as_str() };
+    let method = if function_name.is_null() {
+        ""
+    } else {
+        (*function_name).as_str()
+    };
+    let payload_str = if payload.is_null() { "{}" } else { (*payload).as_str() };
+
+    // The target is an agent id, as produced by `make-agent-id` / the Golem CLI
+    // (for example `counter-agent("{}")`).
+    let result = match golem::agent::host::parse_agent_id(target_str) {
+        Ok((agent_type_name, constructor, phantom_id)) => {
+            let rpc = golem::agent::host::WasmRpc::new(&agent_type_name, &constructor, phantom_id, &[]);
+            let input = wrap_string_data_value(String::from(payload_str));
+            match rpc.invoke_and_await(method, &input) {
+                Ok(value) => Ok(extract_data_value_string(&value)),
+                Err(err) => Err(format!("rpc to {} failed: {:?}", target_str, err)),
+            }
+        }
+        Err(err) => Err(format!("invalid agent id {:?}: {:?}", target_str, err)),
+    };
+
+    match result {
+        Ok(text) => ptr::write(out, RocResult::ok(RocStr::from_str(&text))),
+        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+    }
 }
 
 #[no_mangle]
@@ -474,6 +507,59 @@ pub unsafe extern "C" fn rocFxHttpRequest(
 }
 
 // WebSocket Effect C-ABI
+//
+// Handles are indices into this table, offset by one so that 0 is never a valid
+// connection (Roc's `websocketConnect!` returns a `U32`).
+thread_local! {
+    static WS_CONNECTIONS: RefCell<Vec<Option<golem::websocket::client::WebsocketConnection>>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+fn ws_store(connection: golem::websocket::client::WebsocketConnection) -> u32 {
+    WS_CONNECTIONS.with(|list| {
+        let mut list = list.borrow_mut();
+        if let Some(index) = list.iter().position(|slot| slot.is_none()) {
+            list[index] = Some(connection);
+            (index + 1) as u32
+        } else {
+            list.push(Some(connection));
+            list.len() as u32
+        }
+    })
+}
+
+fn ws_take(handle: u32) -> Option<golem::websocket::client::WebsocketConnection> {
+    if handle == 0 {
+        return None;
+    }
+    WS_CONNECTIONS.with(|list| {
+        let mut list = list.borrow_mut();
+        list.get_mut((handle - 1) as usize).and_then(|slot| slot.take())
+    })
+}
+
+fn ws_with<R>(
+    handle: u32,
+    f: impl FnOnce(&golem::websocket::client::WebsocketConnection) -> R,
+) -> Option<R> {
+    if handle == 0 {
+        return None;
+    }
+    WS_CONNECTIONS.with(|list| {
+        let list = list.borrow();
+        list.get((handle - 1) as usize)
+            .and_then(|slot| slot.as_ref())
+            .map(f)
+    })
+}
+
+fn ws_message_text(message: golem::websocket::client::Message) -> String {
+    match message {
+        golem::websocket::client::Message::Text(text) => text,
+        golem::websocket::client::Message::Binary(bytes) => String::from_utf8_lossy(&bytes).into(),
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsConnect(
     out: *mut RocResult<u32, RocStr>,
@@ -481,10 +567,9 @@ pub unsafe extern "C" fn rocFxWsConnect(
 ) {
     let url_str = if url.is_null() { "" } else { (*url).as_str() };
     match golem::websocket::client::WebsocketConnection::connect(url_str, None) {
-        Ok(conn) => {
-            // Store connection handle as needed
-            drop(conn);
-            ptr::write(out, RocResult::ok(1u32));
+        Ok(connection) => {
+            let handle = ws_store(connection);
+            ptr::write(out, RocResult::ok(handle));
         }
         Err(err) => {
             ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
@@ -495,32 +580,72 @@ pub unsafe extern "C" fn rocFxWsConnect(
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsSend(
     out: *mut RocResult<(), RocStr>,
-    _handle: u32,
-    _msg: *const RocStr,
+    handle: u32,
+    msg: *const RocStr,
 ) {
-    ptr::write(out, RocResult::ok(()));
+    let text = if msg.is_null() { "" } else { (*msg).as_str() };
+    let sent = ws_with(handle, |connection| {
+        connection.send(&golem::websocket::client::Message::Text(String::from(text)))
+    });
+    match sent {
+        Some(Ok(())) => ptr::write(out, RocResult::ok(())),
+        Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err)))),
+        None => ptr::write(
+            out,
+            RocResult::err(RocStr::from_str(&format!("unknown websocket handle {}", handle))),
+        ),
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsReceive(
     out: *mut RocResult<RocStr, RocStr>,
-    _handle: u32,
+    handle: u32,
 ) {
-    ptr::write(out, RocResult::ok(RocStr::from_str("")));
+    let received = ws_with(handle, |connection| connection.receive());
+    match received {
+        Some(Ok(message)) => {
+            let text = ws_message_text(message);
+            ptr::write(out, RocResult::ok(RocStr::from_str(&text)));
+        }
+        Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err)))),
+        None => ptr::write(
+            out,
+            RocResult::err(RocStr::from_str(&format!("unknown websocket handle {}", handle))),
+        ),
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsClose(
     out: *mut RocResult<(), RocStr>,
-    _handle: u32,
+    handle: u32,
 ) {
-    ptr::write(out, RocResult::ok(()));
+    match ws_take(handle) {
+        Some(connection) => {
+            let _ = connection.close(None, None);
+            drop(connection);
+            ptr::write(out, RocResult::ok(()));
+        }
+        None => ptr::write(
+            out,
+            RocResult::err(RocStr::from_str(&format!("unknown websocket handle {}", handle))),
+        ),
+    }
 }
 
 // Timer Effect C-ABI
 #[no_mangle]
-pub unsafe extern "C" fn rocFxSleepMillis(_millis: u64) {
-    // Durable sleep
+pub unsafe extern "C" fn rocFxSleepMillis(millis: u64) {
+    // Blocking on a WASI clock is the only sleep primitive Golem exposes; the
+    // runtime records the wait in the agent's oplog, so a resumed agent does not
+    // repeat it. Timer-style callbacks (rather than a blocking sleep) would use
+    // the agent host's `schedule-invocation`, which this platform does not expose
+    // yet.
+    let nanos = millis.saturating_mul(1_000_000);
+    let pollable = wasi::clocks::monotonic_clock::subscribe_duration(nanos);
+    pollable.block();
+    drop(pollable);
 }
 
 #[no_mangle]

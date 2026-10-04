@@ -196,13 +196,32 @@ Three defects were fixed to get there, all in the hand-written Roc ABI in
 The layout values now match the compiler's own emitted facts, dumped by
 `tooling/glue/abi_facts.roc`.
 
-Still open: the HTTP, WebSocket, timer and RPC effect functions in
-`host/src/lib.rs` are stubs (`rocFxWsSend` / `rocFxWsReceive` return `Ok` without
-doing anything, `rocFxSleepMillis` is a no-op, `rocFxRpcInvoke` returns `{}`),
-and the linker drops them from the built components because nothing calls them
-yet. Longer term, `host/src/roc_std.rs` should be replaced by generated glue
-(`roc glue`) so these layouts stop being maintained by hand — see
-`tooling/glue/`.
+Still open: `http!` and `rpc!` are implemented in the host (WASI outgoing-handler and
+`golem:agent/host`'s `wasm-rpc`) but are not exercised by the harness yet, so they
+are unverified; `golem -L deploy` against a local server currently fails at
+`Applying changes to the staging area` with a CLI/server protocol error that
+reproduces independently of these components. Longer term, `host/src/roc_std.rs`
+should be replaced by generated glue (`roc glue`) so the layout constants stop
+being maintained by hand — see `tooling/glue/`.
+
+## ✨ Effects
+
+Every effect is declared in `platform/Effect.roc` and wrapped by `platform/Golem.roc`;
+apps call them through `pf.Golem`.
+
+| Effect | Backing host function | Notes |
+| --- | --- | --- |
+| `logTrace!` … `logError!` | `wasi:logging` | context is set to `roc-agent` |
+| `workerId!` | `golem:api/host` | current agent id |
+| `setPersistence!` | `golem:api/host` | `PersistNothing` / `PersistStateOnly` / `PersistEverything` |
+| `now!` | `wasi:clocks/monotonic-clock` | monotonic milliseconds |
+| `sleep!` | `wasi:clocks/monotonic-clock` | blocking wait; Golem records it in the oplog, so a resumed agent does not repeat it |
+| `http!` | `wasi:http/outgoing-handler` | request/response as JSON; response is `{status, headers, body}` |
+| `rpc!` | `golem:agent/host` | target is an agent id such as `counter-agent("{}")`; returns the reply text |
+| `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
+
+The linker only keeps the effects an app actually calls, so a component's import
+list stays as small as the agent's behaviour.
 
 ---
 

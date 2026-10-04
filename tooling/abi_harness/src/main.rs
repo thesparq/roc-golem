@@ -21,12 +21,25 @@ bindgen!({
 use exports::golem::agent::guest::Principal;
 use golem::core::types::{DataValue, ElementValue, TextReference, TextSource};
 
-/// Dummy host state. The linked component only needs a monotonic clock and an
-/// empty poll set, and neither influences the ABI checks below.
+/// Dummy host state. The linked component needs a monotonic clock, an empty poll
+/// set, a logging sink and WebSocket connections; the recorded effects are what
+/// the checks below assert on.
 struct Ctx {
     wasi: WasiCtx,
     table: wasmtime_wasi::ResourceTable,
+    logs: Vec<String>,
+    sent: Vec<String>,
+    connections: Vec<StubConnection>,
 }
+
+/// A stand-in WebSocket connection that records what the agent sends.
+struct StubConnection {
+    sent: Vec<String>,
+    closed: bool,
+}
+
+/// Stand-in pollable returned by `subscribe`.
+struct StubPollable;
 
 impl WasiView for Ctx {
     fn ctx(&mut self) -> WasiCtxView<'_> {
@@ -95,22 +108,144 @@ impl wasi::io::poll::HostPollable for Ctx {
     }
 }
 
+impl wasi::logging::logging::Host for Ctx {
+    fn log(
+        &mut self,
+        level: wasi::logging::logging::Level,
+        context: String,
+        message: String,
+    ) {
+        self.logs.push(format!("{:?} {} {}", level, context, message));
+    }
+}
+
+impl golem::websocket::client::Host for Ctx {}
+
+impl golem::websocket::client::HostWebsocketConnection for Ctx {
+    fn connect(
+        &mut self,
+        url: String,
+        _headers: Option<Vec<(String, String)>>,
+    ) -> Result<
+        wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+        golem::websocket::client::Error,
+    > {
+        self.logs.push(format!("CONNECT {url}"));
+        let rep = self.connections.len() as u32;
+        self.connections.push(StubConnection {
+            sent: Vec::new(),
+            closed: false,
+        });
+        // The stub tracks connection state itself, so the handle only needs to
+        // carry the table index.
+        Ok(unsafe {
+            wasmtime::component::Resource::new_own(rep)
+        })
+    }
+
+    fn send(
+        &mut self,
+        self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+        message: golem::websocket::client::Message,
+    ) -> Result<(), golem::websocket::client::Error> {
+        let text = match message {
+            golem::websocket::client::Message::Text(text) => text,
+            golem::websocket::client::Message::Binary(bytes) => {
+                String::from_utf8_lossy(&bytes).into()
+            }
+        };
+        self.sent.push(text.clone());
+        match self.connections.get_mut(self_.rep() as usize) {
+            Some(connection) => {
+                connection.sent.push(text);
+                Ok(())
+            }
+            None => Err(golem::websocket::client::Error::Other(format!(
+                "unknown connection handle {}",
+                self_.rep()
+            ))),
+        }
+    }
+
+    fn receive(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+    ) -> Result<golem::websocket::client::Message, golem::websocket::client::Error> {
+        Ok(golem::websocket::client::Message::Text(String::from(
+            "stub-reply",
+        )))
+    }
+
+    fn receive_with_timeout(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+        _timeout_ms: u64,
+    ) -> Result<Option<golem::websocket::client::Message>, golem::websocket::client::Error> {
+        Ok(Some(golem::websocket::client::Message::Text(
+            String::from("stub-reply"),
+        )))
+    }
+
+    fn close(
+        &mut self,
+        self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+        _code: Option<u16>,
+        _reason: Option<String>,
+    ) -> Result<(), golem::websocket::client::Error> {
+        match self.connections.get_mut(self_.rep() as usize) {
+            Some(connection) => {
+                connection.closed = true;
+                Ok(())
+            }
+            None => Err(golem::websocket::client::Error::Other(format!(
+                "unknown connection handle {}",
+                self_.rep()
+            ))),
+        }
+    }
+
+    fn subscribe(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+    ) -> wasmtime::component::Resource<wasi::io::poll::Pollable> {
+        unsafe { wasmtime::component::Resource::new_own(0) }
+    }
+
+    fn drop(
+        &mut self,
+        rep: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+    ) -> wasmtime::Result<()> {
+        let index = rep.rep() as usize;
+        if let Some(connection) = self.connections.get_mut(index) {
+            connection.closed = true;
+        }
+        Ok(())
+    }
+}
+
 /// What the component under test is expected to report and do.
 struct Expectation {
     component: PathBuf,
     agent_type: Option<String>,
     method: Option<String>,
+    /// First message to send, and the reply text it should contain.
     message: String,
     reply_contains: Option<String>,
-    /// Reply expected from a second invocation of the same message, which shows
-    /// that state survived between calls.
+    /// Second message (defaults to the first), for flows that need two steps
+    /// such as connect-then-send, plus the reply it should contain.
+    then_message: Option<String>,
     then_reply_contains: Option<String>,
+    /// Substring expected in a log line the agent emitted.
+    expect_log: Option<String>,
+    /// Substring expected in a WebSocket message the agent sent.
+    expect_sent: Option<String>,
 }
 
 fn usage() -> String {
     String::from(
         "usage: abi_harness <component.wasm> [--type NAME] [--method NAME] \
-         [--message TEXT] [--reply SUBSTRING] [--then-reply SUBSTRING]",
+         [--message TEXT] [--reply SUBSTRING] [--then-message TEXT] \
+         [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING]",
     )
 }
 
@@ -122,7 +257,10 @@ fn parse_args() -> Result<Expectation> {
         method: None,
         message: String::from("increment"),
         reply_contains: None,
+        then_message: None,
         then_reply_contains: None,
+        expect_log: None,
+        expect_sent: None,
     };
 
     while let Some(arg) = args.next() {
@@ -133,7 +271,10 @@ fn parse_args() -> Result<Expectation> {
                 expectation.message = args.next().context("--message needs a value")?
             }
             "--reply" => expectation.reply_contains = args.next(),
+            "--then-message" => expectation.then_message = args.next(),
             "--then-reply" => expectation.then_reply_contains = args.next(),
+            "--expect-log" => expectation.expect_log = args.next(),
+            "--expect-sent" => expectation.expect_sent = args.next(),
             "-h" | "--help" => bail!("{}", usage()),
             other => {
                 if expectation.component.as_os_str().is_empty() {
@@ -197,6 +338,9 @@ fn main() -> Result<ExitCode> {
         Ctx {
             wasi: WasiCtx::builder().build(),
             table: Default::default(),
+            logs: Vec::new(),
+            sent: Vec::new(),
+            connections: Vec::new(),
         },
     );
     let bindings = HarnessWorld::instantiate(&mut store, &component, &linker).map_err(|err| {
@@ -268,22 +412,28 @@ fn main() -> Result<ExitCode> {
         }
     }
 
-    // 4. Message round-trips. `invoke` returns the app's reply text, so the
-    //    reply is matched directly; a second call with the same message shows
-    //    whether state survived.
-    for (label, expected) in [
-        ("invoke handle-message", &expectation.reply_contains),
-        ("invoke handle-message again", &expectation.then_reply_contains),
+    // 4. Message round-trips. `invoke` returns the app's reply text, so replies
+    //    are matched directly; a second call shows whether state survived.
+    let second_message = expectation
+        .then_message
+        .clone()
+        .unwrap_or_else(|| expectation.message.clone());
+    for (label, message, expected) in [
+        (
+            "invoke handle-message",
+            expectation.message.clone(),
+            expectation.reply_contains.clone(),
+        ),
+        (
+            "invoke handle-message again",
+            second_message,
+            expectation.then_reply_contains.clone(),
+        ),
     ] {
         if expected.is_none() {
             continue;
         }
-        match guest.call_invoke(
-            &mut store,
-            "handle-message",
-            &text_value(&expectation.message),
-            &principal,
-        ) {
+        match guest.call_invoke(&mut store, "handle-message", &text_value(&message), &principal) {
             Ok(Ok(value)) => {
                 let raw = text_of(&value).unwrap_or_default();
                 println!("[{}] = {:?}", label, raw);
@@ -303,6 +453,33 @@ fn main() -> Result<ExitCode> {
             Err(err) => {
                 println!("[{}] = trap\n{}", label, err);
                 failures.push(format!("{} trapped", label));
+            }
+        }
+    }
+
+    // 5. Effects the agent reached for: log lines and WebSocket sends are
+    //    recorded by the stubs above, so their wiring is checked, not just the
+    //    reply text.
+    {
+        let ctx = store.data();
+        if let Some(expected) = &expectation.expect_log {
+            let hit = ctx.logs.iter().any(|line| line.contains(expected.as_str()));
+            println!("[logs] {:?}", ctx.logs);
+            if !hit {
+                failures.push(format!(
+                    "no log line contains {:?} (recorded: {:?})",
+                    expected, ctx.logs
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_sent {
+            let hit = ctx.sent.iter().any(|msg| msg.contains(expected.as_str()));
+            println!("[websocket sent] {:?}", ctx.sent);
+            if !hit {
+                failures.push(format!(
+                    "no websocket message contains {:?} (sent: {:?})",
+                    expected, ctx.sent
+                ));
             }
         }
     }

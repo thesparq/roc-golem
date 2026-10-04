@@ -1,6 +1,7 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
+import pf.Golem exposing [logInfo!, websocketConnect!, websocketSend!, websocketReceive!, websocketClose!]
 
 # Agent State
 State :: {
@@ -23,9 +24,64 @@ agent = defineAgent({
 	handleMessage!: |state, message|
 		match message {
 			"connect" =>
-				{
-					state: { ..state, connected: True, handle: 1 },
-					replies: ["WebSocket connected (handle=1)"],
+				match websocketConnect!("wss://echo.websocket.events") {
+					Ok(handle) => {
+						logInfo!("websocket connected, handle=${U32.to_str(handle)}")
+						{
+							state: { ..state, connected: True, handle },
+							replies: ["Connected with handle ${U32.to_str(handle)}"],
+						}
+					}
+
+					Err(err) =>
+						{
+							state,
+							replies: ["Connect failed: ${err}"],
+						}
+					}
+
+			"receive" =>
+				if state.connected {
+					match websocketReceive!(state.handle) {
+						Ok(text) =>
+							{
+								state: { ..state, received: state.received + 1 },
+								replies: ["Received: ${text}"],
+							}
+
+						Err(err) =>
+							{
+								state,
+								replies: ["Receive failed: ${err}"],
+							}
+						}
+				} else {
+					{
+						state,
+						replies: ["Not connected. Send 'connect' first."],
+					}
+				}
+
+			"close" =>
+				if state.connected {
+					match websocketClose!(state.handle) {
+						Ok(_) =>
+							{
+								state: { ..state, connected: False, handle: 0 },
+								replies: ["Connection closed"],
+							}
+
+						Err(err) =>
+							{
+								state,
+								replies: ["Close failed: ${err}"],
+							}
+						}
+				} else {
+					{
+						state,
+						replies: ["Not connected. Send 'connect' first."],
+					}
 				}
 
 			"status" => {
@@ -38,10 +94,19 @@ agent = defineAgent({
 
 			_ =>
 				if state.connected {
-					{
-						state: { ..state, sent: state.sent + 1 },
-						replies: ["Queued message for WebSocket: ${message}"],
-					}
+					match websocketSend!(state.handle, message) {
+						Ok(_) =>
+							{
+								state: { ..state, sent: state.sent + 1 },
+								replies: ["Sent: ${message}"],
+							}
+
+						Err(err) =>
+							{
+								state,
+								replies: ["Send failed: ${err}"],
+							}
+						}
 				} else {
 					{
 						state,

@@ -86,7 +86,10 @@ jobs:
 
           check "$HARNESS" build/streaming_agent_agent.wasm \
             --type streaming-agent --method stream_message \
-            --message connect --reply "WebSocket connected"
+            --message connect --reply "Connected with handle" \
+            --expect-log "websocket connected" \
+            --then-message hello --then-reply "Sent: hello" \
+            --expect-sent hello
 
           exit $status
 

@@ -13,9 +13,14 @@ cargo run --release -- \
   ../../build/counter_agent.wasm
 ```
 
-`--reply` matches the app's reply text from one `handle-message` call;
-`--then-reply` checks a second call with the same message, which shows that state
-survived.
+Flags:
+
+- `--reply` matches the app's reply text from one `handle-message` call.
+- `--then-message` / `--then-reply` send a second (possibly different) message,
+  which is how state persistence and multi-step flows are checked.
+- `--expect-log` matches a line the agent emitted through `logInfo!` etc., and
+  `--expect-sent` matches a WebSocket message the agent sent. Both are recorded
+  by the stubs, so effect wiring is verified, not just reply text.
 
 It exits non-zero when any of these fail:
 
@@ -24,14 +29,15 @@ It exits non-zero when any of these fail:
   which also makes multi-component deployments fail with
   `Wrapper agent type name roc-agent is defined by multiple components`),
 - `initialize` traps or returns an error,
-- `invoke handle-message` traps, returns an error, or returns a payload that is
-  not valid JSON / does not contain the expected reply text,
-- the reply has no `state` field.
+- `invoke handle-message` traps, returns an error, or returns a reply that does
+  not contain the expected text,
+- an expected log line or WebSocket send was never recorded.
 
 Current state of the components built from this tree: all checks pass for the
-three examples, and CI runs this as a required step. `initialize` used to trap
-inside the allocator path and poison the instance; see the Development status
-section of the root README for what was wrong.
+three examples, including the streaming agent's connect-then-send flow, and CI
+runs this as a required step. `initialize` used to trap inside the allocator path
+and poison the instance; see the Development status section of the root README
+for what was wrong.
 
 ## Why this exists
 
@@ -45,11 +51,12 @@ dumps the compiler's own layout facts for comparison.
 
 ## WIT copies
 
-`wit/` holds a small, self-contained world (`harness-world`) describing exactly
-what a linked component imports, so the harness can supply the missing host
-interfaces with no Golem runtime present. `wit/deps/` is copied from the repo's
-`wit/deps/` (`golem-core`, `golem-agent`, `clocks`, `io`), trimmed to the
-interfaces the harness world needs. When the upstream WIT changes, re-copy
-these files; the only intended difference is that `golem-agent/guest.wit` keeps
-just the `guest` interface and drops the `agent-guest` / `agent-host` worlds,
-which import Golem host interfaces the harness does not model.
+`wit/` holds a small, self-contained world (`harness-world`) describing what the
+examples' components import, so the harness can supply the missing host
+interfaces with no Golem runtime present: agent types, the monotonic clock, the
+WebSocket client (stubbed with a recording connection) and `wasi:logging`
+(recorded). `wit/deps/` is copied from the repo's `wit/deps/`, trimmed to those
+interfaces. When the upstream WIT changes, re-copy these files; the only intended
+difference is that `golem-agent/guest.wit` keeps just the `guest` interface and
+drops the `agent-guest` / `agent-host` worlds, which import Golem host interfaces
+the harness does not model.
