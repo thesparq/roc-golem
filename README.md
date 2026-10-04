@@ -20,11 +20,11 @@ A durable, agent-native WebAssembly platform for writing [Golem Cloud](https://g
 
 ## 📦 Using in your Roc Code
 
-You can use the official pre-packaged platform release in your Roc application by specifying the release URL in your `app` header:
+Use a published platform release in your Roc application by specifying its URL in the `app` header. The exact URL (with the content hash as the file name) is printed by the release workflow and written to `dist/release_notes.md` when packaging:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.5.9/1It-wpTzgZ0DfuV635xFHAaoUatV-IcZngiO21cUJjA.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.6.0/<hash>.tar.zst",
 }
 
 import pf.Golem exposing [Agent, defineAgent]
