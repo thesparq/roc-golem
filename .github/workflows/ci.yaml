@@ -32,9 +32,15 @@ jobs:
           version: "1.220.0"
 
       - name: Install Roc Nightly
+        env:
+          # Pinned on purpose. The Rust host in `host/src/roc_std.rs` implements
+          # Roc's memory/ABI contract by hand, so a new nightly can change it
+          # under us; the ABI smoke test below is what should gate a bump.
+          ROC_TAG: nightly-2026-09-19-d025939
         run: |
+          ROC_VERSION="${ROC_TAG#nightly-}"
           mkdir -p "$HOME/roc"
-          ROC_URL=$(curl -s https://api.github.com/repos/roc-lang/nightlies/releases/latest | jq -r '.assets[] | select(.name | contains("linux_x86_64")) | .browser_download_url')
+          ROC_URL="https://github.com/roc-lang/nightlies/releases/download/${ROC_TAG}/roc_nightly-linux_x86_64-${ROC_VERSION}.tar.gz"
           curl -fSL "$ROC_URL" | tar -xz -C "$HOME/roc" --strip-components=1
           echo "$HOME/roc" >> "$GITHUB_PATH"
 
@@ -49,3 +55,30 @@ jobs:
           test -f dist/checksums.txt
           test -f dist/release_notes.md
           echo "Package build verified successfully!"
+
+      - name: ABI smoke test
+        # Runs each built component outside Golem (see tooling/abi_harness).
+        # Expected to fail until the Roc-to-Rust ABI matches the pinned
+        # compiler: today the components trap in `initialize` and report the
+        # fallback `roc-agent` type, which also breaks `golem deploy`. Drop
+        # `continue-on-error` once this reports PASS.
+        continue-on-error: true
+        run: |
+          cargo build --release --manifest-path tooling/abi_harness/Cargo.toml
+          HARNESS=tooling/abi_harness/target/release/abi_harness
+          status=0
+          check() { "$@" || status=1; }
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message increment --reply "Counter incremented to 1"
+
+          check "$HARNESS" build/ai_tool_agent.wasm \
+            --type ai-tool-agent --method calculator \
+            --message hello --reply "AI assistant"
+
+          check "$HARNESS" build/streaming_agent_agent.wasm \
+            --type streaming-agent --method stream_message \
+            --message connect --reply "WebSocket connected"
+
+          exit $status

@@ -1,6 +1,7 @@
 target/
 host/target/
 tooling/pack_platform/target/
+tooling/abi_harness/target/
 build/
 dist/
 *.wasm

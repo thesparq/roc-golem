@@ -1,0 +1,14 @@
+package roc-golem:abi-harness@0.1.0;
+
+/// World used to instantiate a built roc-golem component outside Golem.
+///
+/// A linked component only actually imports the interfaces below (the host's
+/// HTTP/websocket/clock imports are dead code once the linker has run), so this
+/// world mirrors exactly those imports and re-exports the agent interface.
+world harness-world {
+    import golem:core/types@1.5.0;
+    import wasi:clocks/monotonic-clock@0.2.3;
+    import golem:agent/common@1.5.0;
+
+    export golem:agent/guest@1.5.0;
+}

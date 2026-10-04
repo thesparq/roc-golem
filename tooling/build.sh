@@ -94,7 +94,9 @@ build_app() {
     echo " App build finished successfully!"
     echo " Component: $OUTPUT_COMPONENT"
     echo " Size:      $(du -h "$OUTPUT_COMPONENT" | cut -f1)"
-    echo " Deploy:    golem component add --component-name $TARGET_APP $OUTPUT_COMPONENT"
+    echo " Deploy:    golem -L deploy            (see README; golem.yaml drives it)"
+    echo " Check:     cargo run --release --manifest-path tooling/abi_harness/Cargo.toml"
+    echo "            -- $OUTPUT_COMPONENT --type <agent-type> --method <tool>"
     echo "============================================================"
 }
 

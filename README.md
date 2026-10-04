@@ -124,7 +124,9 @@ roc-golem/
 │       └── main.roc            # WebSocket streaming agent example
 ├── tooling/
 │   ├── build.sh                # Multi-phase build, package, & release script
-│   └── pack_platform/          # Platform tarball & BLAKE3 base64url packaging tool
+│   ├── pack_platform/          # Platform tarball & BLAKE3 base64url packaging tool
+│   ├── abi_harness/            # Runs built components outside Golem to check the Roc ABI
+│   └── glue/                   # `roc glue` spec that prints the host-facing ABI surface
 ├── LICENSE                     # Apache 2.0 License
 └── golem.yaml                  # Golem Cloud application manifest
 ```
@@ -152,13 +154,54 @@ Produces `platform/targets/wasm32/libhost.a` (and copies to `build/libhost.a`).
 ```
 
 ### 3. Deploy to Golem Cloud
+
+`golem.yaml` declares the three example components, so deployment is manifest-driven:
+
 ```bash
-golem component add --component-name counter build/counter_agent.wasm
-golem worker add --component-name counter --worker-name counter-1
-golem worker invoke-and-await --component-name counter --worker-name counter-1 \
-  --function "golem:agent/guest@1.5.0.{handle-message}" \
-  --args '["increment"]'
+# Build every component in golem.yaml and deploy it to the local environment
+golem -L deploy
+
+# Invoke an agent. Agent type names come from your app's `metadata.name`
+# (`golem agent-type list` shows them); constructor and method arguments use the
+# agent's source-language literal syntax.
+golem -L agent invoke 'counter-agent("{}")' handle-message 'increment'
 ```
+
+> [!NOTE]
+> The older `golem component add` / `golem worker add` commands no longer exist in
+> golem-cli 1.5.x. Run `golem agent invoke --help` for the full agent-id syntax.
+
+---
+
+## ⚠️ Development status
+
+The pre-compiled host is currently **not** ABI-compatible with the pinned Roc
+nightly, so the components built here do not work on Golem yet:
+
+- `initialize` traps with `wasm unreachable` inside the allocator path, which
+  poisons the instance — every later call fails with
+  `cannot enter component instance`.
+- `get-definition` / `discover-agent-types` report the hard-coded fallback
+  `roc-agent` and drop the app's tools, because the host reads a heap string's
+  length from the wrong word. That is also why deploying more than one
+  component fails: `Wrapper agent type name roc-agent is defined by multiple
+  components`.
+- The host's `RocResult` discriminant is inverted relative to the compiler's
+  (`Ok` is `1`, not `0`).
+
+`tooling/abi_harness` reproduces all of this locally in seconds, and CI runs it
+(report-only until it passes). The durable fix is to stop hand-writing the ABI:
+generate the Rust side from the compiler with `roc glue` instead of matching
+`host/src/roc_std.rs` against each nightly by hand. `tooling/glue/` holds the
+working first step of that migration (a spec that runs on the pinned nightly and
+prints the host-facing ABI surface) plus the list of API changes still needed
+for a full Rust generator.
+
+Also note that the HTTP, WebSocket, timer and RPC effect functions in
+`host/src/lib.rs` are still stubs (`rocFxWsSend` / `rocFxWsReceive` return `Ok`
+without doing anything, `rocFxSleepMillis` is a no-op, `rocFxRpcInvoke` returns
+`{}`), and the linker drops them from the built components because nothing calls
+them yet.
 
 ---
 

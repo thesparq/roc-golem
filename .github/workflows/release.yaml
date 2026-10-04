@@ -37,9 +37,14 @@ jobs:
           version: "1.220.0"
 
       - name: Install Roc Nightly
+        env:
+          # Keep in step with .github/workflows/ci.yaml: the hand-written ABI in
+          # `host/src/roc_std.rs` is tied to this compiler version.
+          ROC_TAG: nightly-2026-09-19-d025939
         run: |
+          ROC_VERSION="${ROC_TAG#nightly-}"
           mkdir -p "$HOME/roc"
-          ROC_URL=$(curl -s https://api.github.com/repos/roc-lang/nightlies/releases/latest | jq -r '.assets[] | select(.name | contains("linux_x86_64")) | .browser_download_url')
+          ROC_URL="https://github.com/roc-lang/nightlies/releases/download/${ROC_TAG}/roc_nightly-linux_x86_64-${ROC_VERSION}.tar.gz"
           curl -fSL "$ROC_URL" | tar -xz -C "$HOME/roc" --strip-components=1
           echo "$HOME/roc" >> "$GITHUB_PATH"
 
@@ -59,6 +64,32 @@ jobs:
       - name: Build Platform & Package Release
         run: |
           ./tooling/build.sh release "${{ steps.vars.outputs.tag }}" "${{ github.repository }}"
+
+      - name: ABI smoke test
+        # Same check as CI: a release must not ship components that trap on
+        # their first call. Non-blocking only until the hand-written ABI in
+        # `host/src/roc_std.rs` matches the pinned compiler; make this step
+        # required once it reports PASS.
+        continue-on-error: true
+        run: |
+          cargo build --release --manifest-path tooling/abi_harness/Cargo.toml
+          HARNESS=tooling/abi_harness/target/release/abi_harness
+          status=0
+          check() { "$@" || status=1; }
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message increment --reply "Counter incremented to 1"
+
+          check "$HARNESS" build/ai_tool_agent.wasm \
+            --type ai-tool-agent --method calculator \
+            --message hello --reply "AI assistant"
+
+          check "$HARNESS" build/streaming_agent_agent.wasm \
+            --type streaming-agent --method stream_message \
+            --message connect --reply "WebSocket connected"
+
+          exit $status
 
       - name: Create GitHub Release & Upload Assets
         uses: softprops/action-gh-release@v2
