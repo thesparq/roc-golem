@@ -175,26 +175,27 @@ golem -L agent invoke 'counter-agent("{}")' handle-message 'increment'
 
 ## ⚠️ Development status
 
-The pre-compiled host is currently **not** ABI-compatible with the pinned Roc
-nightly, so the components built here do not work on Golem yet:
+The pre-compiled host is currently **not** fully ABI-compatible with the pinned
+Roc nightly, so the components built here do not run on Golem yet:
 
-- `initialize` traps with `wasm unreachable` inside the allocator path, which
-  poisons the instance — every later call fails with
-  `cannot enter component instance`.
-- `get-definition` / `discover-agent-types` report the hard-coded fallback
-  `roc-agent` and drop the app's tools, because the host reads a heap string's
-  length from the wrong word. That is also why deploying more than one
-  component fails: `Wrapper agent type name roc-agent is defined by multiple
-  components`.
-- The host's `RocResult` discriminant is inverted relative to the compiler's
-  (`Ok` is `1`, not `0`).
+- **Fixed**: agent metadata. A heap `Str` carries its length in word 3, not
+  word 2, and `Try` uses `1` for `Ok`, not `0`; with both corrected,
+  `get-definition` / `discover-agent-types` report the app's real agent type and
+  tools, which also unblocks multi-component deployments. The authoritative
+  values come from `tooling/glue/abi_facts.roc`.
+- **Open**: `initialize` traps with `wasm unreachable` inside the allocator path,
+  which poisons the instance — every later call fails with
+  `cannot enter component instance`. The compiler declares
+  `env::roc_alloc` / `roc_dealloc` / `roc_realloc` but does not emit the memory
+  protocol around them, and the host's guess (a 16-byte header with a size word
+  at `data - 16`) does not satisfy it.
 
-`tooling/abi_harness` reproduces all of this locally in seconds, and CI runs it
+`tooling/abi_harness` reproduces this locally in seconds, and CI runs it
 (report-only until it passes). The durable fix is to stop hand-writing the ABI:
 generate the Rust side from the compiler with `roc glue` instead of matching
 `host/src/roc_std.rs` against each nightly by hand. `tooling/glue/` holds the
-working first step of that migration (a spec that runs on the pinned nightly and
-prints the host-facing ABI surface) plus the list of API changes still needed
+working first step of that migration (specs that run on the pinned nightly and
+dump the ABI surface and layout facts) plus the list of API changes still needed
 for a full Rust generator.
 
 Also note that the HTTP, WebSocket, timer and RPC effect functions in

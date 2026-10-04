@@ -24,6 +24,12 @@ It exits non-zero when any of these fail:
   not valid JSON / does not contain the expected reply text,
 - the reply has no `state` field.
 
+Current state of the components built from this tree: `get-definition` and
+`discover-agent-types` pass (the agent metadata is read correctly now), while
+`initialize` still traps inside the allocator path and poisons the instance, so
+the `invoke` checks cannot run. See the Development status section of the root
+README.
+
 ## Why this exists
 
 The link step joins two halves whose memory contract is written down nowhere in
@@ -31,7 +37,8 @@ this repo: Roc's compiled code and the Rust host in `host/`. Golem is otherwise
 the only thing that would notice a mismatch, and by then it surfaces as a
 component that fails to deploy or traps on its first call. The 2026-09-30
 release is an example: `counter_agent.wasm` from that release traps inside
-`initialize` and reports the fallback agent type.
+`initialize` and reports the fallback agent type. `tooling/glue/abi_facts.roc`
+dumps the compiler's own layout facts for comparison.
 
 ## WIT copies
 

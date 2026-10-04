@@ -4,31 +4,60 @@
 from the compiler's own ABI knowledge, instead of hand-matching layouts in
 `host/src/roc_std.rs` against each nightly.
 
-`abi_surface.roc` is a minimal spec that proves the pipeline runs against this
-platform and prints what the host must provide/receive:
+Two specs live here, both of which run on the pinned nightly
+(`nightly-2026-09-19-d025939`):
 
 ```bash
 roc glue tooling/glue/abi_surface.roc /tmp/glue-out platform/main.roc
-cat /tmp/glue-out/abi_surface.txt
+roc glue tooling/glue/abi_facts.roc   /tmp/glue-out platform/main.roc
+cat /tmp/glue-out/abi_surface.txt /tmp/glue-out/abi_facts.txt
 ```
 
-Verified output with `nightly-2026-09-19-d025939`:
+- `abi_surface.roc` lists the host-facing symbols (what the host calls, and what
+  the app calls back into).
+- `abi_facts.roc` additionally dumps the committed layout of every type the
+  platform mentions: sizes, alignments, field offsets, tag discriminants and
+  refcountedness.
 
-```
-provides  main_init_for_host!  ->  main_init_for_host_1_exposed_generic  (type_id 31)
-provides  main_handle_message_for_host!  ->  main_handle_message_for_host_1_exposed_generic  (type_id 34)
-provides  main_handle_tool_call_for_host!  ->  main_handle_tool_call_for_host_1_exposed_generic  (type_id 34)
-provides  main_metadata_for_host  ->  main_metadata_for_host_1_exposed_generic  (type_id 35)
-hosted    Host.rocFxLog!  (index 0)
-... 11 hosted effects in total
-```
+## ABI facts (verified against this platform)
+
+`abi_facts.roc` output, pointer width 32:
+
+| Fact | Value |
+| --- | --- |
+| `Str` | 3 words (12 bytes), `RcRefcounted`, field order `bytes, capacity, length` |
+| `Try(Str, Str)` | 16 bytes, discriminant byte at offset 12, `Err = 0`, `Ok = 1` |
+| `Try(U32, Str)` | 16 bytes, discriminant at 12, `Err` payload 12 bytes, `Ok` payload 4 bytes |
+| `Try({}, Str)` | 16 bytes, discriminant at 12, `Ok` payload 0 bytes |
+| `main_init_for_host!` | `Fn([Str] -> Try(Str, Str))` |
+| `main_handle_message_for_host!` | `Fn([Str, Str] -> Try(Str, Str))` |
+| `main_handle_tool_call_for_host!` | `Fn([Str, Str] -> Try(Str, Str))` |
+| `main_metadata_for_host` | `Fn([Unit] -> Str)` |
+| hosted effects | `rocFxLog(U8, Str) -> {}`, `rocFxGetWorkerId({}) -> Str`, `rocFxRpcInvoke(Str, Str, Str) -> Try(Str, Str)`, `rocFxSetPersistence(U8) -> {}`, `rocFxHttpRequest(Str) -> Try(Str, Str)`, `rocFxWsConnect(Str) -> Try(U32, Str)`, `rocFxWsSend(U32, Str) -> Try({}, Str)`, `rocFxWsReceive(U32) -> Try(Str, Str)`, `rocFxWsClose(U32) -> Try({}, Str)`, `rocFxSleepMillis(U64) -> {}`, `rocFxNowMillis({}) -> U64` |
+
+Two of these corrected `host/src/roc_std.rs`: a heap `Str` carries its length in
+**word 3** (the host read word 2, so every string longer than 11 bytes came back
+garbled, which is why the agent metadata failed to parse and every component
+reported the fallback `roc-agent` type), and `Try` uses **1 for `Ok`** (the host
+had it inverted, so successful calls surfaced as errors).
+
+## What the facts do not cover
+
+`roc_alloc` / `roc_dealloc` / `roc_realloc` are declared by the compiler
+(`env::roc_alloc(size, align) -> ptr`, `env::roc_dealloc(ptr, align)`,
+`env::roc_realloc(ptr, new_size, align) -> ptr`) but their *memory protocol* —
+how much space the host must leave before the data pointer, and what the runtime
+stores there — is not part of the emitted facts. That protocol is the remaining
+blocker: `initialize` still traps with `wasm unreachable` inside the allocator
+path, while `get-definition` / `discover-agent-types` now report the app's real
+metadata.
 
 ## What is still missing
 
 A full Rust generator (the port of the upstream `RustGlue.roc`) that turns those
-type ids into correct Rust structs and call wrappers. The copy of that spec in
-the older `roc-practice/roc-golem` project was written against a July 2026 glue
-platform and does **not** run on the pinned nightly; porting it needs:
+facts into Rust structs and call wrappers. The copy of that spec in the older
+`roc-practice/roc-golem` project was written against a July 2026 glue platform
+and does **not** run on the pinned nightly; porting it needs:
 
 1. `TypeRepr` gained variants (e.g. `RocI16x8`) — the spec's matches must be
    exhaustive.
@@ -46,3 +75,4 @@ platform and does **not** run on the pinned nightly; porting it needs:
 The glue platform sources for the pinned compiler ship locally under
 `~/.cache/roc/nightly-<version>/src/compiler-platforms/glue/<hash>/`, which is
 the reference for the current API.
+

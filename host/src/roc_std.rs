@@ -165,8 +165,8 @@ impl RocStr {
 
                 let mut roc_str = Self::empty();
                 roc_str.words[0] = data_ptr as usize;
-                roc_str.words[1] = len;
-                roc_str.words[2] = len; // capacity
+                roc_str.words[1] = len; // capacity
+                roc_str.words[2] = len;
                 roc_str
             }
         }
@@ -183,7 +183,7 @@ impl RocStr {
         } else {
             unsafe {
                 let ptr = self.words[0] as *const u8;
-                let len = self.words[1];
+                let len = self.words[2];
                 if ptr.is_null() || len == 0 {
                     &[]
                 } else {
@@ -310,7 +310,7 @@ impl<T, E> RocResult<T, E> {
             payload: RocResultPayload {
                 ok: ManuallyDrop::new(value),
             },
-            discriminant: 0,
+            discriminant: 1,
         }
     }
 
@@ -319,20 +319,20 @@ impl<T, E> RocResult<T, E> {
             payload: RocResultPayload {
                 err: ManuallyDrop::new(error),
             },
-            discriminant: 1,
+            discriminant: 0,
         }
     }
 
     pub fn is_ok(&self) -> bool {
-        self.discriminant == 0
+        self.discriminant == 1
     }
 
     pub fn is_err(&self) -> bool {
-        self.discriminant != 0
+        self.discriminant != 1
     }
 
     pub fn into_result(mut self) -> Result<T, E> {
-        if self.discriminant == 0 {
+        if self.discriminant == 1 {
             let ok = unsafe { ManuallyDrop::take(&mut self.payload.ok) };
             mem::forget(self);
             Ok(ok)
@@ -346,7 +346,7 @@ impl<T, E> RocResult<T, E> {
 
 impl<T, E> Drop for RocResult<T, E> {
     fn drop(&mut self) {
-        if self.discriminant == 0 {
+        if self.discriminant == 1 {
             unsafe { ManuallyDrop::drop(&mut self.payload.ok) };
         } else {
             unsafe { ManuallyDrop::drop(&mut self.payload.err) };
