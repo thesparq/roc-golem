@@ -215,10 +215,14 @@ The layout values now match the compiler's own emitted facts, dumped by
 
 Still open:
 
-- **Cross-component RPC** resolves the target agent id through
-  `golem:agent/host`, but the server answers `Agent type not found` because the
-  platform does not emit `dependencies` in the agent type; declaring the target
-  agent type as a dependency is the missing piece.
+- **Cross-component RPC** works only inside a component: Golem resolves the
+  target agent type from the calling component's own agent types, so
+  `rpc!("effects-agent(\"other\")", …)` succeeds while
+  `rpc!("counter-agent(\"{}\")", …)` from another component answers
+  `Agent type not found`. Declaring the target in the agent type's
+  `dependencies` did not change that on golem 1.5.9 (the server does not seem to
+  use component-declared dependencies), so cross-component calls need a newer
+  Golem or a different mechanism.
 - **A layout-sensitive trap** has been seen once in a release build of the
   effects example: `initialize` trapped while slicing a host-provided heap string
   (`Str.split_first` on the agent config). The same source passes when rebuilt,

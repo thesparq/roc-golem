@@ -53,9 +53,11 @@ agent = defineAgent({
 
 			"rpc" =>
 			# The target is an agent id: <agent-type>(<constructor params>).
-			# Cross-component calls also need the target declared as an agent-type
-			# dependency, which this platform does not emit yet.
-				match rpc!("counter-agent(\"{}\")", "handle-message", "increment") {
+			# Golem resolves agent types inside the calling component, so this example
+			# calls another instance of itself. Calling an agent in a different
+			# component needs the target declared as an agent-type dependency, which
+			# Golem 1.5 does not resolve from component metadata yet.
+				match rpc!("effects-agent(\"other\")", "handle-message", "status") {
 					Ok(reply) =>
 						{
 							state: { ..state, lastRpc: reply },
