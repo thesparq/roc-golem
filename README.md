@@ -230,6 +230,9 @@ Still open:
   code-generation issue rather than a platform one. CI's ABI smoke test is the
   safety net; if it reappears, keep the failing `.wasm` and compare `roc build`
   with and without `--debug`.
+- **Golem 1.6+** expects `golem:agent/guest@2.0.0` (async ABI, new value model),
+  which this platform does not implement; `docs/golem-2.0-migration.md` records
+  what changed and the work it implies.
 - **Local deploy** needs golem CLI 1.5.9: 1.5.10's component upload is rejected
   by its own local server, and 1.6.0-rc1+ expects the `golem:agent/guest@2.0.0`
   protocol (see the deploy section for the version matrix).
