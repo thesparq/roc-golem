@@ -43,7 +43,8 @@ use golem::agent::common::{
 };
 use golem::api::host::PersistenceLevel;
 use golem::core::types::{
-    DataSchema, ElementSchema, ElementValue, TextDescriptor, TextReference, TextSource, WitNode,
+    DataSchema, ElementSchema, ElementValue, NamedWitTypeNode, TextDescriptor, TextReference,
+    TextSource, WitNode, WitType, WitTypeNode, WitValue,
 };
 
 // Global worker state managed in linear memory (automatically persisted by Golem)
@@ -75,7 +76,17 @@ fn set_current_state(state: String) {
 }
 
 fn string_element_schema() -> ElementSchema {
-    ElementSchema::UnstructuredText(TextDescriptor { restrictions: None })
+    // A plain `string`, not unstructured text: Golem's CLI renders results (and
+    // validates arguments) for component-model values, while unstructured text
+    // comes back as an empty tuple with "Non-ComponentModel output schema not
+    // supported for result rendering".
+    ElementSchema::ComponentModel(WitType {
+        nodes: vec![NamedWitTypeNode {
+            name: None,
+            owner: None,
+            type_: WitTypeNode::PrimStringType,
+        }],
+    })
 }
 
 fn single_string_schema(name: &str) -> DataSchema {
@@ -143,12 +154,9 @@ fn extract_data_value_string(val: &DataValue) -> String {
 }
 
 fn wrap_string_data_value(s: String) -> DataValue {
-    DataValue::Tuple(vec![ElementValue::UnstructuredText(
-        TextReference::Inline(TextSource {
-            data: s,
-            text_type: None,
-        }),
-    )])
+    DataValue::Tuple(vec![ElementValue::ComponentModel(WitValue {
+        nodes: vec![WitNode::PrimString(s)],
+    })])
 }
 
 fn build_agent_type() -> AgentType {

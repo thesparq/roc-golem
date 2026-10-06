@@ -8,10 +8,8 @@ app: roc-golem
 environments:
   local:
     server: local
-    componentPresets: debug
   cloud:
     server: cloud
-    componentPresets: release
 
 components:
   roc-golem:counter:

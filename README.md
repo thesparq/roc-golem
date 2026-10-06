@@ -157,17 +157,32 @@ Produces `platform/targets/wasm32/libhost.a` (and copies to `build/libhost.a`).
 
 ### 3. Deploy to Golem Cloud
 
-`golem.yaml` declares the three example components, so deployment is manifest-driven:
+`golem.yaml` declares the example components, so deployment is manifest-driven:
 
 ```bash
 # Build every component in golem.yaml and deploy it to the local environment
 golem -L deploy
 
-# Invoke an agent. Agent type names come from your app's `metadata.name`
-# (`golem agent-type list` shows them); constructor and method arguments use the
-# agent's source-language literal syntax.
-golem -L agent invoke 'counter-agent("{}")' handle-message 'increment'
+# Invoke an agent. Agent ids are `<agent-type>(<constructor params>)`, and
+# arguments are component-model values, so strings are plain literals.
+golem -L agent invoke 'counter-agent("{}")' handle-message '"increment"'
+# Invocation result in fallback TypeScript syntax:
+#   "Counter incremented to 1"
 ```
+
+Agent type names come from your app's `metadata.name` (`golem agent-type list`
+shows them). Re-running `golem deploy` leaves agents that already exist on their
+original component revision; pass `-u automatic` to move idle agents to the new
+revision. Golem refuses that update if an agent's recorded results no longer
+type-check, which is what happens when a method's result schema changes.
+
+#### Which CLI to use
+
+| golem CLI | Local deploy | Notes |
+| --- | --- | --- |
+| 1.5.9 | works | verified end-to-end with these examples (deploy, invoke, state, tools) |
+| 1.5.10 | **broken** | its own local server rejects the CLI's component upload (`parse multipart error: failed to parse field componentWasm ... No such file or directory`), for any app |
+| 1.6.0-rc1+ | needs the 2.0 agent protocol | staging works, but the server expects `golem:agent/guest@2.0.0`; this platform implements `@1.5.0` |
 
 > [!NOTE]
 > The older `golem component add` / `golem worker add` commands no longer exist in
@@ -198,12 +213,24 @@ Three defects were fixed to get there, all in the hand-written Roc ABI in
 The layout values now match the compiler's own emitted facts, dumped by
 `tooling/glue/abi_facts.roc`.
 
-Still open: `golem -L deploy` against a local server fails at `Applying changes
-to the staging area` with a CLI/server protocol error that reproduces
-independently of these components (a single-component deploy against a fresh
-server fails the same way). Longer term, `host/src/roc_std.rs` should be replaced
-by generated glue (`roc glue`) so the layout constants stop being maintained by
-hand — see `tooling/glue/`.
+Still open:
+
+- **Cross-component RPC** resolves the target agent id through
+  `golem:agent/host`, but the server answers `Agent type not found` because the
+  platform does not emit `dependencies` in the agent type; declaring the target
+  agent type as a dependency is the missing piece.
+- **A layout-sensitive trap** has been seen once in a release build of the
+  effects example: `initialize` trapped while slicing a host-provided heap string
+  (`Str.split_first` on the agent config). The same source passes when rebuilt,
+  and a smaller reproduction did not trigger it, so it looks like a Roc
+  code-generation issue rather than a platform one. CI's ABI smoke test is the
+  safety net; if it reappears, keep the failing `.wasm` and compare `roc build`
+  with and without `--debug`.
+- **Local deploy** needs golem CLI 1.5.9: 1.5.10's component upload is rejected
+  by its own local server, and 1.6.0-rc1+ expects the `golem:agent/guest@2.0.0`
+  protocol (see the deploy section for the version matrix).
+- `host/src/roc_std.rs` is still hand-written; generated glue (`roc glue`) would
+  retire the layout constants — see `tooling/glue/`.
 
 ## ✨ Effects
 

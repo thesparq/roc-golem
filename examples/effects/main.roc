@@ -52,6 +52,9 @@ agent = defineAgent({
 			}
 
 			"rpc" =>
+			# The target is an agent id: <agent-type>(<constructor params>).
+			# Cross-component calls also need the target declared as an agent-type
+			# dependency, which this platform does not emit yet.
 				match rpc!("counter-agent(\"{}\")", "handle-message", "increment") {
 					Ok(reply) =>
 						{

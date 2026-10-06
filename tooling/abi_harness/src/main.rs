@@ -21,7 +21,9 @@ bindgen!({
 });
 
 use exports::golem::agent::guest::Principal;
-use golem::core::types::{DataValue, ElementValue, TextReference, TextSource};
+use golem::core::types::{
+    DataValue, ElementValue, TextReference, TextSource, WitNode, WitValue,
+};
 
 /// Dummy host state. The linked component needs a monotonic clock, an empty poll
 /// set, a logging sink and WebSocket connections; the recorded effects are what
@@ -520,18 +522,21 @@ fn parse_args() -> Result<Expectation> {
     Ok(expectation)
 }
 
+/// A single component-model `string`, which is what the platform declares in
+/// its agent method schemas (Golem type-checks arguments against them).
 fn text_value(s: &str) -> DataValue {
-    DataValue::Tuple(vec![ElementValue::UnstructuredText(
-        TextReference::Inline(TextSource {
-            data: s.to_string(),
-            text_type: None,
-        }),
-    )])
+    DataValue::Tuple(vec![ElementValue::ComponentModel(WitValue {
+        nodes: vec![WitNode::PrimString(s.to_string())],
+    })])
 }
 
 fn text_of(value: &DataValue) -> Option<String> {
     match value {
         DataValue::Tuple(elements) => match elements.first() {
+            Some(ElementValue::ComponentModel(wit)) => match wit.nodes.first() {
+                Some(WitNode::PrimString(text)) => Some(text.clone()),
+                _ => None,
+            },
             Some(ElementValue::UnstructuredText(TextReference::Inline(source))) => {
                 Some(source.data.clone())
             }
