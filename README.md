@@ -181,7 +181,7 @@ type-check, which is what happens when a method's result schema changes.
 | golem CLI | Local deploy | Notes |
 | --- | --- | --- |
 | 1.5.9 | works | verified end-to-end with these examples (deploy, invoke, state, tools) |
-| 1.5.10 | **broken** | its own local server rejects the CLI's component upload (`parse multipart error: failed to parse field componentWasm ... No such file or directory`), for any app |
+| 1.5.10 | works | deploys and runs these examples when its local server starts cleanly; an earlier report that it rejects the CLI's component upload did not reproduce in review (see the development status) |
 | 1.6.0-rc1+ | needs the 2.0 agent protocol | staging works, but the server expects `golem:agent/guest@2.0.0`; this platform implements `@1.5.0` |
 
 > [!NOTE]
@@ -194,7 +194,7 @@ type-check, which is what happens when a method's result schema changes.
 
 The components built from this tree work on Golem again: `get-definition` /
 `discover-agent-types` report the app's real agent type and tools, `initialize`
-succeeds, and `handle-message` round-trips state (all three examples are covered
+succeeds, and `handle-message` round-trips state (all four examples are covered
 by the `tooling/abi_harness` smoke test in CI).
 
 Three defects were fixed to get there, all in the hand-written Roc ABI in
@@ -233,9 +233,10 @@ Still open:
 - **Golem 1.6+** expects `golem:agent/guest@2.0.0` (async ABI, new value model),
   which this platform does not implement; `docs/golem-2.0-migration.md` records
   what changed and the work it implies.
-- **Local deploy** needs golem CLI 1.5.9: 1.5.10's component upload is rejected
-  by its own local server, and 1.6.0-rc1+ expects the `golem:agent/guest@2.0.0`
-  protocol (see the deploy section for the version matrix).
+- **Local deploy** is verified with golem CLI 1.5.9. 1.5.10 also deployed and
+  ran these examples in review (its earlier reported upload failure did not
+  reproduce), and 1.6.0-rc1+ expects the `golem:agent/guest@2.0.0` protocol
+  (see the deploy section for the version matrix).
 - `host/src/roc_std.rs` is still hand-written; generated glue (`roc glue`) would
   retire the layout constants — see `tooling/glue/`.
 
@@ -256,6 +257,28 @@ apps call them through `pf.Golem`.
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
+
+---
+
+## 🧪 Testing
+
+Three layers, all of which run in CI and in the release workflow before
+anything is published:
+
+| Layer | Command | What it proves |
+| --- | --- | --- |
+| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata, `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded |
+| End-to-end | `GOLEM_CLI=/path/to/golem-1.5.9 ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, a tool call, a real HTTP request to a local web server, and agent-to-agent RPC. No stubs |
+
+`tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
+one (stopping it again on exit). It creates agents with a run-specific id, so
+their state starts fresh on every run. It needs a golem CLI whose local server
+works — see the version matrix in the deploy section; CI and the release
+workflow install 1.5.9 for it.
+
+The ABI smoke test also runs against a debug build of the effects example, since
+the platform has had build-sensitive ABI bugs before.
 
 ---
 

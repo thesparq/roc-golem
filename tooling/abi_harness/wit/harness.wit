@@ -2,10 +2,12 @@ package roc-golem:abi-harness@0.1.0;
 
 /// World used to instantiate a built roc-golem component outside Golem.
 ///
-/// Only the interfaces this harness implements itself are listed here; the WASI
-/// interfaces a component also imports (io/streams, io/error, io/poll, the
-/// clocks, wasi:http) are satisfied by `wasmtime-wasi` and `wasmtime-wasi-http`
-/// on the same linker, so they must not be duplicated here.
+/// The world is self-contained: every interface a component imports — agent
+/// types, the clocks, wasi:io, wasi:http, the WebSocket client and
+/// wasi:logging — is implemented by this harness's own stubs (see `src/stubs.rs`),
+/// so no wasmtime-wasi linker is involved (wasmtime's own `wasi:http` tracks a
+/// newer WASI version than Golem pins). Keep this world in sync with the
+/// imports of the components under test.
 world harness-world {
     import golem:core/types@1.5.0;
     import wasi:io/error@0.2.3;

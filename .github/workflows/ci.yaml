@@ -58,9 +58,9 @@ jobs:
 
       - name: ABI smoke test
         # Runs each built component outside Golem (see tooling/abi_harness):
-        # agent metadata, initialize, and message round-trips. This is what
-        # catches the hand-written ABI drifting from the pinned compiler before
-        # a release ships it.
+        # agent metadata, initialize, message round-trips, tool calls and the
+        # effects the examples reach for. This is what catches the hand-written
+        # ABI drifting from the pinned compiler before a release ships it.
         run: |
           cargo build --release --manifest-path tooling/abi_harness/Cargo.toml
           HARNESS=tooling/abi_harness/target/release/abi_harness
@@ -71,11 +71,13 @@ jobs:
             --type counter-agent --method get_count \
             --message increment \
             --reply "Counter incremented to 1" \
-            --then-reply "Counter incremented to 2"
+            --then-reply "Counter incremented to 2" \
+            --tool get_count --tool-reply '{"count": 2}'
 
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
-            --message hello --reply "AI assistant"
+            --message hello --reply "AI assistant" \
+            --tool calculator --tool-reply '{"result": 42}'
 
           check "$HARNESS" build/streaming_agent_agent.wasm \
             --type streaming-agent --method stream_message \
@@ -91,4 +93,62 @@ jobs:
             --then-message rpc --then-reply "RPC reply: stub-rpc-reply" \
             --expect-rpc "invoke-and-await(handle-message)"
 
+          # The platform has had build-sensitive ABI bugs, so the same checks
+          # also run against a debug build of the most effect-heavy example.
+          # roc exits 2 when an otherwise-successful build emitted warnings
+          # (the module-header deprecations); tooling/build.sh tolerates that,
+          # so the debug build does too.
+          roc build --debug --target=wasm32 \
+            --output=build/effects_debug_raw.wasm examples/effects/main.roc \
+            || test $? -eq 2
+          wasm-tools component new build/effects_debug_raw.wasm \
+            -o build/effects_debug_agent.wasm
+          check "$HARNESS" build/effects_debug_agent.wasm \
+            --type effects-agent --config "http://example.test/" \
+            --message fetch --reply "HTTP 200" \
+            --expect-http "GET / host=example.test"
+
           exit $status
+
+  e2e:
+    name: End-to-end against a real Golem server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: "1.220.0"
+
+      - name: Install Roc Nightly
+        env:
+          # Keep in step with the job above and .github/workflows/release.yaml.
+          ROC_TAG: nightly-2026-09-19-d025939
+        run: |
+          ROC_VERSION="${ROC_TAG#nightly-}"
+          mkdir -p "$HOME/roc"
+          ROC_URL="https://github.com/roc-lang/nightlies/releases/download/${ROC_TAG}/roc_nightly-linux_x86_64-${ROC_VERSION}.tar.gz"
+          curl -fSL "$ROC_URL" | tar -xz -C "$HOME/roc" --strip-components=1
+          echo "$HOME/roc" >> "$GITHUB_PATH"
+
+      - name: Install Golem CLI
+        env:
+          # Local deploys are verified against this release: 1.6+ expects the
+          # golem:agent/guest@2.0.0 protocol, which this platform does not
+          # implement (see the README's version matrix).
+          GOLEM_VERSION: v1.5.9
+        run: |
+          curl -fSL -o "$HOME/golem-cli" \
+            "https://github.com/golemcloud/golem/releases/download/${GOLEM_VERSION}/golem-x86_64-unknown-linux-gnu"
+          chmod +x "$HOME/golem-cli"
+          "$HOME/golem-cli" --version
+
+      - name: End-to-end test
+        run: GOLEM_CLI="$HOME/golem-cli" ./tooling/e2e.sh
