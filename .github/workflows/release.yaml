@@ -66,8 +66,8 @@ jobs:
           ./tooling/build.sh release "${{ steps.vars.outputs.tag }}" "${{ github.repository }}"
 
       - name: ABI smoke test
-        # Same check as CI: a release must not ship components that trap on
-        # their first call (v0.5.9 did).
+        # Same checks as CI: a release must not ship components that trap on
+        # their first call, misreport their agent type, or break a tool call.
         run: |
           cargo build --release --manifest-path tooling/abi_harness/Cargo.toml
           HARNESS=tooling/abi_harness/target/release/abi_harness
@@ -78,11 +78,13 @@ jobs:
             --type counter-agent --method get_count \
             --message increment \
             --reply "Counter incremented to 1" \
-            --then-reply "Counter incremented to 2"
+            --then-reply "Counter incremented to 2" \
+            --tool get_count --tool-reply '{"count": 2}'
 
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
-            --message hello --reply "AI assistant"
+            --message hello --reply "AI assistant" \
+            --tool calculator --tool-reply '{"result": 42}'
 
           check "$HARNESS" build/streaming_agent_agent.wasm \
             --type streaming-agent --method stream_message \
@@ -99,6 +101,21 @@ jobs:
             --expect-rpc "invoke-and-await(handle-message)"
 
           exit $status
+
+      - name: Install Golem CLI
+        env:
+          # Keep in step with .github/workflows/ci.yaml.
+          GOLEM_VERSION: v1.5.9
+        run: |
+          curl -fSL -o "$HOME/golem-cli" \
+            "https://github.com/golemcloud/golem/releases/download/${GOLEM_VERSION}/golem-x86_64-unknown-linux-gnu"
+          chmod +x "$HOME/golem-cli"
+          "$HOME/golem-cli" --version
+
+      - name: End-to-end test
+        # Deploys to a real Golem server and invokes the agents. Nothing is
+        # stubbed here, so this is what proves a release actually runs.
+        run: GOLEM_CLI="$HOME/golem-cli" ./tooling/e2e.sh
 
       - name: Create GitHub Release & Upload Assets
         uses: softprops/action-gh-release@v2

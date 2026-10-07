@@ -462,14 +462,19 @@ struct Expectation {
     expect_http: Option<String>,
     /// Substring expected in the remote calls the agent made through `rpc!`.
     expect_rpc: Option<String>,
+    /// A tool (registered as a method) to invoke, and the substring its result
+    /// should contain.
+    tool: Option<String>,
+    tool_reply: Option<String>,
 }
 
 fn usage() -> String {
     String::from(
         "usage: abi_harness <component.wasm> [--type NAME] [--method NAME] \
          [--message TEXT] [--reply SUBSTRING] [--then-message TEXT] \
-         [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING] \\
-         [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING]",
+         [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING] \
+         [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING] \
+         [--tool NAME] [--tool-reply SUBSTRING]",
     )
 }
 
@@ -488,6 +493,8 @@ fn parse_args() -> Result<Expectation> {
         config: None,
         expect_http: None,
         expect_rpc: None,
+        tool: None,
+        tool_reply: None,
     };
 
     while let Some(arg) = args.next() {
@@ -505,6 +512,8 @@ fn parse_args() -> Result<Expectation> {
             "--config" => expectation.config = args.next(),
             "--expect-http" => expectation.expect_http = args.next(),
             "--expect-rpc" => expectation.expect_rpc = args.next(),
+            "--tool" => expectation.tool = args.next(),
+            "--tool-reply" => expectation.tool_reply = args.next(),
             "-h" | "--help" => bail!("{}", usage()),
             other => {
                 if expectation.component.as_os_str().is_empty() {
@@ -704,7 +713,34 @@ fn main() -> Result<ExitCode> {
         }
     }
 
-    // 5. Effects the agent reached for: log lines and WebSocket sends are
+    // 5. Tool calls take a different path through the host (they go to the
+    //    app's `handleToolCall!` and come back as a result payload).
+    if let Some(tool) = &expectation.tool {
+        match guest.call_invoke(&mut store, tool, &text_value("{}"), &principal) {
+            Ok(Ok(value)) => {
+                let raw = text_of(&value).unwrap_or_default();
+                println!("[invoke {}] = {:?}", tool, raw);
+                if let Some(expected) = &expectation.tool_reply {
+                    if !raw.contains(expected.as_str()) {
+                        failures.push(format!(
+                            "tool {}: result {:?} does not contain {:?}",
+                            tool, raw, expected
+                        ));
+                    }
+                }
+            }
+            Ok(Err(err)) => {
+                println!("[invoke {}] = agent error {:?}", tool, err);
+                failures.push(format!("tool {} returned an error: {:?}", tool, err));
+            }
+            Err(err) => {
+                println!("[invoke {}] = trap\n{}", tool, err);
+                failures.push(format!("tool {} trapped", tool));
+            }
+        }
+    }
+
+    // 6. Effects the agent reached for: log lines and WebSocket sends are
     //    recorded by the stubs above, so their wiring is checked, not just the
     //    reply text.
     {

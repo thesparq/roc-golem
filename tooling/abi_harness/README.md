@@ -18,6 +18,8 @@ Flags:
 - `--reply` matches the app's reply text from one `handle-message` call.
 - `--then-message` / `--then-reply` send a second (possibly different) message,
   which is how state persistence and multi-step flows are checked.
+- `--tool NAME` / `--tool-reply SUBSTRING` invoke a registered tool (which the
+  host routes through the app's `handleToolCall!`) and check its result.
 - `--config` is the agent config handed to `initialize` (the effects example
   takes its base URL from it).
 - `--expect-log` matches a line the agent emitted through `logInfo!` etc.,
@@ -25,6 +27,10 @@ Flags:
   matches a request line the HTTP stub received, and `--expect-rpc` matches a
   remote call the agent made. All of them are recorded by the stubs, so effect
   wiring is verified, not just reply text.
+
+CI runs these checks against all four examples, and also against a debug build of
+the effects example (`roc build --debug`) because the platform has had
+build-sensitive ABI bugs.
 
 It exits non-zero when any of these fail:
 
