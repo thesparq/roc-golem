@@ -43,8 +43,8 @@ use golem::agent::common::{
 };
 use golem::api::host::PersistenceLevel;
 use golem::core::types::{
-    DataSchema, ElementSchema, ElementValue, NamedWitTypeNode, TextDescriptor, TextReference,
-    TextSource, WitNode, WitType, WitTypeNode, WitValue,
+    DataSchema, ElementSchema, ElementValue, NamedWitTypeNode, TextReference,
+    WitNode, WitType, WitTypeNode, WitValue,
 };
 
 // Global worker state managed in linear memory (automatically persisted by Golem)
@@ -159,15 +159,31 @@ fn wrap_string_data_value(s: String) -> DataValue {
     })])
 }
 
-fn build_agent_type() -> AgentType {
+fn build_agent_type() -> Result<AgentType, AgentError> {
     let mut roc_out = MaybeUninit::<RocStr>::uninit();
     let meta_json = unsafe {
         main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
         roc_out.assume_init().to_string()
     };
 
-    let mut name = String::from("roc-agent");
-    let mut description = String::from("Durable Roc Agent on Golem Cloud");
+    // The registered type comes from the app's own metadata, which the platform
+    // builds from `agent.metadata` ({"name", "version", "description", "tools"}).
+    // A broken component used to fall back to a generic "roc-agent" type here,
+    // silently hiding the failure and, in a multi-component app, surfacing at
+    // deploy time as a duplicated `roc-agent` type (see the README's development
+    // status). Refuse loudly instead, so Golem reports the actual problem.
+    // Use "seen, non-empty" flags rather than empty-string sentinels: with a
+    // `let … = String::from("")` initializer in this function, the compiled
+    // component deterministically traps on a later *guest* call (seen
+    // repeatedly while building this change — a Roc/WIT codegen quirk, see the
+    // README's development status). Missing or unparseable metadata must fail
+    // loudly instead of silently registering a fallback "roc-agent" type
+    // (which in a multi-component app surfaces as a duplicated `roc-agent`
+    // type at deploy time).
+    let mut name_str = String::from("roc-agent");
+    let mut name_seen = false;
+    let mut description_str = String::from("Durable Roc Agent on Golem Cloud");
+    let mut description_seen = false;
     let mut methods = Vec::new();
 
     methods.push(AgentMethod {
@@ -179,14 +195,20 @@ fn build_agent_type() -> AgentType {
         output_schema: single_string_schema("response"),
     });
 
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&meta_json) {
-        if let Some(n) = val.get("name").and_then(|v| v.as_str()) {
-            name = n.to_string();
+    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_json) {
+        if let Some(n) = meta.get("name").and_then(|v| v.as_str()) {
+            if !n.is_empty() {
+                name_seen = true;
+                name_str = n.to_string();
+            }
         }
-        if let Some(d) = val.get("description").and_then(|v| v.as_str()) {
-            description = d.to_string();
+        if let Some(d) = meta.get("description").and_then(|v| v.as_str()) {
+            if !d.is_empty() {
+                description_seen = true;
+                description_str = d.to_string();
+            }
         }
-        if let Some(tools) = val.get("tools").and_then(|v| v.as_array()) {
+        if let Some(tools) = meta.get("tools").and_then(|v| v.as_array()) {
             for t in tools {
                 let t_name = t
                     .get("name")
@@ -219,23 +241,38 @@ fn build_agent_type() -> AgentType {
         }
     }
 
-    AgentType {
-        type_name: name,
-        description,
-        source_language: "roc".to_string(),
-        constructor: AgentConstructor {
-            name: None,
-            description: "Initializes the agent".to_string(),
-            prompt_hint: None,
-            input_schema: single_string_schema("config"),
-        },
-        methods,
-        dependencies: vec![],
-        mode: AgentMode::Durable,
-        http_mount: None,
-        snapshotting: Snapshotting::Disabled,
-        config: vec![],
-    }
+    // Build the result without early returns: errors and success are assembled
+    // in one `else if` chain at the end, because early returns from this
+    // function have tripped a compiler codegen bug in the past.
+    let agent_type: Result<AgentType, AgentError> = if !name_seen {
+        Err(AgentError::InvalidType(
+            "app metadata is not valid JSON or has no non-empty \"name\" field".to_string(),
+        ))
+    } else if !description_seen {
+        Err(AgentError::InvalidType(
+            "app metadata is not valid JSON or has no non-empty \"description\" field"
+                .to_string(),
+        ))
+    } else {
+        Ok(AgentType {
+            type_name: name_str,
+            description: description_str,
+            source_language: "roc".to_string(),
+            constructor: AgentConstructor {
+                name: None,
+                description: "Initializes the agent".to_string(),
+                prompt_hint: None,
+                input_schema: single_string_schema("config"),
+            },
+            methods,
+            dependencies: vec![],
+            mode: AgentMode::Durable,
+            http_mount: None,
+            snapshotting: Snapshotting::Disabled,
+            config: vec![],
+        })
+    };
+    agent_type
 }
 
 // Host effect functions exposed to the Roc guest runtime via C-ABI
@@ -781,11 +818,17 @@ impl Guest for GolemAgentHost {
     }
 
     fn get_definition() -> AgentType {
-        build_agent_type()
+        match build_agent_type() {
+            Ok(agent_type) => agent_type,
+            Err(err) => panic!("Refusing to register an agent type: {:?}", err),
+        }
     }
 
     fn discover_agent_types() -> Result<Vec<AgentType>, AgentError> {
-        Ok(vec![build_agent_type()])
+        match build_agent_type() {
+            Ok(agent_type) => Ok(vec![agent_type]),
+            Err(err) => Err(err),
+        }
     }
 }
 
