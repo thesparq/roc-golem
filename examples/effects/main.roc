@@ -48,7 +48,7 @@ agent = defineAgent({
 							state,
 							replies: ["HTTP failed: ${err}"],
 						}
-					}
+				}
 			}
 
 			"rpc" =>
@@ -69,14 +69,14 @@ agent = defineAgent({
 							state,
 							replies: ["RPC failed: ${err}"],
 						}
-					}
+				}
 
 			_ =>
 				{
 					state,
 					replies: ["Commands: fetch, rpc"],
 				}
-			},
+		},
 
 	handleToolCall!: |state, toolCall|
 		{
@@ -145,7 +145,7 @@ extract_json_str = |json, field|
 								Ok({ before, after: _ }) => Ok(Str.trim(before))
 								Err(_) => Ok(Str.trim(after))
 							}
-						}
+					}
 				Err(_) => Err(NotFound)
 			}
-		}
+	}

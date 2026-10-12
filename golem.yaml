@@ -1,13 +1,19 @@
 # Schema for IDEA / VSCode:
-# $schema: https://schema.golem.cloud/app/golem/1.5.0/golem.schema.json
+# $schema: https://schema.golem.cloud/app/golem/1.6.0-dev.9/golem.schema.json
 
-manifestVersion: 1.5.0
+manifestVersion: 1.6.0
 
 app: roc-golem
 
 environments:
   local:
     server: local
+  local16:
+    server:
+      url: "http://localhost:9996"
+      allowInsecure: true
+      auth:
+        staticToken: "local"
   cloud:
     server: cloud
 

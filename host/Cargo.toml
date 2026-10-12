@@ -9,13 +9,22 @@ authors = ["Roc Golem Platform Contributors"]
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-wit-bindgen = { version = "0.36.0", features = ["macros", "realloc"] }
+# Golem's wit-bindgen fork ("outline-lift"): the golem:core@2.0.0 schema model
+# produces lift/lower wrappers upstream cannot handle, and the fork carries the
+# async guest-export support the 1.6 agent protocol needs. Pinned to the branch
+# the Rust SDK (golem-rust v3.0.0-rc3) uses; effect-golem pins the exact rev
+# 4407232ead86d9bcbd06cbebd790a52120a4087a of the same branch.
+wit-bindgen = { git = "https://github.com/golemcloud/wit-bindgen", branch = "wit-bindgen-golem-1.6", version = "=0.59.0", features = ["macros", "async", "async-spawn", "inter-task-wakeup"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [features]
 default = []
 stub-guest = []
+
+[dev-dependencies]
+# Minimal executor for the async guest exports in unit tests.
+pollster = "0.4"
 
 [profile.release]
 opt-level = "s"

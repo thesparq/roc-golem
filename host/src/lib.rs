@@ -29,22 +29,29 @@ extern "C" {
 #[cfg(any(feature = "stub-guest", test))]
 use guest_bridge::*;
 
-// Generate WIT bindings for the official Golem 1.5.0 agent world
+// Generate WIT bindings for the official Golem 2.0 agent world. The `async`
+// list names the exports that use the component-model async ABI (the fork
+// requires this opt-in); `get-definition` and `discover-agent-types` stay
+// synchronous.
 wit_bindgen::generate!({
     world: "golem-agent",
     path: "../wit",
+    async: [
+        "export:golem:agent/guest@2.0.0#initialize",
+        "export:golem:agent/guest@2.0.0#invoke",
+    ],
     generate_all,
 });
 
-use exports::golem::agent::guest::{AgentError, AgentType, DataValue, Guest, Principal};
+use exports::golem::agent::guest::{AgentError, AgentType, Guest, Principal};
 use golem::agent::common::{
-    AgentConstructor, AgentMethod, AgentMode, CorsOptions, HttpEndpointDetails, HttpMethod,
-    PathSegment, Snapshotting,
+    AgentConstructor, AgentMethod, AgentMode, AgentTypeKind, CorsOptions, FieldSource,
+    HttpEndpointDetails, HttpMethod, InputSchema, NamedField, OutputSchema, PathSegment,
+    Snapshotting,
 };
-use golem::api::host::PersistenceLevel;
 use golem::core::types::{
-    DataSchema, ElementSchema, ElementValue, NamedWitTypeNode, TextReference,
-    WitNode, WitType, WitTypeNode, WitValue,
+    MetadataEnvelope, SchemaGraph, SchemaTypeBody, SchemaTypeNode, SchemaValueNode,
+    SchemaValueTree,
 };
 
 // Global worker state managed in linear memory (automatically persisted by Golem)
@@ -75,22 +82,37 @@ fn set_current_state(state: String) {
     });
 }
 
-fn string_element_schema() -> ElementSchema {
-    // A plain `string`, not unstructured text: Golem's CLI renders results (and
-    // validates arguments) for component-model values, while unstructured text
-    // comes back as an empty tuple with "Non-ComponentModel output schema not
-    // supported for result rendering".
-    ElementSchema::ComponentModel(WitType {
-        nodes: vec![NamedWitTypeNode {
-            name: None,
-            owner: None,
-            type_: WitTypeNode::PrimStringType,
-        }],
-    })
+fn empty_metadata() -> MetadataEnvelope {
+    MetadataEnvelope {
+        doc: None,
+        aliases: vec![],
+        examples: vec![],
+        deprecated: None,
+        role: None,
+    }
 }
 
-fn single_string_schema(name: &str) -> DataSchema {
-    DataSchema::Tuple(vec![(name.to_string(), string_element_schema())])
+/// The agent's schema graph: a single string type node. Every declared
+/// parameter and result is a string in the app-facing contract, so all schema
+/// roots point at node 0.
+fn string_schema_graph() -> SchemaGraph {
+    SchemaGraph {
+        type_nodes: vec![SchemaTypeNode {
+            body: SchemaTypeBody::StringType,
+            metadata: empty_metadata(),
+        }],
+        defs: vec![],
+        root: 0,
+    }
+}
+
+fn string_named_field(name: &str) -> NamedField {
+    NamedField {
+        name: name.to_string(),
+        source: FieldSource::UserSupplied,
+        schema: 0,
+        metadata: empty_metadata(),
+    }
 }
 
 fn post_endpoint(path: &str) -> HttpEndpointDetails {
@@ -109,54 +131,35 @@ fn post_endpoint(path: &str) -> HttpEndpointDetails {
         cors_options: CorsOptions {
             allowed_patterns: vec!["*".to_string()],
         },
+        durable_streams: None,
     }
 }
 
-fn extract_data_value_string(val: &DataValue) -> String {
-    match val {
-        DataValue::Tuple(elements) => {
-            if let Some(first) = elements.first() {
-                match first {
-                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => ts.data.clone(),
-                    ElementValue::UnstructuredText(TextReference::Url(u)) => u.clone(),
-                    ElementValue::ComponentModel(wv) => {
-                        if let Some(WitNode::PrimString(s)) = wv.nodes.first() {
-                            s.clone()
-                        } else {
-                            String::from("{}")
-                        }
-                    }
-                    _ => String::from("{}"),
-                }
-            } else {
-                String::from("{}")
+/// Extracts the single string parameter from an input value tree.
+///
+/// Inputs encode the method/constructor parameter list: a record (or tuple)
+/// whose first element is the string the Roc app receives. A bare string root
+/// is also accepted, and anything else degrades to "{}" the way the old
+/// data-value extraction did.
+fn extract_input_string(tree: &SchemaValueTree) -> String {
+    match tree.value_nodes.get(tree.root as usize) {
+        Some(SchemaValueNode::RecordValue(items)) | Some(SchemaValueNode::TupleValue(items)) => {
+            match items.first().and_then(|i| tree.value_nodes.get(*i as usize)) {
+                Some(SchemaValueNode::StringValue(s)) => s.clone(),
+                _ => String::from("{}"),
             }
         }
-        DataValue::Multimodal(elements) => {
-            if let Some((_, first)) = elements.first() {
-                match first {
-                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => ts.data.clone(),
-                    ElementValue::UnstructuredText(TextReference::Url(u)) => u.clone(),
-                    ElementValue::ComponentModel(wv) => {
-                        if let Some(WitNode::PrimString(s)) = wv.nodes.first() {
-                            s.clone()
-                        } else {
-                            String::from("{}")
-                        }
-                    }
-                    _ => String::from("{}"),
-                }
-            } else {
-                String::from("{}")
-            }
-        }
+        Some(SchemaValueNode::StringValue(s)) => s.clone(),
+        _ => String::from("{}"),
     }
 }
 
-fn wrap_string_data_value(s: String) -> DataValue {
-    DataValue::Tuple(vec![ElementValue::ComponentModel(WitValue {
-        nodes: vec![WitNode::PrimString(s)],
-    })])
+/// Wraps a single string as an output value tree (root = the string node).
+fn single_string_value_tree(s: &str) -> SchemaValueTree {
+    SchemaValueTree {
+        value_nodes: vec![SchemaValueNode::StringValue(s.to_string())],
+        root: 0,
+    }
 }
 
 fn build_agent_type() -> Result<AgentType, AgentError> {
@@ -191,8 +194,9 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
         description: "Handles text or JSON messages".to_string(),
         http_endpoint: vec![post_endpoint("/api/chat")],
         prompt_hint: None,
-        input_schema: single_string_schema("message"),
-        output_schema: single_string_schema("response"),
+        input_schema: InputSchema::Parameters(vec![string_named_field("message")]),
+        output_schema: OutputSchema::Single(0),
+        read_only: None,
     });
 
     if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_json) {
@@ -234,8 +238,9 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
                     description: t_desc,
                     http_endpoint,
                     prompt_hint: None,
-                    input_schema: single_string_schema("input"),
-                    output_schema: single_string_schema("result"),
+                    input_schema: InputSchema::Parameters(vec![string_named_field("input")]),
+                    output_schema: OutputSchema::Single(0),
+                    read_only: None,
                 });
             }
         }
@@ -256,13 +261,15 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
     } else {
         Ok(AgentType {
             type_name: name_str,
+            kind: AgentTypeKind::Regular,
             description: description_str,
             source_language: "roc".to_string(),
+            schema: string_schema_graph(),
             constructor: AgentConstructor {
                 name: None,
                 description: "Initializes the agent".to_string(),
                 prompt_hint: None,
-                input_schema: single_string_schema("config"),
+                input_schema: InputSchema::Parameters(vec![string_named_field("config")]),
             },
             methods,
             dependencies: vec![],
@@ -292,8 +299,10 @@ pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
-    let metadata = golem::api::host::get_self_metadata();
-    let worker_id = metadata.agent_id.agent_id;
+    let worker_id = match golem::api::host::get_self_metadata() {
+        Ok(metadata) => metadata.agent_id.agent_id,
+        Err(_) => String::from("unknown"),
+    };
     ptr::write(out, RocStr::from_str(&worker_id));
 }
 
@@ -313,13 +322,23 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
     let payload_str = if payload.is_null() { "{}" } else { (*payload).as_str() };
 
     // The target is an agent id, as produced by `make-agent-id` / the Golem CLI
-    // (for example `counter-agent("{}")`).
+    // (for example `counter-agent("{}")`). `parse-agent-id` returns the target's
+    // constructor parameters as a self-contained typed value, which the 2.0
+    // `wasm-rpc` resource accepts directly.
     let result = match golem::agent::host::parse_agent_id(target_str) {
         Ok((agent_type_name, constructor, phantom_id)) => {
-            let rpc = golem::agent::host::WasmRpc::new(&agent_type_name, &constructor, phantom_id, &[]);
-            let input = wrap_string_data_value(String::from(payload_str));
-            match rpc.invoke_and_await(method, &input) {
-                Ok(value) => Ok(extract_data_value_string(&value)),
+            let rpc = golem::agent::host::WasmRpc::new(
+                &agent_type_name,
+                constructor.value,
+                phantom_id,
+                Vec::new(),
+            );
+            let input = single_string_value_tree(payload_str);
+            match rpc.invoke_and_await(method, input, None) {
+                Ok(invocation) => match invocation.result {
+                    Some(tree) => Ok(extract_input_string(&tree)),
+                    None => Ok(String::from("")),
+                },
                 Err(err) => Err(format!("rpc to {} failed: {:?}", target_str, err)),
             }
         }
@@ -334,24 +353,21 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxSetPersistence(mode: u8) {
-    let level = match mode {
-        0 => PersistenceLevel::PersistNothing,
-        1 => PersistenceLevel::PersistRemoteSideEffects,
-        _ => PersistenceLevel::Smart,
-    };
-    golem::api::host::set_oplog_persistence_level(level);
+    // Golem 1.6 removed persistence levels: durable agents are durable all the
+    // way through. Kept as a no-op so pre-1.6 platform code still links.
+    let _ = mode;
 }
 
-fn parse_url(url: &str) -> Result<(wasi::http::types::Scheme, String, String), String> {
+fn parse_url(url: &str) -> Result<(wasi::http0_2_6::types::Scheme, String, String), String> {
     let (scheme, rest) = if let Some(stripped) = url.strip_prefix("https://") {
-        (wasi::http::types::Scheme::Https, stripped)
+        (wasi::http0_2_6::types::Scheme::Https, stripped)
     } else if let Some(stripped) = url.strip_prefix("http://") {
-        (wasi::http::types::Scheme::Http, stripped)
+        (wasi::http0_2_6::types::Scheme::Http, stripped)
     } else if let Some(idx) = url.find("://") {
         let (s, r) = url.split_at(idx);
-        (wasi::http::types::Scheme::Other(s.to_string()), &r[3..])
+        (wasi::http0_2_6::types::Scheme::Other(s.to_string()), &r[3..])
     } else {
-        (wasi::http::types::Scheme::Https, url)
+        (wasi::http0_2_6::types::Scheme::Https, url)
     };
 
     let (authority, path_with_query) = if let Some(idx) = rest.find('/') {
@@ -368,27 +384,27 @@ fn parse_url(url: &str) -> Result<(wasi::http::types::Scheme, String, String), S
     Ok((scheme, authority, path_with_query))
 }
 
-fn parse_method(m: &str) -> wasi::http::types::Method {
+fn parse_method(m: &str) -> wasi::http0_2_6::types::Method {
     match m.to_uppercase().as_str() {
-        "GET" => wasi::http::types::Method::Get,
-        "POST" => wasi::http::types::Method::Post,
-        "PUT" => wasi::http::types::Method::Put,
-        "DELETE" => wasi::http::types::Method::Delete,
-        "PATCH" => wasi::http::types::Method::Patch,
-        "HEAD" => wasi::http::types::Method::Head,
-        "OPTIONS" => wasi::http::types::Method::Options,
-        "CONNECT" => wasi::http::types::Method::Connect,
-        "TRACE" => wasi::http::types::Method::Trace,
-        other => wasi::http::types::Method::Other(other.to_string()),
+        "GET" => wasi::http0_2_6::types::Method::Get,
+        "POST" => wasi::http0_2_6::types::Method::Post,
+        "PUT" => wasi::http0_2_6::types::Method::Put,
+        "DELETE" => wasi::http0_2_6::types::Method::Delete,
+        "PATCH" => wasi::http0_2_6::types::Method::Patch,
+        "HEAD" => wasi::http0_2_6::types::Method::Head,
+        "OPTIONS" => wasi::http0_2_6::types::Method::Options,
+        "CONNECT" => wasi::http0_2_6::types::Method::Connect,
+        "TRACE" => wasi::http0_2_6::types::Method::Trace,
+        other => wasi::http0_2_6::types::Method::Other(other.to_string()),
     }
 }
 
 pub fn execute_http_request(req_str: &str) -> Result<String, String> {
-    use wasi::http::outgoing_handler;
-    use wasi::http::types::{Fields, IncomingBody, OutgoingBody, OutgoingRequest};
+    use wasi::http0_2_6::outgoing_handler;
+    use wasi::http0_2_6::types::{Fields, IncomingBody, OutgoingBody, OutgoingRequest};
     use wasi::io::streams::StreamError;
 
-    let mut method = wasi::http::types::Method::Get;
+    let mut method = wasi::http0_2_6::types::Method::Get;
     let mut url = String::new();
     let mut custom_headers: Vec<(String, String)> = Vec::new();
     let mut body_bytes: Option<Vec<u8>> = None;
@@ -647,18 +663,17 @@ pub unsafe extern "C" fn rocFxWsReceive(
     out: *mut RocResult<RocStr, RocStr>,
     handle: u32,
 ) {
-    let received = ws_with(handle, |connection| connection.receive());
-    match received {
-        Some(Ok(message)) => {
-            let text = ws_message_text(message);
-            ptr::write(out, RocResult::ok(RocStr::from_str(&text)));
-        }
-        Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err)))),
-        None => ptr::write(
-            out,
-            RocResult::err(RocStr::from_str(&format!("unknown websocket handle {}", handle))),
-        ),
-    }
+    // Golem 1.6 made `golem:websocket/client.receive` an `async func`, which a
+    // synchronous Roc effect cannot call directly. Receiving is not supported on
+    // the 1.6 line yet (see the migration plan); connect/send/close stay
+    // synchronous and keep working.
+    let _ = handle;
+    ptr::write(
+        out,
+        RocResult::err(RocStr::from_str(
+            "websocketReceive! is not supported on Golem 1.6 yet (async receive)",
+        )),
+    );
 }
 
 #[no_mangle]
@@ -688,25 +703,25 @@ pub unsafe extern "C" fn rocFxSleepMillis(millis: u64) {
     // the agent host's `schedule-invocation`, which this platform does not expose
     // yet.
     let nanos = millis.saturating_mul(1_000_000);
-    let pollable = wasi::clocks::monotonic_clock::subscribe_duration(nanos);
+    let pollable = wasi::clocks0_2_6::monotonic_clock::subscribe_duration(nanos);
     pollable.block();
     drop(pollable);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxNowMillis() -> u64 {
-    wasi::clocks::monotonic_clock::now() / 1_000_000
+    wasi::clocks0_2_6::monotonic_clock::now() / 1_000_000
 }
 
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
-    fn initialize(
+    async fn initialize(
         _agent_type: String,
-        input: DataValue,
+        input: SchemaValueTree,
         _principal: Principal,
     ) -> Result<(), AgentError> {
-        let config = extract_data_value_string(&input);
+        let config = extract_input_string(&input);
         let roc_config = RocStr::from_str(&config);
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
@@ -725,13 +740,13 @@ impl Guest for GolemAgentHost {
         }
     }
 
-    fn invoke(
+    async fn invoke(
         method_name: String,
-        input: DataValue,
+        input: SchemaValueTree,
         _principal: Principal,
-    ) -> Result<DataValue, AgentError> {
+    ) -> Result<Option<SchemaValueTree>, AgentError> {
         let state_str = get_current_state();
-        let input_str = extract_data_value_string(&input);
+        let input_str = extract_input_string(&input);
 
         if method_name == "handle-message" || method_name == "message" {
             let roc_state = RocStr::from_str(&state_str);
@@ -760,10 +775,10 @@ impl Guest for GolemAgentHost {
                                 } else {
                                     resp_val.to_string()
                                 };
-                                return Ok(wrap_string_data_value(resp_text));
+                                return Ok(Some(single_string_value_tree(&resp_text)));
                             }
                         }
-                        Ok(wrap_string_data_value(payload_str.into()))
+                        Ok(Some(single_string_value_tree(payload_str)))
                     }
                     Err(err) => Err(AgentError::InvalidMethod(err.to_string())),
                 }
@@ -806,9 +821,9 @@ impl Guest for GolemAgentHost {
                             } else {
                                 String::from("{}")
                             };
-                            Ok(wrap_string_data_value(output))
+                            Ok(Some(single_string_value_tree(&output)))
                         } else {
-                            Ok(wrap_string_data_value(payload_str.into()))
+                            Ok(Some(single_string_value_tree(payload_str)))
                         }
                     }
                     Err(err) => Err(AgentError::InvalidMethod(err.to_string())),
@@ -857,19 +872,19 @@ mod tests {
         assert_eq!(handle_msg.http_endpoint[0].path_suffix.len(), 2);
 
         match &handle_msg.input_schema {
-            DataSchema::Tuple(elements) => {
-                assert_eq!(elements.len(), 1);
-                assert_eq!(elements[0].0, "message");
+            InputSchema::Parameters(fields) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].name, "message");
             }
-            _ => panic!("Expected tuple input schema"),
+            _ => panic!("Expected parameters input schema"),
         }
 
         match &types[0].constructor.input_schema {
-            DataSchema::Tuple(elements) => {
-                assert_eq!(elements.len(), 1);
-                assert_eq!(elements[0].0, "config");
+            InputSchema::Parameters(fields) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].name, "config");
             }
-            _ => panic!("Expected tuple constructor input schema"),
+            _ => panic!("Expected parameters constructor input schema"),
         }
 
         assert!(types[0].methods.iter().any(|m| m.name == "calculator"));
@@ -878,46 +893,46 @@ mod tests {
 
     #[test]
     fn test_agent_initialize_and_invoke() {
-        let init_res = GolemAgentHost::initialize(
+        let init_res = pollster::block_on(GolemAgentHost::initialize(
             "counter-agent".to_string(),
-            wrap_string_data_value("{}".to_string()),
+            single_string_value_tree("{}"),
             Principal::Anonymous,
-        );
+        ));
         assert!(init_res.is_ok());
 
-        let invoke_res = GolemAgentHost::invoke(
+        let invoke_res = pollster::block_on(GolemAgentHost::invoke(
             "handle-message".to_string(),
-            wrap_string_data_value("increment".to_string()),
+            single_string_value_tree("increment"),
             Principal::Anonymous,
-        );
+        ));
         assert!(invoke_res.is_ok());
     }
 
     #[test]
     fn test_parse_url() {
         let (scheme, auth, path) = parse_url("https://api.example.com/v1/chat?q=test").unwrap();
-        assert!(matches!(scheme, wasi::http::types::Scheme::Https));
+        assert!(matches!(scheme, wasi::http0_2_6::types::Scheme::Https));
         assert_eq!(auth, "api.example.com");
         assert_eq!(path, "/v1/chat?q=test");
 
         let (scheme, auth, path) = parse_url("http://localhost:8080").unwrap();
-        assert!(matches!(scheme, wasi::http::types::Scheme::Http));
+        assert!(matches!(scheme, wasi::http0_2_6::types::Scheme::Http));
         assert_eq!(auth, "localhost:8080");
         assert_eq!(path, "/");
 
         let (scheme, auth, path) = parse_url("custom://my-host/path").unwrap();
-        assert!(matches!(scheme, wasi::http::types::Scheme::Other(s) if s == "custom"));
+        assert!(matches!(scheme, wasi::http0_2_6::types::Scheme::Other(s) if s == "custom"));
         assert_eq!(auth, "my-host");
         assert_eq!(path, "/path");
     }
 
     #[test]
     fn test_parse_method() {
-        assert!(matches!(parse_method("get"), wasi::http::types::Method::Get));
-        assert!(matches!(parse_method("POST"), wasi::http::types::Method::Post));
-        assert!(matches!(parse_method("put"), wasi::http::types::Method::Put));
-        assert!(matches!(parse_method("DELETE"), wasi::http::types::Method::Delete));
-        assert!(matches!(parse_method("PATCH"), wasi::http::types::Method::Patch));
-        assert!(matches!(parse_method("custom"), wasi::http::types::Method::Other(s) if s == "CUSTOM"));
+        assert!(matches!(parse_method("get"), wasi::http0_2_6::types::Method::Get));
+        assert!(matches!(parse_method("POST"), wasi::http0_2_6::types::Method::Post));
+        assert!(matches!(parse_method("put"), wasi::http0_2_6::types::Method::Put));
+        assert!(matches!(parse_method("DELETE"), wasi::http0_2_6::types::Method::Delete));
+        assert!(matches!(parse_method("PATCH"), wasi::http0_2_6::types::Method::Patch));
+        assert!(matches!(parse_method("custom"), wasi::http0_2_6::types::Method::Other(s) if s == "CUSTOM"));
     }
 }

@@ -29,7 +29,7 @@ platform "golem"
 	targets: {
 		wasm32: {
 			inputs: ["libhost.a", app],
-			exports: ["golem:agent/guest@1.5.0#discover-agent-types", "cabi_post_golem:agent/guest@1.5.0#discover-agent-types", "golem:agent/guest@1.5.0#get-definition", "cabi_post_golem:agent/guest@1.5.0#get-definition", "golem:agent/guest@1.5.0#initialize", "cabi_post_golem:agent/guest@1.5.0#initialize", "golem:agent/guest@1.5.0#invoke", "cabi_post_golem:agent/guest@1.5.0#invoke", "cabi_realloc", "cabi_realloc_wit_bindgen_0_36_0"],
+			exports: ["[async-lift]golem:agent/guest@2.0.0#initialize", "[callback][async-lift]golem:agent/guest@2.0.0#initialize", "[async-lift]golem:agent/guest@2.0.0#invoke", "[callback][async-lift]golem:agent/guest@2.0.0#invoke", "golem:agent/guest@2.0.0#get-definition", "cabi_post_golem:agent/guest@2.0.0#get-definition", "golem:agent/guest@2.0.0#discover-agent-types", "cabi_post_golem:agent/guest@2.0.0#discover-agent-types", "cabi_realloc"],
 		},
 	}
 

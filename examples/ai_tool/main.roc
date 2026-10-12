@@ -56,7 +56,7 @@ agent = defineAgent({
 						output: "{\"error\": \"Tool not found\"}",
 					},
 				}
-			}
+		}
 	},
 
 	metadata: {
