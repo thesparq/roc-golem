@@ -162,6 +162,18 @@ fn single_string_value_tree(s: &str) -> SchemaValueTree {
     }
 }
 
+/// Wraps a single string as a *parameter list* value tree: the root is a record
+/// with one field, which is what both `invoke` inputs and RPC calls expect.
+fn single_param_value_tree(s: &str) -> SchemaValueTree {
+    SchemaValueTree {
+        value_nodes: vec![
+            SchemaValueNode::RecordValue(vec![1]),
+            SchemaValueNode::StringValue(s.to_string()),
+        ],
+        root: 0,
+    }
+}
+
 fn build_agent_type() -> Result<AgentType, AgentError> {
     let mut roc_out = MaybeUninit::<RocStr>::uninit();
     let meta_json = unsafe {
@@ -333,7 +345,7 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
                 phantom_id,
                 Vec::new(),
             );
-            let input = single_string_value_tree(payload_str);
+            let input = single_param_value_tree(payload_str);
             match rpc.invoke_and_await(method, input, None) {
                 Ok(invocation) => match invocation.result {
                     Some(tree) => Ok(extract_input_string(&tree)),
