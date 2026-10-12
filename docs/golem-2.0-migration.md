@@ -1,5 +1,8 @@
 # Golem 2.0 protocol migration (scoping)
 
+> Superseded by `docs/golem-1.6-migration-plan.md` (actionable plan, verified
+> against v1.6.0-rc2). This note stays as the original scoping record.
+
 Golem 1.6+ expects a new agent protocol. This note records what changed, what it
 means for this platform, and the work it implies. It is based on the WIT shipped
 with `v1.6.0-rc1` (`wit/deps/golem-agent/{guest,common}.wit`), fetched from the
