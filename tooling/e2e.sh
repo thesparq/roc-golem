@@ -28,6 +28,14 @@ HTTP_PORT="${E2E_HTTP_PORT:-18099}"
 RUN_ID="e2e-$$"
 MANIFEST="$ROOT_DIR/golem.yaml"
 
+# Extra CLI flags, word-split on purpose (for example
+# `GOLEM_CLI_EXTRA="--config-dir /tmp/cli-state"` to isolate CLI state).
+CLI_EXTRA="${GOLEM_CLI_EXTRA:-}"
+
+# Golem 1.6's local flow resolves the built-in "local" profile, so point it at
+# this run's router port. Older CLIs ignore the variable.
+export GOLEM_BUILTIN_LOCAL_URL="${GOLEM_BUILTIN_LOCAL_URL:-http://127.0.0.1:$PORT}"
+
 failures=0
 server_pid=""
 http_pid=""
@@ -100,7 +108,7 @@ http_pid=$!
 sleep 1
 
 say "==> Deploying"
-deploy_output="$("$CLI" -L -A "$MANIFEST" deploy --yes 2>&1 || true)"
+deploy_output="$("$CLI" $CLI_EXTRA -L -A "$MANIFEST" deploy --yes 2>&1 || true)"
 if [[ "$deploy_output" == *"Finished deploying"* || "$deploy_output" == *"no changes required"* ]]; then
     say "PASS  deploy"
 else
@@ -110,7 +118,7 @@ else
 fi
 
 invoke() { # invoke <agent-id> <method> <argument> -> result line
-    "$CLI" -L -A "$MANIFEST" agent invoke "$1" "$2" "$3" 2>&1 \
+    "$CLI" $CLI_EXTRA -L -A "$MANIFEST" agent invoke "$1" "$2" "$3" 2>&1 \
         | tail -n 1 \
         | sed -e 's/^"//' -e 's/"$//' -e 's/\\"/"/g'
 }
