@@ -18,12 +18,11 @@ mod stubs;
 bindgen!({
     path: "wit",
     world: "harness-world",
+    debug: true,
 });
 
 use exports::golem::agent::guest::Principal;
-use golem::core::types::{
-    DataValue, ElementValue, TextReference, TextSource, WitNode, WitValue,
-};
+use golem::core::types::{SchemaValueNode, SchemaValueTree};
 
 /// Dummy host state. The linked component needs a monotonic clock, an empty poll
 /// set, a logging sink and WebSocket connections; the recorded effects are what
@@ -56,18 +55,18 @@ pub struct StubRequest {
 }
 
 /// Name of a `wasi:http/types` method, as it appears on the wire.
-pub fn method_name(method: &wasi::http::types::Method) -> String {
+pub fn method_name(method: &wasi::http0_2_6::types::Method) -> String {
     match method {
-        wasi::http::types::Method::Get => "GET",
-        wasi::http::types::Method::Head => "HEAD",
-        wasi::http::types::Method::Post => "POST",
-        wasi::http::types::Method::Put => "PUT",
-        wasi::http::types::Method::Delete => "DELETE",
-        wasi::http::types::Method::Connect => "CONNECT",
-        wasi::http::types::Method::Options => "OPTIONS",
-        wasi::http::types::Method::Trace => "TRACE",
-        wasi::http::types::Method::Patch => "PATCH",
-        wasi::http::types::Method::Other(other) => other.as_str(),
+        wasi::http0_2_6::types::Method::Get => "GET",
+        wasi::http0_2_6::types::Method::Head => "HEAD",
+        wasi::http0_2_6::types::Method::Post => "POST",
+        wasi::http0_2_6::types::Method::Put => "PUT",
+        wasi::http0_2_6::types::Method::Delete => "DELETE",
+        wasi::http0_2_6::types::Method::Connect => "CONNECT",
+        wasi::http0_2_6::types::Method::Options => "OPTIONS",
+        wasi::http0_2_6::types::Method::Trace => "TRACE",
+        wasi::http0_2_6::types::Method::Patch => "PATCH",
+        wasi::http0_2_6::types::Method::Other(other) => other.as_str(),
     }
     .to_string()
 }
@@ -91,9 +90,82 @@ impl golem::core::types::Host for Ctx {
     }
 }
 
+// Capability resources a component may import but roc-golem agents do not use
+// yet: the harness only needs them to link.
+impl golem::core::types::HostQuotaToken for Ctx {
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::core::types::QuotaToken>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::core::types::HostSecret for Ctx {
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::core::types::Secret>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::core::types::HostPermissionCard for Ctx {
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::core::types::PermissionCard>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::core::types::HostSchemaValueStream for Ctx {
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::core::types::SchemaValueStream>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::core::types::HostSchemaValueStreamWithStore<Ctx> for Ctx {
+    fn wrap(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _reader: wasmtime::component::StreamReader<SchemaValueTree>,
+    ) -> impl std::future::Future<
+        Output = wasmtime::component::Resource<golem::core::types::SchemaValueStream>,
+    > + Send {
+        async move { unsafe { wasmtime::component::Resource::new_own(0) } }
+    }
+
+    fn unwrap(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _value: wasmtime::component::Resource<golem::core::types::SchemaValueStream>,
+    ) -> impl std::future::Future<
+        Output = wasmtime::component::StreamReader<SchemaValueTree>,
+    > + Send {
+        async move { unimplemented!("schema-value-stream is not used by roc-golem components") }
+    }
+}
+
 impl golem::agent::common::Host for Ctx {}
 
-impl wasi::clocks::monotonic_clock::Host for Ctx {
+impl wasi::clocks0_3_0::types::Host for Ctx {}
+
+impl wasi::clocks0_3_0::system_clock::Host for Ctx {
+    fn now(&mut self) -> wasi::clocks0_3_0::system_clock::Instant {
+        wasi::clocks0_3_0::system_clock::Instant {
+            seconds: 0,
+            nanoseconds: 0,
+        }
+    }
+
+    fn get_resolution(&mut self) -> wasi::clocks0_3_0::system_clock::Duration {
+        1_000_000
+    }
+}
+
+impl wasi::clocks0_2_6::monotonic_clock::Host for Ctx {
     fn now(&mut self) -> u64 {
         0
     }
@@ -114,15 +186,15 @@ impl wasi::clocks::monotonic_clock::Host for Ctx {
     }
 }
 
-impl wasi::clocks::wall_clock::Host for Ctx {
-    fn now(&mut self) -> wasi::clocks::wall_clock::Datetime {
-        wasi::clocks::wall_clock::Datetime {
+impl wasi::clocks0_2_6::wall_clock::Host for Ctx {
+    fn now(&mut self) -> wasi::clocks0_2_6::wall_clock::Datetime {
+        wasi::clocks0_2_6::wall_clock::Datetime {
             seconds: 0,
             nanoseconds: 0,
         }
     }
-    fn resolution(&mut self) -> wasi::clocks::wall_clock::Datetime {
-        wasi::clocks::wall_clock::Datetime {
+    fn resolution(&mut self) -> wasi::clocks0_2_6::wall_clock::Datetime {
+        wasi::clocks0_2_6::wall_clock::Datetime {
             seconds: 1,
             nanoseconds: 0,
         }
@@ -210,25 +282,6 @@ impl golem::websocket::client::HostWebsocketConnection for Ctx {
         }
     }
 
-    fn receive(
-        &mut self,
-        _self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
-    ) -> Result<golem::websocket::client::Message, golem::websocket::client::Error> {
-        Ok(golem::websocket::client::Message::Text(String::from(
-            "stub-reply",
-        )))
-    }
-
-    fn receive_with_timeout(
-        &mut self,
-        _self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
-        _timeout_ms: u64,
-    ) -> Result<Option<golem::websocket::client::Message>, golem::websocket::client::Error> {
-        Ok(Some(golem::websocket::client::Message::Text(
-            String::from("stub-reply"),
-        )))
-    }
-
     fn close(
         &mut self,
         self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
@@ -247,13 +300,6 @@ impl golem::websocket::client::HostWebsocketConnection for Ctx {
         }
     }
 
-    fn subscribe(
-        &mut self,
-        _self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
-    ) -> wasmtime::component::Resource<wasi::io::poll::Pollable> {
-        unsafe { wasmtime::component::Resource::new_own(0) }
-    }
-
     fn drop(
         &mut self,
         rep: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
@@ -263,6 +309,40 @@ impl golem::websocket::client::HostWebsocketConnection for Ctx {
             connection.closed = true;
         }
         Ok(())
+    }
+}
+
+/// The async websocket imports live in the `WithStore` companion trait; the
+/// stub answers immediately with the canned message the old sync stub used.
+impl golem::websocket::client::HostWebsocketConnectionWithStore<Ctx> for Ctx {
+    fn receive(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+    ) -> impl std::future::Future<
+        Output = Result<golem::websocket::client::Message, golem::websocket::client::Error>,
+    > + Send {
+        async move {
+            Ok(golem::websocket::client::Message::Text(String::from(
+                "stub-reply",
+            )))
+        }
+    }
+
+    fn receive_with_timeout(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _self_: wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
+        _timeout_ms: u64,
+    ) -> impl std::future::Future<
+        Output = Result<
+            Option<golem::websocket::client::Message>,
+            golem::websocket::client::Error,
+        >,
+    > + Send {
+        async move {
+            Ok(Some(golem::websocket::client::Message::Text(
+                String::from("stub-reply"),
+            )))
+        }
     }
 }
 
@@ -283,10 +363,17 @@ impl golem::agent::host::Host for Ctx {
         None
     }
 
+    fn get_agent_type_by_agent_id(
+        &mut self,
+        _agent_id: String,
+    ) -> Option<golem::agent::common::RegisteredAgentType> {
+        None
+    }
+
     fn make_agent_id(
         &mut self,
         agent_type_name: String,
-        _input: golem::agent::common::DataValue,
+        _input: SchemaValueTree,
         _phantom_id: Option<golem::core::types::Uuid>,
     ) -> Result<String, golem::agent::common::AgentError> {
         Ok(format!("{agent_type_name}(\"{{}}\")"))
@@ -298,7 +385,7 @@ impl golem::agent::host::Host for Ctx {
     ) -> Result<
         (
             String,
-            golem::agent::common::DataValue,
+            golem::core::types::TypedSchemaValue,
             Option<golem::core::types::Uuid>,
         ),
         golem::agent::common::AgentError,
@@ -307,20 +394,30 @@ impl golem::agent::host::Host for Ctx {
         // the call reaches `invoke-and-await` below.
         Ok((
             agent_id,
-            golem::agent::common::DataValue::Tuple(Vec::new()),
+            golem::core::types::TypedSchemaValue {
+                graph: golem::core::types::SchemaGraph {
+                    type_nodes: Vec::new(),
+                    defs: Vec::new(),
+                    root: 0,
+                },
+                value: text_value("{}"),
+            },
             None,
         ))
     }
 
-    fn create_webhook(&mut self, _promise_id: golem::core::types::PromiseId) -> String {
-        String::from("http://stub/webhook")
+    fn create_webhook(
+        &mut self,
+        _promise_id: golem::core::types::PromiseId,
+    ) -> Result<String, golem::agent::host::WebhookError> {
+        Ok(String::from("http://stub/webhook"))
     }
 
     fn get_config_value(
         &mut self,
         _key: Vec<String>,
-        _expected_type: golem::core::types::WitType,
-    ) -> golem::core::types::WitValue {
+        _expected: golem::core::types::SchemaGraph,
+    ) -> Result<SchemaValueTree, golem::agent::host::ConfigValueError> {
         unimplemented!("get-config-value is not used by roc-golem components")
     }
 }
@@ -329,7 +426,7 @@ impl golem::agent::host::HostWasmRpc for Ctx {
     fn new(
         &mut self,
         agent_type_name: String,
-        _constructor: golem::agent::common::DataValue,
+        _constructor: SchemaValueTree,
         _phantom_id: Option<golem::core::types::Uuid>,
         _agent_config: Vec<golem::agent::common::TypedAgentConfigValue>,
     ) -> wasmtime::component::Resource<golem::agent::host::WasmRpc> {
@@ -338,60 +435,84 @@ impl golem::agent::host::HostWasmRpc for Ctx {
         unsafe { wasmtime::component::Resource::new_own(rep) }
     }
 
+    fn create(
+        &mut self,
+        agent_type_name: String,
+        _constructor: SchemaValueTree,
+        _phantom_id: Option<golem::core::types::Uuid>,
+        _agent_config: Vec<golem::agent::common::TypedAgentConfigValue>,
+    ) -> Result<wasmtime::component::Resource<golem::agent::host::WasmRpc>, golem::agent::host::RpcError>
+    {
+        let rep = self.rpc_calls.len() as u32;
+        self.rpc_calls.push(format!("new({agent_type_name})"));
+        Ok(unsafe { wasmtime::component::Resource::new_own(rep) })
+    }
+
     fn invoke_and_await(
         &mut self,
         _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
         method_name: String,
-        _input: golem::agent::common::DataValue,
-    ) -> Result<golem::agent::common::DataValue, golem::agent::host::RpcError> {
+        _input: SchemaValueTree,
+        _scope_card: Option<wasmtime::component::Resource<golem::core::types::PermissionCard>>,
+    ) -> Result<golem::agent::host::InvocationResultWithMetadata, golem::agent::host::RpcError> {
         self.rpc_calls.push(format!("invoke-and-await({method_name})"));
-        Ok(golem::agent::common::DataValue::Tuple(vec![
-            golem::core::types::ElementValue::UnstructuredText(
-                golem::core::types::TextReference::Inline(golem::core::types::TextSource {
-                    data: String::from("stub-rpc-reply"),
-                    text_type: None,
-                }),
-            ),
-        ]))
+        Ok(golem::agent::host::InvocationResultWithMetadata {
+            metadata: stub_invocation_metadata(),
+            result: Some(SchemaValueTree {
+                value_nodes: vec![SchemaValueNode::StringValue(String::from("stub-rpc-reply"))],
+                root: 0,
+            }),
+        })
     }
 
     fn invoke(
         &mut self,
         _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
         method_name: String,
-        _input: golem::agent::common::DataValue,
-    ) -> Result<(), golem::agent::host::RpcError> {
+        _input: SchemaValueTree,
+        _scope_card: Option<wasmtime::component::Resource<golem::core::types::PermissionCard>>,
+    ) -> Result<golem::agent::host::InvocationMetadata, golem::agent::host::RpcError> {
         self.rpc_calls.push(format!("invoke({method_name})"));
-        Ok(())
+        Ok(stub_invocation_metadata())
     }
 
     fn async_invoke_and_await(
         &mut self,
         _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
         method_name: String,
-        _input: golem::agent::common::DataValue,
-    ) -> wasmtime::component::Resource<golem::agent::host::FutureInvokeResult> {
-        self.rpc_calls.push(format!("async-invoke-and-await({method_name})"));
-        unsafe { wasmtime::component::Resource::new_own(0) }
+        _input: SchemaValueTree,
+        _scope_card: Option<wasmtime::component::Resource<golem::core::types::PermissionCard>>,
+    ) -> golem::agent::host::AsyncInvocationWithMetadata {
+        self.rpc_calls
+            .push(format!("async-invoke-and-await({method_name})"));
+        golem::agent::host::AsyncInvocationWithMetadata {
+            metadata: stub_invocation_metadata(),
+            future: unsafe { wasmtime::component::Resource::new_own(0) },
+        }
     }
 
     fn schedule_invocation(
         &mut self,
         _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
-        _scheduled_time: wasi::clocks::wall_clock::Datetime,
+        _scheduled_time: golem::agent::host::Datetime,
         _method_name: String,
-        _input: golem::agent::common::DataValue,
-    ) {
+        _input: SchemaValueTree,
+        _scope_card: Option<wasmtime::component::Resource<golem::core::types::PermissionCard>>,
+    ) -> Result<golem::agent::host::ScheduledInvocationReceipt, golem::agent::host::RpcError> {
         unimplemented!("schedule-invocation is not used by roc-golem components")
     }
 
     fn schedule_cancelable_invocation(
         &mut self,
         _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
-        _scheduled_time: wasi::clocks::wall_clock::Datetime,
+        _scheduled_time: golem::agent::host::Datetime,
         _method_name: String,
-        _input: golem::agent::common::DataValue,
-    ) -> wasmtime::component::Resource<golem::agent::host::CancellationToken> {
+        _input: SchemaValueTree,
+        _scope_card: Option<wasmtime::component::Resource<golem::core::types::PermissionCard>>,
+    ) -> Result<
+        golem::agent::host::CancelableScheduledInvocationReceipt,
+        golem::agent::host::RpcError,
+    > {
         unimplemented!("schedule-cancelable-invocation is not used by roc-golem components")
     }
 
@@ -403,28 +524,37 @@ impl golem::agent::host::HostWasmRpc for Ctx {
     }
 }
 
+fn stub_invocation_metadata() -> golem::agent::host::InvocationMetadata {
+    golem::agent::host::InvocationMetadata {
+        agent_id: String::from("stub-agent"),
+        idempotency_key: String::from("stub-idempotency-key"),
+    }
+}
+
 impl golem::agent::host::HostFutureInvokeResult for Ctx {
-    fn subscribe(
+    fn cancel(
         &mut self,
         _self_: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>,
-    ) -> wasmtime::component::Resource<wasi::io::poll::Pollable> {
-        unsafe { wasmtime::component::Resource::new_own(0) }
+    ) {
     }
-
-    fn get(
-        &mut self,
-        _self_: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>,
-    ) -> Option<Result<golem::agent::common::DataValue, golem::agent::host::RpcError>> {
-        None
-    }
-
-    fn cancel(&mut self, _self_: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>) {}
 
     fn drop(
         &mut self,
         _rep: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>,
     ) -> wasmtime::Result<()> {
         Ok(())
+    }
+}
+
+/// The async half of `future-invoke-result` lives in the `WithStore` trait.
+impl golem::agent::host::HostFutureInvokeResultWithStore<Ctx> for Ctx {
+    fn get(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _self_: wasmtime::component::Resource<golem::agent::host::FutureInvokeResult>,
+    ) -> impl std::future::Future<
+        Output = Result<Option<SchemaValueTree>, golem::agent::host::RpcError>,
+    > + Send {
+        async move { Ok(None) }
     }
 }
 
@@ -531,41 +661,45 @@ fn parse_args() -> Result<Expectation> {
     Ok(expectation)
 }
 
-/// A single component-model `string`, which is what the platform declares in
-/// its agent method schemas (Golem type-checks arguments against them).
-fn text_value(s: &str) -> DataValue {
-    DataValue::Tuple(vec![ElementValue::ComponentModel(WitValue {
-        nodes: vec![WitNode::PrimString(s.to_string())],
-    })])
+/// A single component-model `string` as an input parameter list: the root is a
+/// record with one field, which is what the platform declares in its agent
+/// method schemas (Golem type-checks arguments against them).
+fn text_value(s: &str) -> SchemaValueTree {
+    SchemaValueTree {
+        value_nodes: vec![
+            SchemaValueNode::RecordValue(vec![1]),
+            SchemaValueNode::StringValue(s.to_string()),
+        ],
+        root: 0,
+    }
 }
 
-fn text_of(value: &DataValue) -> Option<String> {
-    match value {
-        DataValue::Tuple(elements) => match elements.first() {
-            Some(ElementValue::ComponentModel(wit)) => match wit.nodes.first() {
-                Some(WitNode::PrimString(text)) => Some(text.clone()),
+/// Extracts the single string from an output value tree (root is the string).
+fn text_of(value: &SchemaValueTree) -> Option<String> {
+    match value.value_nodes.get(value.root as usize) {
+        Some(SchemaValueNode::StringValue(text)) => Some(text.clone()),
+        Some(SchemaValueNode::RecordValue(items)) | Some(SchemaValueNode::TupleValue(items)) => {
+            match items.first().and_then(|i| value.value_nodes.get(*i as usize)) {
+                Some(SchemaValueNode::StringValue(text)) => Some(text.clone()),
                 _ => None,
-            },
-            Some(ElementValue::UnstructuredText(TextReference::Inline(source))) => {
-                Some(source.data.clone())
             }
-            Some(ElementValue::UnstructuredText(TextReference::Url(url))) => Some(url.clone()),
-            _ => None,
-        },
-        DataValue::Multimodal(elements) => match elements.first() {
-            Some((_, ElementValue::UnstructuredText(TextReference::Inline(source)))) => {
-                Some(source.data.clone())
-            }
-            _ => None,
-        },
+        }
+        _ => None,
     }
 }
 
 fn main() -> Result<ExitCode> {
+    pollster::block_on(run())
+}
+
+async fn run() -> Result<ExitCode> {
     let expectation = parse_args()?;
 
     let mut config = Config::new();
+    config.async_support(true);
+    config.concurrency_support(true);
     config.wasm_component_model(true);
+    config.wasm_component_model_async(true);
     let engine = Engine::new(&config)?;
     let component = Component::from_file(&engine, &expectation.component).map_err(|err| {
         anyhow::anyhow!("failed to load {}: {err}", expectation.component.display())
@@ -580,7 +714,11 @@ fn main() -> Result<ExitCode> {
     // `stubs.rs`), so no wasmtime-wasi linker is involved: wasmtime's own
     // `wasi:http` implementation tracks a newer WASI version than Golem pins.
     let mut linker = Linker::<Ctx>::new(&engine);
-    HarnessWorld::add_to_linker::<Ctx, Ctx>(&mut linker, |ctx: &mut Ctx| ctx)?;
+    HarnessWorld::add_to_linker::<Ctx, Ctx>(
+        &mut linker,
+        &LinkOptions::default(),
+        |ctx: &mut Ctx| ctx,
+    )?;
 
     let mut store = Store::new(
         &engine,
@@ -599,15 +737,16 @@ fn main() -> Result<ExitCode> {
             http_request_lines: Vec::new(),
         },
     );
-    let bindings = HarnessWorld::instantiate(&mut store, &component, &linker).map_err(|err| {
-        anyhow::anyhow!(
-            "failed to instantiate {}: {err}",
-            expectation.component.display()
-        )
-    })?;
+    let bindings = HarnessWorld::instantiate_async(&mut store, &component, &linker)
+        .await
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "failed to instantiate {}: {err}",
+                expectation.component.display()
+            )
+        })?;
 
     let guest = bindings.golem_agent_guest();
-    let principal = Principal::Anonymous;
     let mut failures: Vec<String> = Vec::new();
 
     // 1. Agent definition: exercises the metadata hook, which only uses strings
@@ -656,15 +795,31 @@ fn main() -> Result<ExitCode> {
 
     // 3. initialize: the first call that runs app code and allocates. A trap
     //    here poisons the instance, so every later call fails too.
-    match guest.call_initialize(&mut store, "harness", &text_value(&agent_config), &principal) {
-        Ok(Ok(())) => println!("[initialize]               = ok"),
-        Ok(Err(err)) => {
+    let init_result = store
+        .run_concurrent(async |accessor| {
+            guest
+                .call_initialize(
+                    accessor,
+                    String::from("harness"),
+                    text_value(&agent_config),
+                    Principal::Anonymous,
+                )
+                .await
+        })
+        .await;
+    match init_result {
+        Ok(Ok(Ok(()))) => println!("[initialize]               = ok"),
+        Ok(Ok(Err(err))) => {
             println!("[initialize]               = agent error {:?}", err);
             failures.push(format!("initialize returned an error: {:?}", err));
         }
-        Err(err) => {
+        Ok(Err(err)) => {
             println!("[initialize]               = trap\n{}", err);
             failures.push(String::from("initialize trapped"));
+        }
+        Err(err) => {
+            println!("[initialize]               = executor error\n{err:?}");
+            failures.push(String::from("initialize could not run"));
         }
     }
 
@@ -689,9 +844,21 @@ fn main() -> Result<ExitCode> {
         if expected.is_none() {
             continue;
         }
-        match guest.call_invoke(&mut store, "handle-message", &text_value(&message), &principal) {
-            Ok(Ok(value)) => {
-                let raw = text_of(&value).unwrap_or_default();
+        let invoke_result = store
+            .run_concurrent(async |accessor| {
+                guest
+                    .call_invoke(
+                        accessor,
+                        String::from("handle-message"),
+                        text_value(&message),
+                        Principal::Anonymous,
+                    )
+                    .await
+            })
+            .await;
+        match invoke_result {
+            Ok(Ok(Ok(value))) => {
+                let raw = value.as_ref().and_then(text_of).unwrap_or_default();
                 println!("[{}] = {:?}", label, raw);
                 if let Some(expected) = expected {
                     if !raw.contains(expected.as_str()) {
@@ -702,13 +869,17 @@ fn main() -> Result<ExitCode> {
                     }
                 }
             }
-            Ok(Err(err)) => {
+            Ok(Ok(Err(err))) => {
                 println!("[{}] = agent error {:?}", label, err);
                 failures.push(format!("{} returned an error: {:?}", label, err));
             }
-            Err(err) => {
+            Ok(Err(err)) => {
                 println!("[{}] = trap\n{}", label, err);
                 failures.push(format!("{} trapped", label));
+            }
+            Err(err) => {
+                println!("[{label}] = executor error\n{err:?}");
+                failures.push(format!("{} could not run", label));
             }
         }
     }
@@ -716,9 +887,21 @@ fn main() -> Result<ExitCode> {
     // 5. Tool calls take a different path through the host (they go to the
     //    app's `handleToolCall!` and come back as a result payload).
     if let Some(tool) = &expectation.tool {
-        match guest.call_invoke(&mut store, tool, &text_value("{}"), &principal) {
-            Ok(Ok(value)) => {
-                let raw = text_of(&value).unwrap_or_default();
+        let tool_result = store
+            .run_concurrent(async |accessor| {
+                guest
+                    .call_invoke(
+                        accessor,
+                        tool.clone(),
+                        text_value("{}"),
+                        Principal::Anonymous,
+                    )
+                    .await
+            })
+            .await;
+        match tool_result {
+            Ok(Ok(Ok(value))) => {
+                let raw = value.as_ref().and_then(text_of).unwrap_or_default();
                 println!("[invoke {}] = {:?}", tool, raw);
                 if let Some(expected) = &expectation.tool_reply {
                     if !raw.contains(expected.as_str()) {
@@ -729,13 +912,17 @@ fn main() -> Result<ExitCode> {
                     }
                 }
             }
-            Ok(Err(err)) => {
+            Ok(Ok(Err(err))) => {
                 println!("[invoke {}] = agent error {:?}", tool, err);
                 failures.push(format!("tool {} returned an error: {:?}", tool, err));
             }
-            Err(err) => {
+            Ok(Err(err)) => {
                 println!("[invoke {}] = trap\n{}", tool, err);
                 failures.push(format!("tool {} trapped", tool));
+            }
+            Err(err) => {
+                println!("[invoke {tool}] = executor error\n{err:?}");
+                failures.push(format!("tool {} could not run", tool));
             }
         }
     }

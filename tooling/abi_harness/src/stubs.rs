@@ -15,7 +15,7 @@ use crate::Ctx;
 
 pub mod stubs_wasi_http_outgoing_handler {
     use super::Ctx;
-    use crate::wasi::http::outgoing_handler::*;
+    use crate::wasi::http0_2_6::outgoing_handler::*;
 
     impl Host for Ctx {
         fn handle(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>, _p2: Option<wasmtime::component::Resource<RequestOptions>>) -> Result<wasmtime::component::Resource<FutureIncomingResponse>, ErrorCode> {
@@ -42,7 +42,7 @@ pub mod stubs_wasi_http_types {
     use super::Ctx;
     use crate::method_name;
     use crate::StubRequest;
-    use crate::wasi::http::types::*;
+    use crate::wasi::http0_2_6::types::*;
 
     impl HostFields for Ctx {
         fn new(&mut self) -> wasmtime::component::Resource<Fields> {
@@ -51,13 +51,13 @@ pub mod stubs_wasi_http_types {
             unsafe { wasmtime::component::Resource::new_own(rep) }
         }
         fn from_list(&mut self, _p1: wasmtime::component::__internal::Vec<(FieldName, FieldValue)>) -> Result<wasmtime::component::Resource<Fields>, HeaderError> {
-            unimplemented!("harness stub: wasi::http::types::HostFields::from_list")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostFields::from_list")
         }
         fn get(&mut self, _p1: wasmtime::component::Resource<Fields>, _p2: FieldName) -> wasmtime::component::__internal::Vec<FieldValue> {
-            unimplemented!("harness stub: wasi::http::types::HostFields::get")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostFields::get")
         }
         fn has(&mut self, _p1: wasmtime::component::Resource<Fields>, _p2: FieldName) -> bool {
-            unimplemented!("harness stub: wasi::http::types::HostFields::has")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostFields::has")
         }
         fn set(&mut self, _p1: wasmtime::component::Resource<Fields>, _p2: FieldName, _p3: wasmtime::component::__internal::Vec<FieldValue>) -> Result<(), HeaderError> {
             match self.fields_table.get_mut(_p1.rep() as usize) {
@@ -69,10 +69,10 @@ pub mod stubs_wasi_http_types {
             }
         }
         fn delete(&mut self, _p1: wasmtime::component::Resource<Fields>, _p2: FieldName) -> Result<(), HeaderError> {
-            unimplemented!("harness stub: wasi::http::types::HostFields::delete")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostFields::delete")
         }
         fn append(&mut self, _p1: wasmtime::component::Resource<Fields>, _p2: FieldName, _p3: FieldValue) -> Result<(), HeaderError> {
-            unimplemented!("harness stub: wasi::http::types::HostFields::append")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostFields::append")
         }
         fn entries(&mut self, _p1: wasmtime::component::Resource<Fields>) -> wasmtime::component::__internal::Vec<(FieldName, FieldValue)> {
             match self.fields_table.get(_p1.rep() as usize) {
@@ -86,7 +86,7 @@ pub mod stubs_wasi_http_types {
             }
         }
         fn clone(&mut self, _p1: wasmtime::component::Resource<Fields>) -> wasmtime::component::Resource<Fields> {
-            unimplemented!("harness stub: wasi::http::types::HostFields::clone")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostFields::clone")
         }
         fn drop(&mut self, _p1: wasmtime::component::Resource<Fields>) -> wasmtime::Result<()> {
             Ok(())
@@ -95,25 +95,25 @@ pub mod stubs_wasi_http_types {
 
     impl HostIncomingRequest for Ctx {
         fn method(&mut self, _p1: wasmtime::component::Resource<IncomingRequest>) -> Method {
-            unimplemented!("harness stub: wasi::http::types::HostIncomingRequest::method")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostIncomingRequest::method")
         }
         fn path_with_query(&mut self, _p1: wasmtime::component::Resource<IncomingRequest>) -> Option<wasmtime::component::__internal::String> {
-            unimplemented!("harness stub: wasi::http::types::HostIncomingRequest::path_with_query")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostIncomingRequest::path_with_query")
         }
         fn scheme(&mut self, _p1: wasmtime::component::Resource<IncomingRequest>) -> Option<Scheme> {
-            unimplemented!("harness stub: wasi::http::types::HostIncomingRequest::scheme")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostIncomingRequest::scheme")
         }
         fn authority(&mut self, _p1: wasmtime::component::Resource<IncomingRequest>) -> Option<wasmtime::component::__internal::String> {
-            unimplemented!("harness stub: wasi::http::types::HostIncomingRequest::authority")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostIncomingRequest::authority")
         }
         fn headers(&mut self, _p1: wasmtime::component::Resource<IncomingRequest>) -> wasmtime::component::Resource<Headers> {
-            unimplemented!("harness stub: wasi::http::types::HostIncomingRequest::headers")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostIncomingRequest::headers")
         }
         fn consume(&mut self, _p1: wasmtime::component::Resource<IncomingRequest>) -> Result<wasmtime::component::Resource<IncomingBody>, ()> {
-            unimplemented!("harness stub: wasi::http::types::HostIncomingRequest::consume")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostIncomingRequest::consume")
         }
         fn drop(&mut self, _p1: wasmtime::component::Resource<IncomingRequest>) -> wasmtime::Result<()> {
-            unimplemented!("harness stub: wasi::http::types::HostIncomingRequest::drop")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostIncomingRequest::drop")
         }
     }
 
@@ -129,7 +129,7 @@ pub mod stubs_wasi_http_types {
             Ok(unsafe { wasmtime::component::Resource::new_own(rep) })
         }
         fn method(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>) -> Method {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingRequest::method")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingRequest::method")
         }
         fn set_method(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>, _p2: Method) -> Result<(), ()> {
             if let Some(request) = self.requests_table.get_mut(_p1.rep() as usize) {
@@ -140,7 +140,7 @@ pub mod stubs_wasi_http_types {
             }
         }
         fn path_with_query(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>) -> Option<wasmtime::component::__internal::String> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingRequest::path_with_query")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingRequest::path_with_query")
         }
         fn set_path_with_query(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>, _p2: Option<wasmtime::component::__internal::String>) -> Result<(), ()> {
             if let Some(request) = self.requests_table.get_mut(_p1.rep() as usize) {
@@ -151,7 +151,7 @@ pub mod stubs_wasi_http_types {
             }
         }
         fn scheme(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>) -> Option<Scheme> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingRequest::scheme")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingRequest::scheme")
         }
         fn set_scheme(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>, _p2: Option<Scheme>) -> Result<(), ()> {
             if let Some(request) = self.requests_table.get_mut(_p1.rep() as usize) {
@@ -167,7 +167,7 @@ pub mod stubs_wasi_http_types {
             }
         }
         fn authority(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>) -> Option<wasmtime::component::__internal::String> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingRequest::authority")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingRequest::authority")
         }
         fn set_authority(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>, _p2: Option<wasmtime::component::__internal::String>) -> Result<(), ()> {
             if let Some(request) = self.requests_table.get_mut(_p1.rep() as usize) {
@@ -178,7 +178,7 @@ pub mod stubs_wasi_http_types {
             }
         }
         fn headers(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>) -> wasmtime::component::Resource<Headers> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingRequest::headers")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingRequest::headers")
         }
         fn drop(&mut self, _p1: wasmtime::component::Resource<OutgoingRequest>) -> wasmtime::Result<()> {
             Ok(())
@@ -187,25 +187,25 @@ pub mod stubs_wasi_http_types {
 
     impl HostRequestOptions for Ctx {
         fn new(&mut self) -> wasmtime::component::Resource<RequestOptions> {
-            unimplemented!("harness stub: wasi::http::types::HostRequestOptions::new")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostRequestOptions::new")
         }
         fn connect_timeout(&mut self, _p1: wasmtime::component::Resource<RequestOptions>) -> Option<Duration> {
-            unimplemented!("harness stub: wasi::http::types::HostRequestOptions::connect_timeout")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostRequestOptions::connect_timeout")
         }
         fn set_connect_timeout(&mut self, _p1: wasmtime::component::Resource<RequestOptions>, _p2: Option<Duration>) -> Result<(), ()> {
-            unimplemented!("harness stub: wasi::http::types::HostRequestOptions::set_connect_timeout")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostRequestOptions::set_connect_timeout")
         }
         fn first_byte_timeout(&mut self, _p1: wasmtime::component::Resource<RequestOptions>) -> Option<Duration> {
-            unimplemented!("harness stub: wasi::http::types::HostRequestOptions::first_byte_timeout")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostRequestOptions::first_byte_timeout")
         }
         fn set_first_byte_timeout(&mut self, _p1: wasmtime::component::Resource<RequestOptions>, _p2: Option<Duration>) -> Result<(), ()> {
-            unimplemented!("harness stub: wasi::http::types::HostRequestOptions::set_first_byte_timeout")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostRequestOptions::set_first_byte_timeout")
         }
         fn between_bytes_timeout(&mut self, _p1: wasmtime::component::Resource<RequestOptions>) -> Option<Duration> {
-            unimplemented!("harness stub: wasi::http::types::HostRequestOptions::between_bytes_timeout")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostRequestOptions::between_bytes_timeout")
         }
         fn set_between_bytes_timeout(&mut self, _p1: wasmtime::component::Resource<RequestOptions>, _p2: Option<Duration>) -> Result<(), ()> {
-            unimplemented!("harness stub: wasi::http::types::HostRequestOptions::set_between_bytes_timeout")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostRequestOptions::set_between_bytes_timeout")
         }
         fn drop(&mut self, _p1: wasmtime::component::Resource<RequestOptions>) -> wasmtime::Result<()> {
             Ok(())
@@ -214,10 +214,13 @@ pub mod stubs_wasi_http_types {
 
     impl HostResponseOutparam for Ctx {
         fn set(&mut self, _p1: wasmtime::component::Resource<ResponseOutparam>, _p2: Result<wasmtime::component::Resource<OutgoingResponse>, ErrorCode>) -> () {
-            unimplemented!("harness stub: wasi::http::types::HostResponseOutparam::set")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostResponseOutparam::set")
+        }
+        fn send_informational(&mut self, _p1: wasmtime::component::Resource<ResponseOutparam>, _p2: u16, _p3: wasmtime::component::Resource<Headers>) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostResponseOutparam::send_informational")
         }
         fn drop(&mut self, _p1: wasmtime::component::Resource<ResponseOutparam>) -> wasmtime::Result<()> {
-            unimplemented!("harness stub: wasi::http::types::HostResponseOutparam::drop")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostResponseOutparam::drop")
         }
     }
 
@@ -263,10 +266,10 @@ pub mod stubs_wasi_http_types {
 
     impl HostFutureTrailers for Ctx {
         fn subscribe(&mut self, _p1: wasmtime::component::Resource<FutureTrailers>) -> wasmtime::component::Resource<Pollable> {
-            unimplemented!("harness stub: wasi::http::types::HostFutureTrailers::subscribe")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostFutureTrailers::subscribe")
         }
         fn get(&mut self, _p1: wasmtime::component::Resource<FutureTrailers>) -> Option<Result<Result<Option<wasmtime::component::Resource<Trailers>>, ErrorCode>, ()>> {
-            unimplemented!("harness stub: wasi::http::types::HostFutureTrailers::get")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostFutureTrailers::get")
         }
         fn drop(&mut self, _p1: wasmtime::component::Resource<FutureTrailers>) -> wasmtime::Result<()> {
             Ok(())
@@ -275,22 +278,22 @@ pub mod stubs_wasi_http_types {
 
     impl HostOutgoingResponse for Ctx {
         fn new(&mut self, _p1: wasmtime::component::Resource<Headers>) -> wasmtime::component::Resource<OutgoingResponse> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingResponse::new")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingResponse::new")
         }
         fn status_code(&mut self, _p1: wasmtime::component::Resource<OutgoingResponse>) -> StatusCode {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingResponse::status_code")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingResponse::status_code")
         }
         fn set_status_code(&mut self, _p1: wasmtime::component::Resource<OutgoingResponse>, _p2: StatusCode) -> Result<(), ()> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingResponse::set_status_code")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingResponse::set_status_code")
         }
         fn headers(&mut self, _p1: wasmtime::component::Resource<OutgoingResponse>) -> wasmtime::component::Resource<Headers> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingResponse::headers")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingResponse::headers")
         }
         fn body(&mut self, _p1: wasmtime::component::Resource<OutgoingResponse>) -> Result<wasmtime::component::Resource<OutgoingBody>, ()> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingResponse::body")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingResponse::body")
         }
         fn drop(&mut self, _p1: wasmtime::component::Resource<OutgoingResponse>) -> wasmtime::Result<()> {
-            unimplemented!("harness stub: wasi::http::types::HostOutgoingResponse::drop")
+            unimplemented!("harness stub: wasi::http0_2_6::types::HostOutgoingResponse::drop")
         }
     }
 
@@ -417,7 +420,7 @@ impl crate::wasi::io::streams::Host for Ctx {}
 /// `wasi:http/types` also exposes one free function.
 pub mod stubs_wasi_http_types_host {
     use super::Ctx;
-    use crate::wasi::http::types::*;
+    use crate::wasi::http0_2_6::types::*;
     use crate::wasi::io::error::Error as IoError;
 
     impl Host for Ctx {

@@ -32,6 +32,12 @@ CI runs these checks against all four examples, and also against a debug build o
 the effects example (`roc build --debug`) because the platform has had
 build-sensitive ABI bugs.
 
+The harness binds the Golem 1.6 world (`golem:agent/guest@2.0.0`): `initialize`
+and `invoke` are async exports, so it runs the guest on an async-enabled
+wasmtime and calls them through `Store::run_concurrent`; values are
+`schema-value-tree` parameter records, wrapped and unwrapped by the helpers in
+`src/main.rs`.
+
 It exits non-zero when any of these fail:
 
 - `get-definition` / `discover-agent-types` do not report the app's agent type
@@ -44,11 +50,14 @@ It exits non-zero when any of these fail:
 - an expected log line, WebSocket send, HTTP request or RPC call was never
   recorded.
 
-Current state of the components built from this tree: all checks pass for the
-four examples — including the streaming agent's connect-then-send flow and the
-effects agent's HTTP and RPC calls — and CI runs this as a required step.
-`initialize` used to trap inside the allocator path and poison the instance; see
-the Development status section of the root README for what was wrong.
+Current state of the components built from this tree: counter, ai_tool and
+effects pass every check, including the effects agent's HTTP and RPC calls.
+**The streaming agent currently fails in the harness**: `initialize` traps with
+`wasm unreachable` — the layout-sensitive codegen trap the root README documents
+— even though the same component initializes and serves `status`/`send` on a real
+Golem 1.6 server (see `tooling/e2e.sh`). Treat this as a known harness-side
+failure to revisit, not a shipping blocker, and keep the e2e run as the
+authoritative check for the streaming example.
 
 ## Why this exists
 
