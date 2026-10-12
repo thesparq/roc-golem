@@ -921,6 +921,32 @@ mod tests {
     }
 
     #[test]
+    fn test_value_tree_codec() {
+        // Parameter records round-trip through the input extractor.
+        let tree = single_param_value_tree("hello");
+        assert_eq!(extract_input_string(&tree), "hello");
+
+        // A bare string root is accepted too (outputs use this shape).
+        let bare = single_string_value_tree("world");
+        assert_eq!(extract_input_string(&bare), "world");
+
+        // Outputs are bare string nodes at the root.
+        let out = single_string_value_tree("Counter incremented to 1");
+        assert!(matches!(
+            out.value_nodes.get(out.root as usize),
+            Some(SchemaValueNode::StringValue(s)) if s == "Counter incremented to 1"
+        ));
+
+        // Anything else degrades to the empty JSON object, like the old
+        // data-value extraction did.
+        let empty = SchemaValueTree {
+            value_nodes: vec![],
+            root: 0,
+        };
+        assert_eq!(extract_input_string(&empty), "{}");
+    }
+
+    #[test]
     fn test_parse_url() {
         let (scheme, auth, path) = parse_url("https://api.example.com/v1/chat?q=test").unwrap();
         assert!(matches!(scheme, wasi::http0_2_6::types::Scheme::Https));
