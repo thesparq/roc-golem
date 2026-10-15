@@ -17,6 +17,32 @@ environments:
   cloud:
     server: cloud
 
+tools:
+  # The tool surface (`golem:tool/guest`) exposes each app tool under its
+  # CLI-shaped name; 1.6 requires every discovered tool to be declared here.
+  get-count:
+    component: roc-golem:counter
+  calculator:
+    component: roc-golem:ai-tool
+  echo:
+    component: roc-golem:ai-tool
+  stream-message:
+    component: roc-golem:streaming-agent
+
+agents:
+  # Bind each tool to the agent type that exposes it, so the tool protocol
+  # (and `golem tool invoke`) can route calls.
+  counter-agent:
+    tools:
+      get-count: {}
+  ai-tool-agent:
+    tools:
+      calculator: {}
+      echo: {}
+  streaming-agent:
+    tools:
+      stream-message: {}
+
 components:
   roc-golem:counter:
     dir: "examples/counter"

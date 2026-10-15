@@ -39,6 +39,7 @@ wit_bindgen::generate!({
     async: [
         "export:golem:agent/guest@2.0.0#initialize",
         "export:golem:agent/guest@2.0.0#invoke",
+        "export:golem:tool/guest@0.1.0#invoke",
         "export:golem:api/save-snapshot@1.5.0#save",
         "export:golem:api/load-snapshot@1.5.0#load",
     ],
@@ -803,50 +804,10 @@ impl Guest for GolemAgentHost {
                 }
             }
         } else {
-            // AI Tool invocation
-            let tool_call_json = serde_json::json!({
-                "id": "call-1",
-                "name": method_name,
-                "arguments": input_str,
-            })
-            .to_string();
-
-            let roc_state = RocStr::from_str(&state_str);
-            let roc_call = RocStr::from_str(&tool_call_json);
-            let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
-
-            unsafe {
-                main_handle_tool_call_for_host_1_exposed_generic(
-                    roc_out.as_mut_ptr(),
-                    &roc_state,
-                    &roc_call,
-                );
-                core::mem::forget(roc_state);
-                core::mem::forget(roc_call);
-                let res = roc_out.assume_init().into_result();
-                match res {
-                    Ok(result_payload) => {
-                        let payload_str = result_payload.as_str();
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
-                            if let Some(next_state) = parsed.get("state") {
-                                set_current_state(next_state.to_string());
-                            }
-                            let output = if let Some(out_val) = parsed.get("output") {
-                                if let Some(s) = out_val.as_str() {
-                                    s.into()
-                                } else {
-                                    out_val.to_string()
-                                }
-                            } else {
-                                String::from("{}")
-                            };
-                            Ok(Some(single_string_value_tree(&output)))
-                        } else {
-                            Ok(Some(single_string_value_tree(payload_str)))
-                        }
-                    }
-                    Err(err) => Err(AgentError::InvalidMethod(err.to_string())),
-                }
+            // Tool invocation through the agent's own method surface.
+            match run_tool_call(&method_name, &input_str) {
+                Ok(output) => Ok(Some(single_string_value_tree(&output))),
+                Err(err) => Err(err),
             }
         }
     }
@@ -867,6 +828,222 @@ impl Guest for GolemAgentHost {
 }
 
 export!(GolemAgentHost);
+
+/// Runs the app's `handleToolCall!` hook for one tool invocation and returns
+/// the tool's output string, updating the persisted state as a side effect.
+/// Shared by the agent method surface and the `golem:tool/guest` surface.
+fn run_tool_call(tool_name: &str, args: &str) -> Result<String, AgentError> {
+    let state_str = get_current_state();
+    let tool_call_json = serde_json::json!({
+        "id": "call-1",
+        "name": tool_name,
+        "arguments": args,
+    })
+    .to_string();
+
+    let roc_state = RocStr::from_str(&state_str);
+    let roc_call = RocStr::from_str(&tool_call_json);
+    let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+
+    unsafe {
+        main_handle_tool_call_for_host_1_exposed_generic(roc_out.as_mut_ptr(), &roc_state, &roc_call);
+        core::mem::forget(roc_state);
+        core::mem::forget(roc_call);
+        let res = roc_out.assume_init().into_result();
+        match res {
+            Ok(result_payload) => {
+                let payload_str = result_payload.as_str();
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
+                    if let Some(next_state) = parsed.get("state") {
+                        set_current_state(next_state.to_string());
+                    }
+                    if let Some(out_val) = parsed.get("output") {
+                        if let Some(s) = out_val.as_str() {
+                            Ok(s.into())
+                        } else {
+                            Ok(out_val.to_string())
+                        }
+                    } else {
+                        Ok(String::from("{}"))
+                    }
+                } else {
+                    Ok(payload_str.into())
+                }
+            }
+            Err(err) => Err(AgentError::InvalidMethod(err.to_string())),
+        }
+    }
+}
+
+/// The app's declared tools, exposed through `golem:tool/guest` so other agents
+/// and tools can discover and invoke them by name.
+impl exports::golem::tool::guest::Guest for GolemAgentHost {
+    fn discover_tools()
+    -> Result<Vec<golem::tool::common::Tool>, exports::golem::tool::guest::ToolError> {
+        Ok(build_tools().into_iter().map(|(_, tool)| tool).collect())
+    }
+
+    fn get_tool(
+        name: String,
+    ) -> Result<golem::tool::common::Tool, exports::golem::tool::guest::ToolError> {
+        match build_tools()
+            .into_iter()
+            .find(|(_, tool)| {
+                tool.commands.nodes.first().map(|node| node.name.clone()) == Some(name.clone())
+            })
+        {
+            Some((_, tool)) => Ok(tool),
+            None => Err(exports::golem::tool::guest::ToolError::InvalidToolName(name)),
+        }
+    }
+
+    async fn invoke(
+        tool_name: String,
+        _command_path: Vec<String>,
+        input: golem::core::types::TypedSchemaValue,
+        _stdin: Option<
+            wit_bindgen::StreamReader<Result<Vec<u8>, golem::tool::streams::ByteStreamFailure>>,
+        >,
+        _stdout: Option<golem::tool::streams::ToolOutputWriter>,
+        _stderr: Option<golem::tool::streams::ToolOutputWriter>,
+        _principal: Principal,
+    ) -> Result<golem::tool::common::InvocationResult, exports::golem::tool::guest::ToolError> {
+        let args = extract_input_string(&input.value);
+        let app_name = build_tools()
+            .into_iter()
+            .find(|(_, tool)| {
+                tool.commands.nodes.first().map(|node| node.name.clone()) == Some(tool_name.clone())
+            })
+            .map(|(app_name, _)| app_name)
+            .ok_or_else(|| {
+                exports::golem::tool::guest::ToolError::InvalidToolName(tool_name.clone())
+            })?;
+        match run_tool_call(&app_name, &args) {
+            Ok(output) => Ok(golem::tool::common::InvocationResult {
+                result: Some(golem::core::types::TypedSchemaValue {
+                    graph: string_schema_graph(),
+                    value: single_string_value_tree(&output),
+                }),
+                stdout: None,
+                stderr: None,
+            }),
+            Err(err) => Err(exports::golem::tool::guest::ToolError::InvalidInput(format!(
+                "{err:?}"
+            ))),
+        }
+    }
+}
+
+/// Tool command names are CLI-style: lowercase, digits and dashes only.
+fn tool_command_name(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push('-');
+        }
+    }
+    out
+}
+
+/// The app's tools as single-command tools with one optional string input and a
+/// string result — the shape the platform declares everywhere else. Each entry
+/// keeps the app's own tool name alongside the CLI-shaped tool.
+fn build_tools() -> Vec<(String, golem::tool::common::Tool)> {
+    use golem::tool::common::{
+        CommandBody, CommandNode, CommandTree, Doc, Formatter, Globals, Positional, Positionals,
+        ResultSpec, Tool,
+    };
+
+    let meta_json = read_metadata_json();
+    let mut tools = Vec::new();
+
+    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_json) {
+        if let Some(list) = meta.get("tools").and_then(|v| v.as_array()) {
+            for t in list {
+                let name = t
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool")
+                    .to_string();
+                let description = t
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let doc = Doc {
+                    summary: description,
+                    description: String::new(),
+                    examples: Vec::new(),
+                };
+                let body = CommandBody {
+                    positionals: Positionals {
+                        fixed: vec![Positional {
+                            name: String::from("input"),
+                            doc: doc.clone(),
+                            value_name: None,
+                            type_: 0,
+                            default: Some(single_string_value_tree("{}")),
+                            required: false,
+                            accepts_stdio: false,
+                        }],
+                        tail: None,
+                    },
+                    options: Vec::new(),
+                    flags: Vec::new(),
+                    constraints: Vec::new(),
+                    stdin: None,
+                    stdout: None,
+                    stderr: None,
+                    result: Some(ResultSpec {
+                        type_: 0,
+                        doc: doc.clone(),
+                        formatters: vec![Formatter {
+                            name: String::from("json"),
+                            doc: doc.clone(),
+                        }],
+                        default_formatter: String::from("json"),
+                    }),
+                    errors: Vec::new(),
+                    annotations: None,
+                };
+                tools.push((
+                    name.clone(),
+                    Tool {
+                        version: String::from("1.0.0"),
+                        requires_filesystem: false,
+                        commands: CommandTree {
+                            nodes: vec![CommandNode {
+                                name: tool_command_name(&name),
+                                aliases: Vec::new(),
+                                doc,
+                                globals: Globals {
+                                    options: Vec::new(),
+                                    flags: Vec::new(),
+                                },
+                                subcommands: Vec::new(),
+                                body: Some(body),
+                            }],
+                        },
+                        schema: string_schema_graph(),
+                    },
+                ));
+            }
+        }
+    }
+
+    tools
+}
+
+/// Reads the app metadata JSON (the same source `build_agent_type` uses).
+fn read_metadata_json() -> String {
+    let mut roc_out = MaybeUninit::<RocStr>::uninit();
+    unsafe {
+        main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
+        roc_out.assume_init().to_string()
+    }
+}
 
 // User-defined snapshots: the agent's state JSON is the payload, so
 // `snapshot-based` updates work for Roc agents without app changes.

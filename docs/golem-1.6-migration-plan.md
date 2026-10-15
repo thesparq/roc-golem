@@ -24,8 +24,12 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
   `websocketReceive!` works via `wit_bindgen::block_on`.
 - **P2 partial**: user-defined snapshots are done and verified end-to-end —
   `golem agent update <id> manual` (needs `-Y`) moved the counter from revision 0
-  to 1 with its state restored through `save`/`load-snapshot`. Still open: the
-  `golem:tool/guest` surface, config declarations, read-only methods.
+  to 1 with its state restored through `save`/`load-snapshot`. The
+  `golem:tool/guest` surface is also in: the app's tools are published
+  (kebab-cased), declared and bound in the manifest, and invocable via
+  `golem tool invoke --agent …` (fresh-instance semantics: stateless tools work,
+  stateful ones error honestly). Still open: config declarations, read-only
+  methods, and a decision on stateful tools over the tool protocol.
 
 ---
 

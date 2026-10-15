@@ -150,6 +150,51 @@ impl golem::core::types::HostSchemaValueStreamWithStore<Ctx> for Ctx {
 
 impl golem::agent::common::Host for Ctx {}
 
+impl golem::tool::common::Host for Ctx {}
+
+impl golem::tool::streams::Host for Ctx {}
+
+impl golem::tool::streams::HostToolOutputWriter for Ctx {
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+/// The writer's operations are async imports; the stub accepts everything.
+impl golem::tool::streams::HostToolOutputWriterWithStore<Ctx> for Ctx {
+    fn write(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
+        _bytes: Vec<u8>,
+    ) -> impl std::future::Future<
+        Output = Result<(), golem::tool::streams::StreamWriteError>,
+    > + Send {
+        async move { Ok(()) }
+    }
+
+    fn finish(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
+    ) -> impl std::future::Future<
+        Output = Result<(), golem::tool::streams::StreamWriteError>,
+    > + Send {
+        async move { Ok(()) }
+    }
+
+    fn fail(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
+        _reason: golem::tool::streams::ByteStreamFailure,
+    ) -> impl std::future::Future<
+        Output = Result<(), golem::tool::streams::StreamWriteError>,
+    > + Send {
+        async move { Ok(()) }
+    }
+}
+
 impl wasi::clocks0_3_0::types::Host for Ctx {}
 
 impl wasi::clocks0_3_0::system_clock::Host for Ctx {
