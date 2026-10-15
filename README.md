@@ -198,13 +198,26 @@ those.
 
 **On the 1.6 line** (this branch): the host speaks `golem:agent/guest@2.0.0`
 with async exports, `schema-value-tree` values and a `schema-graph` agent type;
-all four examples deploy and run on a local `1.6.0-rc2` server (the e2e job in
-CI does exactly that). Two toolchain notes live in
-`tooling/abi_harness/README.md` (`Str.trim` trips the layout-sensitive codegen
-trap; components that import async host functions cannot be exercised in the
-harness yet). `setPersistence!` is a no-op because 1.6 removed persistence
-levels, and `websocketReceive!` drives the now-async receive through
-`wit_bindgen::block_on`.
+all four examples deploy and run on a local `1.6.0-rc2.1` server (the e2e job in
+CI does exactly that), and a **snapshot-based agent update** is verified: the
+component exports `golem:api/save-snapshot`/`load-snapshot` backed by the state
+JSON, so `golem agent update <id> manual` carries state across incompatible
+revisions (the CLI needs `-Y`; it prompts for confirmation).
+
+The component also exports **`golem:tool/guest`**: the app's declared tools are
+published under CLI-shaped names (`get_count` → `get-count`) and appear in
+`golem tool list`; `golem tool invoke --agent <id> <tool>` routes to the app's
+`handleToolCall!`. Two caveats: every tool must be declared in the manifest
+(`tools:` plus an `agents:` binding — see `golem.yaml`), and tool invocations run
+in a fresh instance without the agent's state, so stateless tools (the AI tool
+example's `calculator`) work while stateful ones (`get-count`) fail with an
+honest error — use the agent method surface for those.
+
+Two toolchain notes live in `tooling/abi_harness/README.md` (`Str.trim` trips the
+layout-sensitive codegen trap; components that import async host functions
+cannot be exercised in the harness yet). `setPersistence!` is a no-op because 1.6
+removed persistence levels, and `websocketReceive!` drives the now-async receive
+through `wit_bindgen::block_on`.
 
 The components built from this tree work on Golem again: `get-definition` /
 `discover-agent-types` report the app's real agent type and tools, `initialize`
