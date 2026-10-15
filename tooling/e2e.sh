@@ -80,11 +80,16 @@ server_up() { [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PO
 
 say "==> Ensuring a Golem server is listening on :$PORT"
 if ! server_up; then
-    mkdir -p "$WORK_DIR/data"
-    setsid "$CLI" server run \
+    mkdir -p "$WORK_DIR/data" "$WORK_DIR/tmp"
+    # The auxiliary ports and TMPDIR are pinned so this run cannot collide with
+    # another local server (or lose its scratch space when a shell's TMPDIR
+    # vanishes).
+    TMPDIR="$WORK_DIR/tmp" setsid "$CLI" server run \
         --data-dir "$WORK_DIR/data" \
         --ports-file "$WORK_DIR/ports.json" \
-        --router-port "$PORT" >"$WORK_DIR/server.log" 2>&1 < /dev/null &
+        --router-port "$PORT" \
+        --custom-request-port "$((PORT + 1))" \
+        --mcp-port "$((PORT + 2))" >"$WORK_DIR/server.log" 2>&1 < /dev/null &
     server_pid=$!
     for _ in $(seq 1 60); do
         server_up && break

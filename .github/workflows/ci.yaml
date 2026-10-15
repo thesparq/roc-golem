@@ -150,7 +150,7 @@ jobs:
           # Local deploys are verified against this release: it speaks the
           # golem:agent/guest@2.0.0 protocol this platform implements. Bump to
           # v1.6.0 when it ships.
-          GOLEM_VERSION: v1.6.0-rc2
+          GOLEM_VERSION: v1.6.0-rc2.1
         run: |
           curl -fSL -o "$HOME/golem-cli" \
             "https://github.com/golemcloud/golem/releases/download/${GOLEM_VERSION}/golem-x86_64-unknown-linux-gnu"
