@@ -71,4 +71,9 @@ Effect := {}.{
 	nowMillis! = |_| {
 		Host.rocFxNowMillis!({})
 	}
+
+	getConfig! : Str => Try(Str, Str)
+	getConfig! = |key| {
+		Host.rocFxGetConfig!(key)
+	}
 }

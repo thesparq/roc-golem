@@ -93,6 +93,7 @@ agent = defineAgent({
 		version: "1.0.0",
 		description: "Calls HTTP endpoints and other agents from a Golem Cloud agent",
 		tools: [],
+		config: [],
 	},
 
 	serializeState: |state|
@@ -139,11 +140,11 @@ extract_json_str = |json, field|
 			match Str.split_first(json, "\"${field}\":") {
 				Ok({ before: _, after }) =>
 					match Str.split_first(after, ",") {
-						Ok({ before, after: _ }) => Ok(Str.trim(before))
+						Ok({ before, after: _ }) => Ok(before)
 						Err(_) =>
 							match Str.split_first(after, "}") {
-								Ok({ before, after: _ }) => Ok(Str.trim(before))
-								Err(_) => Ok(Str.trim(after))
+								Ok({ before, after: _ }) => Ok(before)
+								Err(_) => Ok(after)
 							}
 					}
 				Err(_) => Err(NotFound)

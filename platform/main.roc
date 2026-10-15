@@ -25,6 +25,7 @@ platform "golem"
 		"rocFxWsClose": Host.rocFxWsClose!,
 		"rocFxSleepMillis": Host.rocFxSleepMillis!,
 		"rocFxNowMillis": Host.rocFxNowMillis!,
+		"rocFxGetConfig": Host.rocFxGetConfig!,
 	}
 	targets: {
 		wasm32: {
@@ -34,6 +35,7 @@ platform "golem"
 	}
 
 import Types exposing [
+	ConfigDeclaration,
 	ToolDefinition,
 	ToolParameter,
 	ToolCall,
@@ -96,7 +98,20 @@ main_metadata_for_host = |_| {
 	version_escaped = escape_json_str(meta.version)
 	desc_escaped = escape_json_str(meta.description)
 
-	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}]}"
+	formatted_config = List.map(meta.config, format_config_declaration)
+	config_json = Str.join_with(formatted_config, ",")
+
+	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}]}"
+}
+
+format_config_declaration : ConfigDeclaration -> Str
+format_config_declaration = |decl| {
+	name_escaped = escape_json_str(decl.name)
+	secret_str = match decl.secret {
+		True => "true"
+		False => "false"
+	}
+	"{\"name\":\"${name_escaped}\",\"secret\":${secret_str}}"
 }
 
 format_tool_definition : ToolDefinition -> Str

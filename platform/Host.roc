@@ -10,4 +10,5 @@ Host :: [].{
 	rocFxWsClose! : U32 => Try({}, Str)
 	rocFxSleepMillis! : U64 => {}
 	rocFxNowMillis! : {} => U64
+	rocFxGetConfig! : Str => Try(Str, Str)
 }

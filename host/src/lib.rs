@@ -48,9 +48,9 @@ wit_bindgen::generate!({
 
 use exports::golem::agent::guest::{AgentError, AgentType, Guest, Principal};
 use golem::agent::common::{
-    AgentConstructor, AgentMethod, AgentMode, AgentTypeKind, CachePolicy, CorsOptions, FieldSource,
-    HttpEndpointDetails, HttpMethod, InputSchema, NamedField, OutputSchema, PathSegment,
-    ReadOnlyConfig, Snapshotting,
+    AgentConfigDeclaration, AgentConfigSource, AgentConstructor, AgentMethod, AgentMode,
+    AgentTypeKind, CachePolicy, CorsOptions, FieldSource, HttpEndpointDetails, HttpMethod,
+    InputSchema, NamedField, OutputSchema, PathSegment, ReadOnlyConfig, Snapshotting,
 };
 use golem::core::types::{
     MetadataEnvelope, SchemaGraph, SchemaTypeBody, SchemaTypeNode, SchemaValueNode,
@@ -214,6 +214,8 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
         read_only: None,
     });
 
+    let mut config_decls = Vec::new();
+
     if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_json) {
         if let Some(n) = meta.get("name").and_then(|v| v.as_str()) {
             if !n.is_empty() {
@@ -225,6 +227,30 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
             if !d.is_empty() {
                 description_seen = true;
                 description_str = d.to_string();
+            }
+        }
+        if let Some(config) = meta.get("config").and_then(|v| v.as_array()) {
+            for c in config {
+                let c_name = c
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !c_name.is_empty() {
+                    let secret = c
+                        .get("secret")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    config_decls.push(AgentConfigDeclaration {
+                        source: if secret {
+                            AgentConfigSource::Secret
+                        } else {
+                            AgentConfigSource::Local
+                        },
+                        path: vec![c_name],
+                        value_type: 0,
+                    });
+                }
             }
         }
         if let Some(tools) = meta.get("tools").and_then(|v| v.as_array()) {
@@ -298,7 +324,7 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
             mode: AgentMode::Durable,
             http_mount: None,
             snapshotting: Snapshotting::Disabled,
-            config: vec![],
+            config: config_decls,
         })
     };
     agent_type
@@ -740,6 +766,26 @@ pub unsafe extern "C" fn rocFxNowMillis() -> u64 {
     wasi::clocks0_2_6::monotonic_clock::now() / 1_000_000
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn rocFxGetConfig(out: *mut RocResult<RocStr, RocStr>, key: *const RocStr) {
+    let key_str = if key.is_null() { "" } else { (*key).as_str() };
+    // Only keys the agent type declares can be read; the host returns an error
+    // otherwise (or `none` for an option-typed key, which this platform does not
+    // declare yet).
+    let result = match golem::agent::host::get_config_value(
+        &[key_str.to_string()],
+        &string_schema_graph(),
+    ) {
+        Ok(tree) => Ok(extract_input_string(&tree)),
+        Err(err) => Err(format!("config {key_str:?} unavailable: {err:?}")),
+    };
+
+    match result {
+        Ok(text) => ptr::write(out, RocResult::ok(RocStr::from_str(&text))),
+        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+    }
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
@@ -1135,6 +1181,15 @@ mod tests {
             .find(|m| m.name == "echo")
             .expect("echo method not found");
         assert!(echo.read_only.is_none());
+
+        // The `config` metadata list maps to the agent type's config
+        // declarations (local keys by default).
+        assert_eq!(types[0].config.len(), 1);
+        assert_eq!(types[0].config[0].path, vec!["greeting".to_string()]);
+        assert!(matches!(
+            types[0].config[0].source,
+            AgentConfigSource::Local
+        ));
     }
 
     #[test]

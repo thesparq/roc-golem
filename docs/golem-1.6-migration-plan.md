@@ -22,14 +22,14 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
   harness speaks the 1.6 world (counter/ai_tool/effects pass; components with
   async imports cannot be exercised in the harness yet — see the harness README);
   `websocketReceive!` works via `wit_bindgen::block_on`.
-- **P2 partial**: user-defined snapshots are done and verified end-to-end —
-  `golem agent update <id> manual` (needs `-Y`) moved the counter from revision 0
-  to 1 with its state restored through `save`/`load-snapshot`. The
-  `golem:tool/guest` surface is also in: the app's tools are published
-  (kebab-cased), declared and bound in the manifest, and invocable via
-  `golem tool invoke --agent …` (fresh-instance semantics: stateless tools work,
-  stateful ones error honestly). Still open: config declarations, read-only
-  methods, and a decision on stateful tools over the tool protocol.
+- **P2 done**: user-defined snapshots (verified through a real revision
+  update), the `golem:tool/guest` surface (tools published, declared and bound
+  in the manifest, invocable via `golem tool invoke --agent …`), read-only tool
+  declarations, and config declarations with the `getConfig!` effect (the
+  counter reads its `greeting` from the manifest on rc2.1). Known limits are
+  documented in the README: tool invocations run in a fresh instance (stateful
+  tools error honestly; use agent methods for those), and components that import
+  async host functions cannot be exercised in the harness yet.
 
 ---
 

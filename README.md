@@ -213,6 +213,12 @@ in a fresh instance without the agent's state, so stateless tools (the AI tool
 example's `calculator`) work while stateful ones (`get-count`) fail with an
 honest error — use the agent method surface for those.
 
+**Config declarations** are supported: apps list keys in their metadata
+(`config: [{ name, secret }]`), which become the agent type's config
+declarations, and read them at runtime with `getConfig!("key")` — values come
+from the manifest's per-agent `config:` section (or the secret store for
+`secret: true`). The counter example reads its `greeting` this way.
+
 Two toolchain notes live in `tooling/abi_harness/README.md` (`Str.trim` trips the
 layout-sensitive codegen trap; components that import async host functions
 cannot be exercised in the harness yet). `setPersistence!` is a no-op because 1.6

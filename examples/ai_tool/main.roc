@@ -91,6 +91,7 @@ agent = defineAgent({
 				readOnly: True,
 			},
 		],
+		config: [],
 	},
 
 	serializeState: |state|
@@ -101,7 +102,7 @@ agent = defineAgent({
 			match Str.split_first(stateJson, "\"invocations\":") {
 				Ok({ before: _, after }) =>
 					match Str.split_first(after, ",") {
-						Ok({ before, after: _ }) => I64.from_str(Str.trim(before)) ?? 0
+						Ok({ before, after: _ }) => I64.from_str(before) ?? 0
 						Err(_) => 0
 					}
 

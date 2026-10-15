@@ -1,6 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [Agent, defineAgent]
+import pf.Golem exposing [Agent, defineAgent, getConfig!]
 
 State :: {
 	count : I64,
@@ -28,6 +28,21 @@ agent = defineAgent({
 					replies: ["Counter decremented to ${I64.to_str(nextCount)}"],
 				}
 			}
+
+			"config" =>
+				match getConfig!("greeting") {
+					Ok(greeting) =>
+						{
+							state,
+							replies: ["Config greeting: ${greeting}"],
+						}
+
+					Err(err) =>
+						{
+							state,
+							replies: ["Config error: ${err}"],
+						}
+				}
 
 			"get" =>
 				{
@@ -77,6 +92,12 @@ agent = defineAgent({
 				readOnly: True,
 			},
 		],
+		config: [
+			{
+				name: "greeting",
+				secret: False,
+			},
+		],
 	},
 
 	serializeState: |state|
@@ -87,7 +108,7 @@ agent = defineAgent({
 			Ok({ before: _, after }) =>
 				match Str.split_first(after, "}") {
 					Ok({ before, after: _ }) =>
-						match I64.from_str(Str.trim(before)) {
+						match I64.from_str(before) {
 							Ok(c) => Ok({ count: c })
 							Err(_) => Err("Failed to parse count integer")
 						}

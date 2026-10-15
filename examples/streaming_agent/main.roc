@@ -157,6 +157,7 @@ agent = defineAgent({
 				readOnly: False,
 			},
 		],
+		config: [],
 	},
 
 	serializeState: |state| {

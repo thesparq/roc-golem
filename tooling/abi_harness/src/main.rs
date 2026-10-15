@@ -463,7 +463,10 @@ impl golem::agent::host::Host for Ctx {
         _key: Vec<String>,
         _expected: golem::core::types::SchemaGraph,
     ) -> Result<SchemaValueTree, golem::agent::host::ConfigValueError> {
-        unimplemented!("get-config-value is not used by roc-golem components")
+        Ok(SchemaValueTree {
+            value_nodes: vec![SchemaValueNode::StringValue(String::from("stub-config"))],
+            root: 0,
+        })
     }
 }
 

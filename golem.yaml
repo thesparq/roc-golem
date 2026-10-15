@@ -33,6 +33,8 @@ agents:
   # Bind each tool to the agent type that exposes it, so the tool protocol
   # (and `golem tool invoke`) can route calls.
   counter-agent:
+    config:
+      greeting: "hello from the manifest"
     tools:
       get-count: {}
   ai-tool-agent:

@@ -23,6 +23,7 @@ module [
 	websocketClose!,
 	sleep!,
 	now!,
+	getConfig!,
 ]
 
 import Effect
@@ -100,3 +101,7 @@ sleep! = |millis|
 now! : {} => U64
 now! = |_|
 	Effect.nowMillis!({})
+
+getConfig! : Str => Try(Str, Str)
+getConfig! = |key|
+	Effect.getConfig!(key)
