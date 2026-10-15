@@ -50,15 +50,25 @@ It exits non-zero when any of these fail:
 - an expected log line, WebSocket send, HTTP request or RPC call was never
   recorded.
 
-Current state of the components built from this tree: all four examples pass
-every check, including the streaming agent's connect-then-send flow and the
-effects agent's HTTP and RPC calls.
+Current state of the components built from this tree: counter, ai_tool and
+effects pass every check, including the effects agent's HTTP and RPC calls.
 
-One toolchain hazard found while porting to 1.6: `Str.trim` in an agent's own
-code trips the layout-sensitive Roc codegen trap (`wasm unreachable`) in the
-harness — the streaming example's state deserializer used it defensively and now
-parses its compact JSON directly instead. If a component starts trapping in
-`initialize`, look for `Str.trim` (or similar slicing helpers) first.
+Two toolchain notes found while porting to 1.6:
+
+- `Str.trim` in an agent's own code trips the layout-sensitive Roc codegen trap
+  (`wasm unreachable`) in the harness — the streaming example's state
+  deserializer used it defensively and now parses its compact JSON directly.
+  If a component starts trapping in `initialize`, look for `Str.trim` (or
+  similar slicing helpers) first.
+- **Components that import an async host function trap in the harness** (at the
+  first export call, `wasm unreachable` inside the guest runtime) under both
+  wasmtime 46 and 49. Today that is only the streaming agent, once its
+  `websocket/client.receive` import is linked in (it uses `wit_bindgen::block_on`
+  to call the async import from the synchronous C-ABI effect). The same
+  component initializes and serves requests on a real Golem 1.6 server, so this
+  is a fork-vs-wasmtime async-ABI gap in the harness environment, not a platform
+  bug. Until it is resolved, treat the e2e run as the authoritative check for
+  components with async imports.
 
 ## Why this exists
 

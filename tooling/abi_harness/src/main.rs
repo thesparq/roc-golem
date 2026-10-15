@@ -750,8 +750,17 @@ async fn run() -> Result<ExitCode> {
     let mut failures: Vec<String> = Vec::new();
 
     // 1. Agent definition: exercises the metadata hook, which only uses strings
-    //    longer than the 11-byte small-string limit.
-    let definition = guest.call_get_definition(&mut store)?;
+    //    longer than the 11-byte small-string limit. Components that import an
+    //    async host function (the streaming agent's websocket receive) make the
+    //    store require async calls, so even the sync exports are driven through
+    //    `call_concurrent` here.
+    let definition = {
+        let callee = guest.func_get_definition();
+        let (definition,) = store
+            .run_concurrent(async |accessor| callee.call_concurrent(accessor, ()).await)
+            .await??;
+        definition
+    };
     let methods: Vec<String> = definition.methods.iter().map(|m| m.name.clone()).collect();
     println!("[get-definition] type-name = {:?}", definition.type_name);
     println!("[get-definition] methods   = {:?}", methods);
@@ -774,7 +783,14 @@ async fn run() -> Result<ExitCode> {
 
     // 2. Agent discovery is what golem-cli calls at deploy time; a duplicated
     //    fallback name here makes multi-component apps undeployable.
-    match guest.call_discover_agent_types(&mut store)? {
+    let discovered = {
+        let callee = guest.func_discover_agent_types();
+        let (discovered,) = store
+            .run_concurrent(async |accessor| callee.call_concurrent(accessor, ()).await)
+            .await??;
+        discovered
+    };
+    match discovered {
         Ok(types) => {
             let names: Vec<String> = types.iter().map(|t| t.type_name.clone()).collect();
             println!("[discover-agent-types]     = {:?}", names);

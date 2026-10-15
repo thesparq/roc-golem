@@ -675,17 +675,22 @@ pub unsafe extern "C" fn rocFxWsReceive(
     out: *mut RocResult<RocStr, RocStr>,
     handle: u32,
 ) {
-    // Golem 1.6 made `golem:websocket/client.receive` an `async func`, which a
-    // synchronous Roc effect cannot call directly. Receiving is not supported on
-    // the 1.6 line yet (see the migration plan); connect/send/close stay
-    // synchronous and keep working.
-    let _ = handle;
-    ptr::write(
-        out,
-        RocResult::err(RocStr::from_str(
-            "websocketReceive! is not supported on Golem 1.6 yet (async receive)",
-        )),
-    );
+    // `receive` became an async host import in Golem 1.6. The Roc side calls
+    // this effect synchronously, so the fork's `block_on` drives the async call
+    // to completion (it waits on the guest's waitable set while the host call is
+    // in flight).
+    let received = ws_with(handle, |connection| wit_bindgen::block_on(connection.receive()));
+    match received {
+        Some(Ok(message)) => {
+            let text = ws_message_text(message);
+            ptr::write(out, RocResult::ok(RocStr::from_str(&text)));
+        }
+        Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err)))),
+        None => ptr::write(
+            out,
+            RocResult::err(RocStr::from_str(&format!("unknown websocket handle {}", handle))),
+        ),
+    }
 }
 
 #[no_mangle]
