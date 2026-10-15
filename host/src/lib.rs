@@ -39,6 +39,8 @@ wit_bindgen::generate!({
     async: [
         "export:golem:agent/guest@2.0.0#initialize",
         "export:golem:agent/guest@2.0.0#invoke",
+        "export:golem:api/save-snapshot@1.5.0#save",
+        "export:golem:api/load-snapshot@1.5.0#load",
     ],
     generate_all,
 });
@@ -865,6 +867,29 @@ impl Guest for GolemAgentHost {
 }
 
 export!(GolemAgentHost);
+
+// User-defined snapshots: the agent's state JSON is the payload, so
+// `snapshot-based` updates work for Roc agents without app changes.
+impl exports::golem::api::save_snapshot::Guest for GolemAgentHost {
+    async fn save() -> exports::golem::api::save_snapshot::Snapshot {
+        exports::golem::api::save_snapshot::Snapshot {
+            payload: get_current_state().into_bytes(),
+            mime_type: String::from("application/json"),
+        }
+    }
+}
+
+impl exports::golem::api::load_snapshot::Guest for GolemAgentHost {
+    async fn load(snapshot: exports::golem::api::load_snapshot::Snapshot) -> Result<(), String> {
+        match String::from_utf8(snapshot.payload) {
+            Ok(state) => {
+                set_current_state(state);
+                Ok(())
+            }
+            Err(err) => Err(format!("snapshot payload is not UTF-8: {err}")),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

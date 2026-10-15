@@ -11,4 +11,6 @@ world golem-agent {
     import wasi:logging/logging;
 
     export golem:agent/guest@2.0.0;
+    export golem:api/save-snapshot@1.5.0;
+    export golem:api/load-snapshot@1.5.0;
 }
