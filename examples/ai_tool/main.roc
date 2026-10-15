@@ -75,6 +75,7 @@ agent = defineAgent({
 						required: True,
 					},
 				],
+				readOnly: True,
 			},
 			{
 				name: "echo",
@@ -87,6 +88,7 @@ agent = defineAgent({
 						required: True,
 					},
 				],
+				readOnly: True,
 			},
 		],
 	},

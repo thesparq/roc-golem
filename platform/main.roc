@@ -106,7 +106,11 @@ format_tool_definition = |tool| {
 
 	name_escaped = escape_json_str(tool.name)
 	desc_escaped = escape_json_str(tool.description)
-	"{\"name\":\"${name_escaped}\",\"description\":\"${desc_escaped}\",\"parameters\":[${params_json}]}"
+	read_only_str = match tool.readOnly {
+		True => "true"
+		False => "false"
+	}
+	"{\"name\":\"${name_escaped}\",\"description\":\"${desc_escaped}\",\"parameters\":[${params_json}],\"readOnly\":${read_only_str}}"
 }
 
 format_tool_parameter : ToolParameter -> Str

@@ -154,6 +154,7 @@ agent = defineAgent({
 						required: True,
 					},
 				],
+				readOnly: False,
 			},
 		],
 	},

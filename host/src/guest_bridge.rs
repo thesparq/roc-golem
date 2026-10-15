@@ -155,6 +155,7 @@ pub unsafe extern "C" fn main_metadata_for_host_1_exposed_generic(out: *mut RocS
             {
                 "name": "calculator",
                 "description": "Evaluates mathematical expressions safely",
+                "readOnly": true,
                 "parameters": [
                     {
                         "name": "expression",
@@ -179,7 +180,8 @@ pub unsafe extern "C" fn main_metadata_for_host_1_exposed_generic(out: *mut RocS
             {
                 "name": "get_count",
                 "description": "Returns current counter value",
-                "parameters": []
+                "parameters": [],
+                "readOnly": true
             },
             {
                 "name": "stream_message",

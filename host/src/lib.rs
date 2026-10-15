@@ -48,9 +48,9 @@ wit_bindgen::generate!({
 
 use exports::golem::agent::guest::{AgentError, AgentType, Guest, Principal};
 use golem::agent::common::{
-    AgentConstructor, AgentMethod, AgentMode, AgentTypeKind, CorsOptions, FieldSource,
+    AgentConstructor, AgentMethod, AgentMode, AgentTypeKind, CachePolicy, CorsOptions, FieldSource,
     HttpEndpointDetails, HttpMethod, InputSchema, NamedField, OutputSchema, PathSegment,
-    Snapshotting,
+    ReadOnlyConfig, Snapshotting,
 };
 use golem::core::types::{
     MetadataEnvelope, SchemaGraph, SchemaTypeBody, SchemaTypeNode, SchemaValueNode,
@@ -255,7 +255,14 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
                     prompt_hint: None,
                     input_schema: InputSchema::Parameters(vec![string_named_field("input")]),
                     output_schema: OutputSchema::Single(0),
-                    read_only: None,
+                    read_only: t
+                        .get("readOnly")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                        .then(|| ReadOnlyConfig {
+                            cache_policy: CachePolicy::UntilWrite,
+                            uses_principal: false,
+                        }),
                 });
             }
         }
@@ -1108,6 +1115,26 @@ mod tests {
 
         assert!(types[0].methods.iter().any(|m| m.name == "calculator"));
         assert!(types[0].methods.iter().any(|m| m.name == "get_count"));
+
+        // The `readOnly` metadata flag maps to the method's read-only config.
+        let calculator = types[0]
+            .methods
+            .iter()
+            .find(|m| m.name == "calculator")
+            .expect("calculator method not found");
+        assert!(matches!(
+            calculator.read_only,
+            Some(ReadOnlyConfig {
+                cache_policy: CachePolicy::UntilWrite,
+                uses_principal: false,
+            })
+        ));
+        let echo = types[0]
+            .methods
+            .iter()
+            .find(|m| m.name == "echo")
+            .expect("echo method not found");
+        assert!(echo.read_only.is_none());
     }
 
     #[test]

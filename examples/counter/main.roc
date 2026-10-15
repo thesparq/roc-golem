@@ -74,6 +74,7 @@ agent = defineAgent({
 				name: "get_count",
 				description: "Returns current counter value",
 				parameters: [],
+				readOnly: True,
 			},
 		],
 	},
