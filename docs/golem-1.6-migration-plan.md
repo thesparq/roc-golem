@@ -14,6 +14,21 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
 
 ---
 
+## 0. Progress (2026-10-15)
+
+- **P0 done**: counter agent deployed and invoked on a local 1.6 server.
+- **P1 done**: all four examples build, deploy and run; `tooling/e2e.sh` is green
+  against `v1.6.0-rc2` and `v1.6.0-rc2.1` (the rc2.1 WIT is unchanged); the ABI
+  harness speaks the 1.6 world (counter/ai_tool/effects pass; components with
+  async imports cannot be exercised in the harness yet — see the harness README);
+  `websocketReceive!` works via `wit_bindgen::block_on`.
+- **P2 partial**: user-defined snapshots are done and verified end-to-end —
+  `golem agent update <id> manual` (needs `-Y`) moved the counter from revision 0
+  to 1 with its state restored through `save`/`load-snapshot`. Still open: the
+  `golem:tool/guest` surface, config declarations, read-only methods.
+
+---
+
 ## 1. Decision summary
 
 - **We build a second platform line for 1.6** (`v0.6.x`, branch `feat/golem-1.6`),

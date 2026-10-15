@@ -184,7 +184,7 @@ those.
 
 | golem CLI | Local deploy | Notes |
 | --- | --- | --- |
-| 1.6.0-rc2.1 | works | verified end-to-end with these examples on this branch (deploy, invoke, state, tools, HTTP, RPC, snapshots pending) |
+| 1.6.0-rc2.1 | works | verified end-to-end with these examples on this branch (deploy, invoke, state, tools, HTTP, RPC, and a snapshot-based agent update) |
 | 1.6.0 | expected to work | the GA release; bump the pins in `tooling/e2e.sh`/CI when it ships |
 | 1.5.9 / 1.5.10 | not compatible | those servers expect `golem:agent/guest@1.5.0`, which this branch no longer exports |
 
