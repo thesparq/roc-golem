@@ -178,11 +178,15 @@ type-check, which is what happens when a method's result schema changes.
 
 #### Which CLI to use
 
+This branch targets the **Golem 1.6 agent protocol** (`golem:agent/guest@2.0.0`).
+Components built from it do not run on 1.5.x servers; use the `v0.5.x` line for
+those.
+
 | golem CLI | Local deploy | Notes |
 | --- | --- | --- |
-| 1.5.9 | works | verified end-to-end with these examples (deploy, invoke, state, tools) |
-| 1.5.10 | works | deploys and runs these examples when its local server starts cleanly; an earlier report that it rejects the CLI's component upload did not reproduce in review (see the development status) |
-| 1.6.0-rc1+ | needs the 2.0 agent protocol | staging works, but the server expects `golem:agent/guest@2.0.0`; this platform implements `@1.5.0` |
+| 1.6.0-rc2 | works | verified end-to-end with these examples on this branch (deploy, invoke, state, tools, HTTP, RPC, snapshots pending) |
+| 1.6.0 | expected to work | the GA release; bump the pins in `tooling/e2e.sh`/CI when it ships |
+| 1.5.9 / 1.5.10 | not compatible | those servers expect `golem:agent/guest@1.5.0`, which this branch no longer exports |
 
 > [!NOTE]
 > The older `golem component add` / `golem worker add` commands no longer exist in
@@ -191,6 +195,16 @@ type-check, which is what happens when a method's result schema changes.
 ---
 
 ## ⚠️ Development status
+
+**On the 1.6 line** (this branch): the host speaks `golem:agent/guest@2.0.0`
+with async exports, `schema-value-tree` values and a `schema-graph` agent type;
+all four examples deploy and run on a local `1.6.0-rc2` server (the e2e job in
+CI does exactly that). Two toolchain notes live in
+`tooling/abi_harness/README.md` (`Str.trim` trips the layout-sensitive codegen
+trap; components that import async host functions cannot be exercised in the
+harness yet). `setPersistence!` is a no-op because 1.6 removed persistence
+levels, and `websocketReceive!` drives the now-async receive through
+`wit_bindgen::block_on`.
 
 The components built from this tree work on Golem again: `get-definition` /
 `discover-agent-types` report the app's real agent type and tools, `initialize`
