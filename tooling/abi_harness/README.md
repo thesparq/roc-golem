@@ -50,14 +50,15 @@ It exits non-zero when any of these fail:
 - an expected log line, WebSocket send, HTTP request or RPC call was never
   recorded.
 
-Current state of the components built from this tree: counter, ai_tool and
-effects pass every check, including the effects agent's HTTP and RPC calls.
-**The streaming agent currently fails in the harness**: `initialize` traps with
-`wasm unreachable` — the layout-sensitive codegen trap the root README documents
-— even though the same component initializes and serves `status`/`send` on a real
-Golem 1.6 server (see `tooling/e2e.sh`). Treat this as a known harness-side
-failure to revisit, not a shipping blocker, and keep the e2e run as the
-authoritative check for the streaming example.
+Current state of the components built from this tree: all four examples pass
+every check, including the streaming agent's connect-then-send flow and the
+effects agent's HTTP and RPC calls.
+
+One toolchain hazard found while porting to 1.6: `Str.trim` in an agent's own
+code trips the layout-sensitive Roc codegen trap (`wasm unreachable`) in the
+harness — the streaming example's state deserializer used it defensively and now
+parses its compact JSON directly instead. If a component starts trapping in
+`initialize`, look for `Str.trim` (or similar slicing helpers) first.
 
 ## Why this exists
 

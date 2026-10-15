@@ -164,6 +164,10 @@ agent = defineAgent({
 	},
 
 	deserializeState: |stateJson| {
+		# The serialized state is compact (no spaces), so no trimming is needed —
+		# and `Str.trim` is avoided on purpose: its string slicing trips the
+		# layout-sensitive Roc codegen trap on this toolchain (see the harness
+		# README's notes on the streaming agent).
 		connected =
 			match Str.split_first(stateJson, "\"connected\":true") {
 				Ok(_) => True
@@ -173,7 +177,7 @@ agent = defineAgent({
 			match Str.split_first(stateJson, "\"handle\":") {
 				Ok({ before: _, after }) =>
 					match Str.split_first(after, ",") {
-						Ok({ before, after: _ }) => U32.from_str(Str.trim(before)) ?? 0
+						Ok({ before, after: _ }) => U32.from_str(before) ?? 0
 						Err(_) => 0
 					}
 
@@ -183,7 +187,7 @@ agent = defineAgent({
 			match Str.split_first(stateJson, "\"sent\":") {
 				Ok({ before: _, after }) =>
 					match Str.split_first(after, ",") {
-						Ok({ before, after: _ }) => U64.from_str(Str.trim(before)) ?? 0
+						Ok({ before, after: _ }) => U64.from_str(before) ?? 0
 						Err(_) => 0
 					}
 
@@ -192,9 +196,9 @@ agent = defineAgent({
 		received =
 			match Str.split_first(stateJson, "\"received\":") {
 				Ok({ before: _, after }) => {
-					cleaned = Str.trim(after)
+					cleaned = after
 					match Str.split_first(cleaned, "}") {
-						Ok({ before, after: _ }) => U64.from_str(Str.trim(before)) ?? 0
+						Ok({ before, after: _ }) => U64.from_str(before) ?? 0
 						Err(_) => 0
 					}
 				}
