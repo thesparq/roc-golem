@@ -88,7 +88,10 @@ build_app() {
     wasm-tools component new "$RAW_WASM" -o "$OUTPUT_COMPONENT"
 
     echo "==> Validating Component Model compatibility..."
-    wasm-tools validate "$OUTPUT_COMPONENT"
+    # `--features all` is needed from wasm-tools 1.248 on: components that use
+    # `stream` types (the tool/guest surface) fail validation without the
+    # component-model async feature enabled.
+    wasm-tools validate --features all "$OUTPUT_COMPONENT"
 
     echo "============================================================"
     echo " App build finished successfully!"
