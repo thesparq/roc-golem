@@ -1,4 +1,4 @@
-//! Host stubs for the WASI interfaces the `http!` effect reaches.
+//! Host stubs for the WASI interfaces the components' effects reach.
 //!
 //! Generated from this crate's `bindgen!` expansion (`cargo +nightly rustc --
 //! -Zunpretty=expanded`) and then hand-tuned: every function is a stub except
@@ -425,6 +425,328 @@ pub mod stubs_wasi_http_types_host {
 
     impl Host for Ctx {
         fn http_error_code(&mut self, _p1: wasmtime::component::Resource<IoError>) -> Option<ErrorCode> {
+            None
+        }
+    }
+}
+
+/// `wasi:filesystem` (`@0.2.6`): the agent's own filesystem. The stub keeps a
+/// small directory tree in `Ctx` (`fs_entries` / `fs_contents`), so a file the
+/// component writes in one invocation is there for the next one — which is what
+/// makes the round trip through the component meaningful — and records every
+/// call for `--expect-fs`. Only the operations the platform's filesystem effects
+/// reach are implemented; the rest is stubbed the way the http types are.
+///
+/// Golem preopens the sandbox root under both `/` and `.`; the stub answers the
+/// same, so a component that takes either entry sees the same tree.
+pub mod stubs_wasi_filesystem_preopens {
+    use super::Ctx;
+    use crate::wasi::filesystem0_2_6::preopens::*;
+    use crate::wasi::filesystem0_2_6::types::Descriptor;
+
+    impl Host for Ctx {
+        fn get_directories(&mut self) -> Vec<(wasmtime::component::Resource<Descriptor>, String)> {
+            vec![
+                (self.fs_descriptor(String::new(), true), String::from("/")),
+                (self.fs_descriptor(String::new(), true), String::from(".")),
+            ]
+        }
+    }
+}
+
+/// The `open-at` flags as `--expect-fs` reads them.
+fn open_flags_text(flags: crate::wasi::filesystem0_2_6::types::OpenFlags) -> String {
+    use crate::wasi::filesystem0_2_6::types::OpenFlags;
+
+    let mut names = Vec::new();
+    if flags.contains(OpenFlags::CREATE) {
+        names.push("create");
+    }
+    if flags.contains(OpenFlags::DIRECTORY) {
+        names.push("directory");
+    }
+    if flags.contains(OpenFlags::EXCLUSIVE) {
+        names.push("exclusive");
+    }
+    if flags.contains(OpenFlags::TRUNCATE) {
+        names.push("truncate");
+    }
+    names.join("|")
+}
+
+/// The descriptor flags an `open-at` asked for, the same way.
+fn descriptor_flags_text(flags: crate::wasi::filesystem0_2_6::types::DescriptorFlags) -> String {
+    use crate::wasi::filesystem0_2_6::types::DescriptorFlags;
+
+    let mut names = Vec::new();
+    if flags.contains(DescriptorFlags::READ) {
+        names.push("read");
+    }
+    if flags.contains(DescriptorFlags::WRITE) {
+        names.push("write");
+    }
+    names.join("|")
+}
+
+pub mod stubs_wasi_filesystem_types {
+    use super::{descriptor_flags_text, open_flags_text, Ctx};
+    use crate::fs_descriptor_type;
+    use crate::fs_split;
+    use crate::fs_stat;
+    use crate::wasi::filesystem0_2_6::types::*;
+    use crate::StubKind;
+
+    impl HostDescriptor for Ctx {
+        fn read_via_stream(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: Filesize) -> Result<wasmtime::component::Resource<InputStream>, ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::read_via_stream")
+        }
+        fn write_via_stream(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: Filesize) -> Result<wasmtime::component::Resource<OutputStream>, ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::write_via_stream")
+        }
+        fn append_via_stream(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> Result<wasmtime::component::Resource<OutputStream>, ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::append_via_stream")
+        }
+        fn advise(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: Filesize, _p3: Filesize, _p4: Advice) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::advise")
+        }
+        fn sync_data(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::sync_data")
+        }
+        fn get_flags(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> Result<DescriptorFlags, ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::get_flags")
+        }
+        fn get_type(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> Result<DescriptorType, ErrorCode> {
+            let descriptor = self
+                .fs_descriptor_at(_p1)
+                .cloned()
+                .ok_or(ErrorCode::BadDescriptor)?;
+            Ok(fs_descriptor_type(if descriptor.directory {
+                StubKind::Directory
+            } else {
+                StubKind::File
+            }))
+        }
+        fn set_size(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: Filesize) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::set_size")
+        }
+        fn set_times(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: NewTimestamp, _p3: NewTimestamp) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::set_times")
+        }
+        fn read(&mut self, _p1: wasmtime::component::Resource<Descriptor>, length: Filesize, offset: Filesize) -> Result<(wasmtime::component::__internal::Vec<u8>, bool), ErrorCode> {
+            let descriptor = self
+                .fs_descriptor_at(_p1)
+                .cloned()
+                .ok_or(ErrorCode::BadDescriptor)?;
+            if descriptor.directory {
+                return Err(ErrorCode::BadDescriptor);
+            }
+            let contents = self
+                .fs_contents
+                .get(&descriptor.path)
+                .cloned()
+                .unwrap_or_default();
+            let start = (offset as usize).min(contents.len());
+            let end = start.saturating_add(length as usize).min(contents.len());
+            let chunk = contents[start..end].to_vec();
+            let end_of_file = end >= contents.len();
+            self.fs_calls
+                .push(format!("read(path={}, {} bytes)", descriptor.path, chunk.len()));
+            Ok((chunk, end_of_file))
+        }
+        fn write(&mut self, _p1: wasmtime::component::Resource<Descriptor>, buffer: wasmtime::component::__internal::Vec<u8>, offset: Filesize) -> Result<Filesize, ErrorCode> {
+            let descriptor = self
+                .fs_descriptor_at(_p1)
+                .cloned()
+                .ok_or(ErrorCode::BadDescriptor)?;
+            if descriptor.directory {
+                return Err(ErrorCode::BadDescriptor);
+            }
+            let contents = self.fs_contents.entry(descriptor.path.clone()).or_default();
+            let start = offset as usize;
+            let end = start.saturating_add(buffer.len());
+            if contents.len() < end {
+                contents.resize(end, 0);
+            }
+            contents[start..end].copy_from_slice(&buffer);
+            self.fs_calls
+                .push(format!("write(path={}, {} bytes)", descriptor.path, buffer.len()));
+            Ok(buffer.len() as Filesize)
+        }
+        fn read_directory(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> Result<wasmtime::component::Resource<DirectoryEntryStream>, ErrorCode> {
+            let descriptor = self
+                .fs_descriptor_at(_p1)
+                .cloned()
+                .ok_or(ErrorCode::BadDescriptor)?;
+            if !descriptor.directory {
+                return Err(ErrorCode::NotDirectory);
+            }
+            let entries: std::collections::VecDeque<(String, StubKind)> = self
+                .fs_entries
+                .get(&descriptor.path)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .map(|(name, kind)| (name.clone(), *kind))
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.fs_calls
+                .push(format!("read-directory(path={})", descriptor.path));
+            let rep = self.fs_listings.len() as u32;
+            self.fs_listings.push(entries);
+            Ok(unsafe { wasmtime::component::Resource::new_own(rep) })
+        }
+        fn sync(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::sync")
+        }
+        fn create_directory_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, path: String) -> Result<(), ErrorCode> {
+            let full = self.fs_join(_p1, &path).ok_or(ErrorCode::BadDescriptor)?;
+            self.fs_calls
+                .push(format!("create-directory-at(path={full})"));
+            if self.fs_kind(&full).is_some() {
+                return Err(ErrorCode::Exist);
+            }
+            let Some((parent, _)) = fs_split(&full) else {
+                return Err(ErrorCode::Exist);
+            };
+            if self.fs_kind(&parent) != Some(StubKind::Directory) {
+                return Err(ErrorCode::NoEntry);
+            }
+            self.fs_insert(&full, StubKind::Directory);
+            self.fs_entries.entry(full).or_default();
+            Ok(())
+        }
+        fn stat(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> Result<DescriptorStat, ErrorCode> {
+            let descriptor = self
+                .fs_descriptor_at(_p1)
+                .cloned()
+                .ok_or(ErrorCode::BadDescriptor)?;
+            if descriptor.directory {
+                return Ok(fs_stat(StubKind::Directory, 0));
+            }
+            let size = self
+                .fs_contents
+                .get(&descriptor.path)
+                .map(|contents| contents.len() as u64)
+                .unwrap_or(0);
+            Ok(fs_stat(StubKind::File, size))
+        }
+        fn stat_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: PathFlags, path: String) -> Result<DescriptorStat, ErrorCode> {
+            let full = self.fs_join(_p1, &path).ok_or(ErrorCode::BadDescriptor)?;
+            self.fs_calls.push(format!("stat-at(path={full})"));
+            match self.fs_kind(&full) {
+                Some(StubKind::Directory) => Ok(fs_stat(StubKind::Directory, 0)),
+                Some(StubKind::File) => {
+                    let size = self
+                        .fs_contents
+                        .get(&full)
+                        .map(|contents| contents.len() as u64)
+                        .unwrap_or(0);
+                    Ok(fs_stat(StubKind::File, size))
+                }
+                None => Err(ErrorCode::NoEntry),
+            }
+        }
+        fn set_times_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: PathFlags, _p3: String, _p4: NewTimestamp, _p5: NewTimestamp) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::set_times_at")
+        }
+        fn link_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: PathFlags, _p3: String, _p4: wasmtime::component::Resource<Descriptor>, _p5: String) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::link_at")
+        }
+        fn open_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: PathFlags, path: String, open_flags: OpenFlags, flags: DescriptorFlags) -> Result<wasmtime::component::Resource<Descriptor>, ErrorCode> {
+            let full = self.fs_join(_p1, &path).ok_or(ErrorCode::BadDescriptor)?;
+            self.fs_calls.push(format!(
+                "open-at(path={full}, {}, {})",
+                open_flags_text(open_flags),
+                descriptor_flags_text(flags)
+            ));
+            match self.fs_kind(&full) {
+                Some(StubKind::Directory) => Ok(self.fs_descriptor(full, true)),
+                Some(StubKind::File) => {
+                    if open_flags.contains(OpenFlags::DIRECTORY) {
+                        return Err(ErrorCode::NotDirectory);
+                    }
+                    if open_flags.contains(OpenFlags::TRUNCATE) {
+                        self.fs_contents.insert(full.clone(), Vec::new());
+                    }
+                    Ok(self.fs_descriptor(full, false))
+                }
+                None => {
+                    if !open_flags.contains(OpenFlags::CREATE)
+                        || open_flags.contains(OpenFlags::DIRECTORY)
+                    {
+                        return Err(ErrorCode::NoEntry);
+                    }
+                    // Creating a file needs its parent directory, like the real
+                    // one (`open` answers `no-entry` for a missing parent).
+                    let Some((parent, _)) = fs_split(&full) else {
+                        return Err(ErrorCode::Exist);
+                    };
+                    if self.fs_kind(&parent) != Some(StubKind::Directory) {
+                        return Err(ErrorCode::NoEntry);
+                    }
+                    self.fs_insert(&full, StubKind::File);
+                    self.fs_contents.insert(full.clone(), Vec::new());
+                    Ok(self.fs_descriptor(full, false))
+                }
+            }
+        }
+        fn readlink_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: String) -> Result<String, ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::readlink_at")
+        }
+        fn remove_directory_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: String) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::remove_directory_at")
+        }
+        fn rename_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: String, _p3: wasmtime::component::Resource<Descriptor>, _p4: String) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::rename_at")
+        }
+        fn symlink_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: String, _p3: String) -> Result<(), ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::symlink_at")
+        }
+        fn unlink_file_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, path: String) -> Result<(), ErrorCode> {
+            let full = self.fs_join(_p1, &path).ok_or(ErrorCode::BadDescriptor)?;
+            self.fs_calls.push(format!("unlink-file-at(path={full})"));
+            match self.fs_kind(&full) {
+                Some(StubKind::File) => {
+                    self.fs_remove(&full);
+                    self.fs_contents.remove(&full);
+                    Ok(())
+                }
+                Some(StubKind::Directory) => Err(ErrorCode::IsDirectory),
+                None => Err(ErrorCode::NoEntry),
+            }
+        }
+        fn is_same_object(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: wasmtime::component::Resource<Descriptor>) -> bool {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::is_same_object")
+        }
+        fn metadata_hash(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> Result<MetadataHashValue, ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::metadata_hash")
+        }
+        fn metadata_hash_at(&mut self, _p1: wasmtime::component::Resource<Descriptor>, _p2: PathFlags, _p3: String) -> Result<MetadataHashValue, ErrorCode> {
+            unimplemented!("harness stub: wasi::filesystem0_2_6::types::HostDescriptor::metadata_hash_at")
+        }
+        fn drop(&mut self, _p1: wasmtime::component::Resource<Descriptor>) -> wasmtime::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl HostDirectoryEntryStream for Ctx {
+        fn read_directory_entry(&mut self, _p1: wasmtime::component::Resource<DirectoryEntryStream>) -> Result<Option<DirectoryEntry>, ErrorCode> {
+            match self.fs_listings.get_mut(_p1.rep() as usize) {
+                Some(entries) => Ok(entries.pop_front().map(|(name, kind)| DirectoryEntry {
+                    type_: fs_descriptor_type(kind),
+                    name,
+                })),
+                None => Err(ErrorCode::BadDescriptor),
+            }
+        }
+        fn drop(&mut self, _p1: wasmtime::component::Resource<DirectoryEntryStream>) -> wasmtime::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Host for Ctx {
+        fn filesystem_error_code(&mut self, _p1: wasmtime::component::Resource<crate::wasi::io::error::Error>) -> Option<ErrorCode> {
             None
         }
     }

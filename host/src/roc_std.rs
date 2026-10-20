@@ -422,6 +422,84 @@ impl<T, E> Drop for RocResult<T, E> {
     }
 }
 
+/// The result of an effect whose success value is a `U64`: `Try(U64, Str)`.
+///
+/// A tag union's payload region is as large as its largest payload and is
+/// aligned to the largest payload's alignment, with the tag directly after the
+/// region — not, as Rust's own union layout would have it, padded to that
+/// alignment. The two agree whenever the padding is zero, which is why
+/// `RocResult` covers every other shape this host uses; with a `U64` payload
+/// they do not: on a 32-bit target the region is 12 bytes (the `Str`) and the
+/// tag sits at offset 12, while Rust's union would pad the region to 16 and put
+/// the tag at 16. The compiler's own generator emits the same shape, alignment
+/// marker included, so this type spells the payload out as bytes.
+#[repr(C, align(8))]
+pub struct RocU64Result {
+    payload: [u8; core::mem::size_of::<RocStr>()],
+    discriminant: u8,
+}
+
+// The sizes and offsets the compiler's generator asserts for `Try(U64, Str)`:
+// 16 bytes with the tag at 12 on 32-bit, 32 bytes with the tag at 24 on 64-bit.
+#[cfg(target_pointer_width = "32")]
+const _: () = {
+    assert!(core::mem::size_of::<RocU64Result>() == 16);
+    assert!(core::mem::align_of::<RocU64Result>() == 8);
+    assert!(core::mem::offset_of!(RocU64Result, discriminant) == 12);
+};
+#[cfg(not(target_pointer_width = "32"))]
+const _: () = {
+    assert!(core::mem::size_of::<RocU64Result>() == 32);
+    assert!(core::mem::align_of::<RocU64Result>() == 8);
+    assert!(core::mem::offset_of!(RocU64Result, discriminant) == 24);
+};
+
+impl RocU64Result {
+    pub fn ok(size: u64) -> Self {
+        let mut result = Self {
+            payload: [0; core::mem::size_of::<RocStr>()],
+            discriminant: 1,
+        };
+        result.payload[..core::mem::size_of::<u64>()].copy_from_slice(&size.to_le_bytes());
+        result
+    }
+
+    pub fn err(error: RocStr) -> Self {
+        let mut result = Self {
+            payload: [0; core::mem::size_of::<RocStr>()],
+            discriminant: 0,
+        };
+        // The payload region is aligned like a `RocStr` (the struct's `align(8)`
+        // only raises it), so the string moves in as a plain write and the
+        // result owns it from here.
+        unsafe {
+            ptr::write(result.payload.as_mut_ptr() as *mut RocStr, error);
+        }
+        result
+    }
+
+    pub fn into_result(self) -> Result<u64, RocStr> {
+        if self.discriminant == 1 {
+            let mut bytes = [0u8; core::mem::size_of::<u64>()];
+            bytes.copy_from_slice(&self.payload[..core::mem::size_of::<u64>()]);
+            mem::forget(self);
+            Ok(u64::from_le_bytes(bytes))
+        } else {
+            let error = unsafe { ptr::read(self.payload.as_ptr() as *const RocStr) };
+            mem::forget(self);
+            Err(error)
+        }
+    }
+}
+
+impl Drop for RocU64Result {
+    fn drop(&mut self) {
+        if self.discriminant != 1 {
+            unsafe { ptr::drop_in_place(self.payload.as_mut_ptr() as *mut RocStr) };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,6 +640,55 @@ mod tests {
             slice::from_raw_parts(&err as *const _ as *const u8, mem::size_of_val(&err))
         };
         assert_eq!(bytes[3 * word], 0, "Try uses 0 for Err");
+
+        // `Try(U64, Str)` keeps the same shape at 64 bits (4 words, tag at 3);
+        // at 32 bits the `U64` payload would pad Rust's union and move the tag,
+        // which is why `RocU64Result` spells the payload out (its own `const`
+        // assertions pin the 32-bit numbers).
+        assert_eq!(mem::size_of::<RocU64Result>(), 4 * word);
+        let sized = RocU64Result::ok(7);
+        let bytes = unsafe {
+            slice::from_raw_parts(&sized as *const _ as *const u8, mem::size_of_val(&sized))
+        };
+        assert_eq!(bytes[3 * word], 1, "Try uses 1 for Ok");
+    }
+
+    /// `RocU64Result` carries a `U64` on the way out and a `Str` on the way back,
+    /// and owns the error string the way `RocResult` owns its payloads.
+    #[test]
+    fn test_roc_u64_result() {
+        assert!(matches!(
+            RocU64Result::ok(4_294_967_296).into_result(),
+            Ok(size) if size == 4_294_967_296
+        ));
+        assert!(matches!(RocU64Result::ok(0).into_result(), Ok(0)));
+
+        let text = "an error long enough to live on the heap, so the result owns an allocation";
+        let error = RocStr::from_str(text);
+        let alloc_ptr = error.words()[0] as *mut u8;
+        let moved = match RocU64Result::err(error).into_result() {
+            Err(moved) => moved,
+            Ok(size) => panic!("the result should be the error, got {size}"),
+        };
+        assert_eq!(moved.as_str(), text);
+        unsafe {
+            assert_eq!(*((alloc_ptr as *const isize).sub(1)), 1, "the moved string keeps its reference");
+        }
+        drop(moved);
+
+        // Dropping an error result releases the reference it holds, the way a
+        // dropped `RocResult` does.
+        let original = RocStr::from_str(text);
+        let alloc_ptr = original.words()[0] as *mut u8;
+        drop(RocU64Result::err(original.clone()));
+        unsafe {
+            assert_eq!(
+                *((alloc_ptr as *const isize).sub(1)),
+                1,
+                "the dropped result released its own reference"
+            );
+        }
+        drop(original);
     }
 
     #[test]

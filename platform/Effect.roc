@@ -260,4 +260,48 @@ Effect := {}.{
 	blobDelete! = |container, object| {
 		Host.rocFxBlobDelete!(container, object)
 	}
+
+	## The agent's own filesystem (`wasi:filesystem@0.2.6`): one effect per
+	## operation, files named by path and bytes carried as lossy-UTF-8 text. The
+	## host resolves the path against the agent's root and opens the file itself,
+	## so no descriptor reaches the app and nothing has to be closed.
+	readFile! : Str => Try(Str, Str)
+	readFile! = |path| {
+		Host.rocFxReadFile!(path)
+	}
+
+	writeFile! : Str, Str => Try({}, Str)
+	writeFile! = |path, value| {
+		Host.rocFxWriteFile!(path, value)
+	}
+
+	appendFile! : Str, Str => Try({}, Str)
+	appendFile! = |path, value| {
+		Host.rocFxAppendFile!(path, value)
+	}
+
+	fileExists! : Str => Try(Bool, Str)
+	fileExists! = |path| {
+		Host.rocFxFileExists!(path)
+	}
+
+	fileSize! : Str => Try(U64, Str)
+	fileSize! = |path| {
+		Host.rocFxFileSize!(path)
+	}
+
+	deleteFile! : Str => Try({}, Str)
+	deleteFile! = |path| {
+		Host.rocFxDeleteFile!(path)
+	}
+
+	makeDir! : Str => Try({}, Str)
+	makeDir! = |path| {
+		Host.rocFxMakeDir!(path)
+	}
+
+	listDir! : Str => Try(Str, Str)
+	listDir! = |path| {
+		Host.rocFxListDir!(path)
+	}
 }

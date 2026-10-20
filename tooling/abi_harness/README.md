@@ -31,10 +31,13 @@ Flags:
   `--expect-kv` and `--expect-blob` do the same for the key-value
   (`wasi:keyvalue`: `open-bucket`, `set`, `get`, `delete`, `exists`) and
   blobstore (`wasi:blobstore`: `create-container`, `write-data`, `list-objects`,
-  …) calls. All of them are recorded by the stubs, so effect wiring is verified,
-  not just reply text — and the two stores are stubbed with a small in-memory
-  store each, so a round trip the component drives has to come back out of it
-  changed.
+  …) calls, and `--expect-fs` for the agent's filesystem
+  (`wasi:filesystem@0.2.6`: `open-at`, `write`, `read-directory`, …). All of
+  them are recorded by the stubs, so effect wiring is verified, not just reply
+  text — and the two stores and the filesystem are stubbed with a small
+  in-memory store of their own, so a round trip the component drives has to come
+  back out of it changed (for the filesystem that includes *across* the two
+  messages, which is what makes the read a real read).
 - `--expect-trap SUBSTRING` expects the first message to *fail the invocation*,
   with SUBSTRING in the trap's text, instead of returning a reply: `trap!` never
   returns, so the reply and tool checks are skipped and nothing else is asked of
@@ -63,18 +66,19 @@ It exits non-zero when any of these fail:
 - `invoke handle-message` traps, returns an error, or returns a reply that does
   not contain the expected text,
 - an expected log line, WebSocket send, HTTP request, RPC call, quota call,
-  retry-policy call, `golem:api/host` call, key-value call or blobstore call was
-  never recorded,
+  retry-policy call, `golem:api/host` call, key-value call, blobstore call or
+  filesystem call was never recorded,
 - a message expected to trap (`--expect-trap`) returned a reply or failed some
   other way instead.
 
 Current state of the components built from this tree: counter, ai_tool, site and
 static_site pass every check, including the effects the counter carries — the
-quota and retry-policy calls, the execution-control calls, and the key-value and
-blobstore round trips, which run against the stubs' own stores. The streaming
-agent passes here too, `websocket/client.receive` included. The effects agent
-cannot even be *instantiated* by the harness: its p3 `wasi:http` import is not
-in the harness world (see the toolchain notes below), so the e2e job stays its
+quota and retry-policy calls, the execution-control calls, the key-value and
+blobstore round trips, which run against the stubs' own stores, and the agent
+filesystem round trip, which runs against the stubs' own directory tree. The
+streaming agent passes here too, `websocket/client.receive` included. The effects
+agent cannot even be *instantiated* by the harness: its p3 `wasi:http` import is
+not in the harness world (see the toolchain notes below), so the e2e job stays its
 authoritative check.
 
 Toolchain notes found while porting to 1.6:
@@ -116,9 +120,11 @@ interfaces with no Golem runtime present: agent types, the clocks, `wasi:io`,
 `wasi:http` (answered from a canned response while recording the request),
 `golem:agent/host` (RPC calls recorded), the WebSocket client (a recording
 connection), `wasi:logging` (recorded), `golem:api/retry` / `golem:quota/types`
-/ `golem:api/host` (recorded too), and the two shared stores `wasi:keyvalue` and
-`wasi:blobstore` (each with a small in-memory store behind it). Those interfaces
-are synchronous, which is why they can be driven here at all.
+/ `golem:api/host` (recorded too), the two shared stores `wasi:keyvalue` and
+`wasi:blobstore` (each with a small in-memory store behind it), and the agent's
+filesystem `wasi:filesystem@0.2.6` (an in-memory directory tree; the preopens
+answer the sandbox root under both `/` and `.` the way Golem does). Those
+interfaces are synchronous, which is why they can be driven here at all.
 
 Two functions of the blobstore move a component-model stream — the outgoing
 value's `write-body` and the container's `list-objects` — and attaching a host

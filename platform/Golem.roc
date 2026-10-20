@@ -59,6 +59,14 @@ module [
 	blobHas!,
 	blobList!,
 	blobDelete!,
+	readFile!,
+	writeFile!,
+	appendFile!,
+	fileExists!,
+	fileSize!,
+	deleteFile!,
+	makeDir!,
+	listDir!,
 ]
 
 import Effect
@@ -399,3 +407,73 @@ blobList! = |container|
 blobDelete! : Str, Str => Try({}, Str)
 blobDelete! = |container, object|
 	Effect.blobDelete!(container, object)
+
+## The agent's own filesystem (`wasi:filesystem`): files the agent reads and
+## writes live in its sandbox, one filesystem per agent, and every write is
+## recorded in the agent's oplog, so it is replayed with the invocation that made
+## it and the files survive restarts, snapshots and agent updates. The
+## manifest's per-agent `files:` list provisions the initial files; HTTP mounts
+## *serve* files out of the same filesystem, which is a different thing (a mount
+## answers requests without invoking the agent).
+##
+## Paths are resolved against the agent's root: a leading `/` names the root (the
+## spelling a manifest `files:` target uses), so `/seed/a.txt` and `seed/a.txt`
+## are the same file; `.` and `..` normalize inside the root; and a path that
+## would step above the root fails with `escapes the agent's filesystem root`.
+## File contents travel as lossy-UTF-8 text, the convention `http!` uses for
+## bytes, and no file handle reaches the app — every effect opens the file it
+## names and closes it again.
+
+## The whole file as text. A file that is not there (or cannot be read) is
+## reported in the `Err` channel with the host's error code, such as
+## `no-entry`.
+readFile! : Str => Try(Str, Str)
+readFile! = |path|
+	Effect.readFile!(path)
+
+## Creates the file (truncating what was there) and writes the text's UTF-8
+## bytes. Missing parent directories are an error; `makeDir!` creates them one
+## level at a time.
+writeFile! : Str, Str => Try({}, Str)
+writeFile! = |path, value|
+	Effect.writeFile!(path, value)
+
+## Writes the text's bytes at the end of the file, creating it when it is not
+## there yet.
+appendFile! : Str, Str => Try({}, Str)
+appendFile! = |path, value|
+	Effect.appendFile!(path, value)
+
+## Whether anything is there under the path — a directory or a file, a symlink
+## followed to what it points at. A path whose parent does not exist answers
+## `False`, not `Err`.
+fileExists! : Str => Try(Bool, Str)
+fileExists! = |path|
+	Effect.fileExists!(path)
+
+## The size of the file in bytes (for a directory, the size of the directory's
+## own record; for a symlink, the length of the path it holds).
+fileSize! : Str => Try(U64, Str)
+fileSize! = |path|
+	Effect.fileSize!(path)
+
+## Removes the file. A path that is not a file at all — a directory, or nothing
+## — is reported (`is-directory`, `no-entry`) rather than silently ignored.
+deleteFile! : Str => Try({}, Str)
+deleteFile! = |path|
+	Effect.deleteFile!(path)
+
+## Creates one directory. Its parent has to exist already, so this is `mkdir`,
+## not `mkdir -p`; creating one that exists is reported as `exist`.
+makeDir! : Str => Try({}, Str)
+makeDir! = |path|
+	Effect.makeDir!(path)
+
+## The entries of a directory as a JSON array of `{"name": …,
+## "type": …}`, sorted by name so two listings of an unchanged directory read
+## the same. `type` is `"file"`, `"dir"`, `"symlink"`, or `"other"` for the
+## kinds the interface leaves unclassified (devices, fifos, sockets). `[]` is an
+## empty directory.
+listDir! : Str => Try(Str, Str)
+listDir! = |path|
+	Effect.listDir!(path)

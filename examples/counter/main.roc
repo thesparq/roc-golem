@@ -2,6 +2,7 @@ app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [
 	Agent,
+	appendFile!,
 	blobCreateContainer!,
 	blobDelete!,
 	blobGet!,
@@ -9,21 +10,28 @@ import pf.Golem exposing [
 	blobList!,
 	blobPut!,
 	defineAgent,
+	deleteFile!,
+	fileExists!,
+	fileSize!,
 	getConfig!,
 	getRetryPolicies!,
 	kvDelete!,
 	kvExists!,
 	kvGet!,
 	kvSet!,
+	listDir!,
+	makeDir!,
 	newQuotaToken!,
 	nextRetryDelay!,
 	oplogCommit!,
 	quotaCommit!,
 	quotaReserve!,
+	readFile!,
 	resolveAgentId!,
 	resolveComponentId!,
 	resolveRetryPolicy!,
 	trap!,
+	writeFile!,
 ]
 
 State :: {
@@ -164,10 +172,21 @@ agent = defineAgent({
 					replies: [blobRoundTrip!(command.rest)],
 				}
 
+			"fs" =>
+			# fs <verb> <path> [text]: one effect per verb (write, append, read,
+			# exists, size, mkdir, delete, list) against the agent's own
+			# filesystem. A file one invocation wrote is there for the next one:
+			# the writes are recorded in the oplog and replayed, so the
+			# filesystem is durable with the agent.
+				{
+					state,
+					replies: [fileCommand!(command.rest)],
+				}
+
 			_ =>
 				{
 					state,
-					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>, kv <bucket> <key> <value>, blob <container> <object> <value>"],
+					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>, kv <bucket> <key> <value>, blob <container> <object> <value>, fs <verb> <path> [text]"],
 				}
 		}
 	},
@@ -335,6 +354,68 @@ blobRoundTrip! = |args| {
 	}
 
 	"blob create=${createOutcome} put=${putOutcome} get=${getOutcome} has=${hasOutcome} list=${listOutcome} delete=${deleteOutcome} has-after=${hasAfterOutcome}"
+}
+
+## The filesystem command `fs <verb> <path> [text]` runs, one effect per verb,
+## with the outcome in the reply: a read answers the file's text, and a failure
+## is reported as `fs <verb> failed: <error>` instead of hiding the rest. The
+## path rule is the platform's: a leading `/` names the agent's root, `.`/`..`
+## normalize inside it, and a path that would step above it is refused.
+fileCommand! : Str => Str
+fileCommand! = |args| {
+	{ first: verb, second: path, rest: text } = splitThree(args)
+
+	match verb {
+		"read" =>
+			match readFile!(path) {
+				Ok(contents) => "fs read: ${contents}"
+				Err(err) => "fs read failed: ${err}"
+			}
+
+		"write" =>
+			match writeFile!(path, text) {
+				Ok(_) => "fs wrote ${path}"
+				Err(err) => "fs write failed: ${err}"
+			}
+
+		"append" =>
+			match appendFile!(path, text) {
+				Ok(_) => "fs appended ${path}"
+				Err(err) => "fs append failed: ${err}"
+			}
+
+		"exists" =>
+			match fileExists!(path) {
+				Ok(found) => "fs exists: ${boolText(found)}"
+				Err(err) => "fs exists failed: ${err}"
+			}
+
+		"size" =>
+			match fileSize!(path) {
+				Ok(size) => "fs size: ${U64.to_str(size)}"
+				Err(err) => "fs size failed: ${err}"
+			}
+
+		"mkdir" =>
+			match makeDir!(path) {
+				Ok(_) => "fs made dir ${path}"
+				Err(err) => "fs mkdir failed: ${err}"
+			}
+
+		"delete" =>
+			match deleteFile!(path) {
+				Ok(_) => "fs deleted ${path}"
+				Err(err) => "fs delete failed: ${err}"
+			}
+
+		"list" =>
+			match listDir!(path) {
+				Ok(entries) => "fs list: ${entries}"
+				Err(err) => "fs list failed: ${err}"
+			}
+
+		_ => "Usage: fs write|append|read|exists|size|mkdir|delete|list <path> [text]"
+	}
 }
 
 ## Fails the invocation with `reason`; the host traps, so nothing after this

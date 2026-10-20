@@ -94,6 +94,13 @@ agents:
       greeting: "hello from the manifest"
     tools:
       get-count: {}
+    # One initial file, so the counter's `fs` commands can read a file the
+    # manifest provisioned — the guest-side counterpart of the site example's
+    # served files. `golem deploy` uploads it and Golem puts it in the agent's
+    # filesystem before the agent starts.
+    files:
+      - sourcePath: examples/counter/seed/hello.txt
+        targetPath: /seed/hello.txt
   ai-tool-agent:
     tools:
       calculator: {}
