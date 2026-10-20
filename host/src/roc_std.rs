@@ -311,6 +311,11 @@ impl RocStr {
         (self.as_bytes()[Self::SIZE - 1] & Self::MASK) != 0
     }
 
+    /// True when the string has no bytes, including Roc's empty value.
+    pub fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+
     pub fn as_slice(&self) -> &[u8] {
         if self.is_small() {
             let len = (self.as_bytes()[Self::SIZE - 1] & !Self::MASK) as usize;

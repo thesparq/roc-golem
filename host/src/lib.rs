@@ -777,8 +777,10 @@ fn openapi_document() -> Option<String> {
 // Host effect functions exposed to the Roc guest runtime via C-ABI
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
-    let text = if msg.is_null() { "" } else { (*msg).as_str() };
+pub unsafe extern "C" fn rocFxLog(level: u8, msg: RocStr) {
+    // `msg` is owned by this function (Roc transfers ownership of hosted
+    // arguments), so dropping it at the end of the call releases it.
+    let text = msg.as_str();
     let level = match level {
         0 => wasi::logging::logging::Level::Trace,
         1 => wasi::logging::logging::Level::Debug,
@@ -790,28 +792,24 @@ pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
+pub unsafe extern "C" fn rocFxGetWorkerId() -> RocStr {
     let worker_id = match golem::api::host::get_self_metadata() {
         Ok(metadata) => metadata.agent_id.agent_id,
         Err(_) => String::from("unknown"),
     };
-    ptr::write(out, RocStr::from_str(&worker_id));
+    RocStr::from_str(&worker_id)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcInvoke(
-    out: *mut RocResult<RocStr, RocStr>,
-    target: *const RocStr,
-    function_name: *const RocStr,
-    payload: *const RocStr,
-) {
-    let target_str = if target.is_null() { "" } else { (*target).as_str() };
-    let method = if function_name.is_null() {
-        ""
-    } else {
-        (*function_name).as_str()
-    };
-    let payload_str = if payload.is_null() { "{}" } else { (*payload).as_str() };
+    target: RocStr,
+    function_name: RocStr,
+    payload: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    // All three arguments are owned by this function and released when they drop.
+    let target_str = target.as_str();
+    let method = function_name.as_str();
+    let payload_str = if payload.is_empty() { "{}" } else { payload.as_str() };
 
     // The target is an agent id, as produced by `make-agent-id` / the Golem CLI
     // (for example `counter-agent("{}")`). `parse-agent-id` returns the target's
@@ -838,8 +836,8 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
     };
 
     match result {
-        Ok(text) => ptr::write(out, RocResult::ok(RocStr::from_str(&text))),
-        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+        Ok(text) => RocResult::ok(RocStr::from_str(&text)),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
     }
 }
 
@@ -1146,18 +1144,11 @@ where
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxHttpRequest(
-    out: *mut RocResult<RocStr, RocStr>,
-    req_json: *const RocStr,
-) {
-    let req_str = if req_json.is_null() { "{}" } else { (*req_json).as_str() };
+pub unsafe extern "C" fn rocFxHttpRequest(req_json: RocStr) -> RocResult<RocStr, RocStr> {
+    let req_str = if req_json.is_empty() { "{}" } else { req_json.as_str() };
     match execute_http_request(req_str) {
-        Ok(resp_json) => {
-            ptr::write(out, RocResult::ok(RocStr::from_str(&resp_json)));
-        }
-        Err(err) => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&err)));
-        }
+        Ok(resp_json) => RocResult::ok(RocStr::from_str(&resp_json)),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
     }
 }
 
@@ -1216,49 +1207,37 @@ fn ws_message_text(message: golem::websocket::client::Message) -> String {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxWsConnect(
-    out: *mut RocResult<u32, RocStr>,
-    url: *const RocStr,
-) {
-    let url_str = if url.is_null() { "" } else { (*url).as_str() };
+pub unsafe extern "C" fn rocFxWsConnect(url: RocStr) -> RocResult<u32, RocStr> {
+    let url_str = url.as_str();
     // Golem 1.6.0 added a third parameter (the connection's reconstruction
     // policy); `None` keeps the default, which reconnects automatically.
     match golem::websocket::client::WebsocketConnection::connect(url_str, None, None) {
         Ok(connection) => {
             let handle = ws_store(connection);
-            ptr::write(out, RocResult::ok(handle));
+            RocResult::ok(handle)
         }
-        Err(err) => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
-        }
+        Err(err) => RocResult::err(RocStr::from_str(&format!("{:?}", err))),
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxWsSend(
-    out: *mut RocResult<(), RocStr>,
-    handle: u32,
-    msg: *const RocStr,
-) {
-    let text = if msg.is_null() { "" } else { (*msg).as_str() };
+pub unsafe extern "C" fn rocFxWsSend(handle: u32, msg: RocStr) -> RocResult<(), RocStr> {
+    let text = msg.as_str();
     let sent = ws_with(handle, |connection| {
         connection.send(&golem::websocket::client::Message::Text(String::from(text)))
     });
     match sent {
-        Some(Ok(())) => ptr::write(out, RocResult::ok(())),
-        Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err)))),
-        None => ptr::write(
-            out,
-            RocResult::err(RocStr::from_str(&format!("unknown websocket handle {}", handle))),
-        ),
+        Some(Ok(())) => RocResult::ok(()),
+        Some(Err(err)) => RocResult::err(RocStr::from_str(&format!("{:?}", err))),
+        None => RocResult::err(RocStr::from_str(&format!(
+            "unknown websocket handle {}",
+            handle
+        ))),
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxWsReceive(
-    out: *mut RocResult<RocStr, RocStr>,
-    handle: u32,
-) {
+pub unsafe extern "C" fn rocFxWsReceive(handle: u32) -> RocResult<RocStr, RocStr> {
     // `receive` became an async host import in Golem 1.6. The Roc side calls
     // this effect synchronously, so the fork's `block_on` drives the async call
     // to completion (it waits on the guest's waitable set while the host call is
@@ -1267,31 +1246,28 @@ pub unsafe extern "C" fn rocFxWsReceive(
     match received {
         Some(Ok(message)) => {
             let text = ws_message_text(message);
-            ptr::write(out, RocResult::ok(RocStr::from_str(&text)));
+            RocResult::ok(RocStr::from_str(&text))
         }
-        Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err)))),
-        None => ptr::write(
-            out,
-            RocResult::err(RocStr::from_str(&format!("unknown websocket handle {}", handle))),
-        ),
+        Some(Err(err)) => RocResult::err(RocStr::from_str(&format!("{:?}", err))),
+        None => RocResult::err(RocStr::from_str(&format!(
+            "unknown websocket handle {}",
+            handle
+        ))),
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxWsClose(
-    out: *mut RocResult<(), RocStr>,
-    handle: u32,
-) {
+pub unsafe extern "C" fn rocFxWsClose(handle: u32) -> RocResult<(), RocStr> {
     match ws_take(handle) {
         Some(connection) => {
             let _ = connection.close(None, None);
             drop(connection);
-            ptr::write(out, RocResult::ok(()));
+            RocResult::ok(())
         }
-        None => ptr::write(
-            out,
-            RocResult::err(RocStr::from_str(&format!("unknown websocket handle {}", handle))),
-        ),
+        None => RocResult::err(RocStr::from_str(&format!(
+            "unknown websocket handle {}",
+            handle
+        ))),
     }
 }
 
@@ -1315,8 +1291,8 @@ pub unsafe extern "C" fn rocFxNowMillis() -> u64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxGetConfig(out: *mut RocResult<RocStr, RocStr>, key: *const RocStr) {
-    let key_str = if key.is_null() { "" } else { (*key).as_str() };
+pub unsafe extern "C" fn rocFxGetConfig(key: RocStr) -> RocResult<RocStr, RocStr> {
+    let key_str = key.as_str();
     // Only keys the agent type declares can be read; the host returns an error
     // otherwise (or `none` for an option-typed key, which this platform does not
     // declare yet).
@@ -1329,8 +1305,8 @@ pub unsafe extern "C" fn rocFxGetConfig(out: *mut RocResult<RocStr, RocStr>, key
     };
 
     match result {
-        Ok(text) => ptr::write(out, RocResult::ok(RocStr::from_str(&text))),
-        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+        Ok(text) => RocResult::ok(RocStr::from_str(&text)),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
     }
 }
 
@@ -1995,6 +1971,28 @@ mod tests {
         unsafe {
             let refcount = *((data_ptr as *const isize).sub(1));
             assert_eq!(refcount, 1, "both sides start a fresh string at one");
+        }
+    }
+
+    /// Hosted arguments are *owned* by the host: Roc transfers ownership, so the
+    /// function must release them. These used to be taken as `*const RocStr` and
+    /// never freed, which leaked every string the app passed to an effect.
+    /// `rocFxWsSend` takes its message by value now, and dropping it decrements
+    /// the refcount; an unknown handle keeps the call off the host APIs, which
+    /// are stubbed outside wasm.
+    #[test]
+    fn test_hosted_argument_is_released() {
+        let text = "a websocket message long enough to live on the heap";
+        let msg = crate::roc_std::RocStr::from_str(text);
+        let alloc_ptr = msg.words()[0];
+        unsafe {
+            let refcount = (alloc_ptr as *const isize).sub(1);
+            assert_eq!(*refcount, 1, "a fresh string owns one reference");
+            let _ = crate::rocFxWsSend(9999, msg);
+            assert_eq!(
+                *refcount, 0,
+                "the hosted function released the argument it owned"
+            );
         }
     }
 
