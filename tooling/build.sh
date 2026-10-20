@@ -20,7 +20,7 @@ mkdir -p "$DIST_DIR"
 # yields components that build fine and then trap at runtime (a `Str` dropped
 # through the wrong deallocator) instead of failing here. Refuse to build with
 # anything else; set ROC_ALLOW_VERSION_MISMATCH=1 to override.
-ROC_TAG="${ROC_TAG:-nightly-2026-09-19-d025939}"
+ROC_TAG="${ROC_TAG:-nightly-2026-10-19-601b54c}"
 
 check_roc_version() {
     local version

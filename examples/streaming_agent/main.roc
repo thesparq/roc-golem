@@ -1,7 +1,7 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
-import pf.Golem exposing [logInfo!, websocketConnect!, websocketSend!, websocketReceive!, websocketClose!]
+import pf.Golem exposing [logInfo!, websocketClose!, websocketConnect!, websocketReceive!, websocketSend!]
 
 # Agent State
 State :: {
@@ -38,7 +38,7 @@ agent = defineAgent({
 							state,
 							replies: ["Connect failed: ${err}"],
 						}
-					}
+				}
 
 			"receive" =>
 				if state.connected {
@@ -54,7 +54,7 @@ agent = defineAgent({
 								state,
 								replies: ["Receive failed: ${err}"],
 							}
-						}
+					}
 				} else {
 					{
 						state,
@@ -76,7 +76,7 @@ agent = defineAgent({
 								state,
 								replies: ["Close failed: ${err}"],
 							}
-						}
+					}
 				} else {
 					{
 						state,
@@ -85,7 +85,7 @@ agent = defineAgent({
 				}
 
 			"status" => {
-				statusStr = if state.connected "connected" else "disconnected"
+				statusStr = if (state.connected) "connected" else "disconnected"
 				{
 					state,
 					replies: ["WebSocket is ${statusStr}. Sent ${U64.to_str(state.sent)}, Received ${U64.to_str(state.received)}"],
@@ -106,14 +106,14 @@ agent = defineAgent({
 								state,
 								replies: ["Send failed: ${err}"],
 							}
-						}
+					}
 				} else {
 					{
 						state,
 						replies: ["Not connected. Send 'connect' first."],
 					}
 				}
-			},
+		},
 
 	handleToolCall!: |state, toolCall|
 		match toolCall.name {
@@ -136,7 +136,7 @@ agent = defineAgent({
 						output: "{\"error\": \"Unknown tool ${toolCall.name}\"}",
 					},
 				}
-			},
+		},
 
 	metadata: {
 		name: "streaming-agent",
@@ -164,7 +164,7 @@ agent = defineAgent({
 	},
 
 	serializeState: |state| {
-		connStr = if state.connected "true" else "false"
+		connStr = if (state.connected) "true" else "false"
 		"{\"connected\":${connStr},\"handle\":${U32.to_str(state.handle)},\"sent\":${U64.to_str(state.sent)},\"received\":${U64.to_str(state.received)}}"
 	},
 

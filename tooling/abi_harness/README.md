@@ -58,7 +58,7 @@ effects pass every check, including the effects agent's HTTP and RPC calls.
 
 Toolchain notes found while porting to 1.6:
 
-- **Build with the pinned Roc nightly** (`nightly-2026-09-19-d025939`). A newer
+- **Build with the pinned Roc nightly** (`nightly-2026-10-19-601b54c`). A newer
   one produced a counter component whose second `handle-message` trapped in
   `RocStr::drop` → `__rust_dealloc` → `core::panicking::panic` — the hand-written
   `Str` layout/allocator contract in `host/src/roc_std.rs` tracks that

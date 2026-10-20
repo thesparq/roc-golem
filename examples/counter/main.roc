@@ -42,7 +42,7 @@ agent = defineAgent({
 							state,
 							replies: ["Config error: ${err}"],
 						}
-					}
+				}
 
 			"get" =>
 				{
@@ -55,7 +55,7 @@ agent = defineAgent({
 					state,
 					replies: ["Unknown command '${message}'. Available: increment, decrement, get"],
 				}
-			},
+		},
 
 	handleToolCall!: |state, toolCall|
 		match toolCall.name {
@@ -78,7 +78,7 @@ agent = defineAgent({
 						output: "Unknown tool ${toolCall.name}",
 					},
 				}
-			},
+		},
 
 	metadata: {
 		name: "counter-agent",

@@ -1,7 +1,7 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
-import pf.Golem exposing [http!, rpc!, logInfo!]
+import pf.Golem exposing [http!, logInfo!, rpc!]
 
 # Agent State
 #
@@ -19,7 +19,7 @@ agent : Agent(State)
 agent = defineAgent({
 	init!: |config|
 		{
-			baseUrl: if config_starts_with_http(config) config else "http://127.0.0.1:18080/",
+			baseUrl: if (config_starts_with_http(config)) config else "http://127.0.0.1:18080/",
 			lastStatus: "none",
 			lastBody: "",
 			lastRpc: "none",
@@ -48,7 +48,7 @@ agent = defineAgent({
 							state,
 							replies: ["HTTP failed: ${err}"],
 						}
-					}
+				}
 			}
 
 			"rpc" =>
@@ -69,14 +69,14 @@ agent = defineAgent({
 							state,
 							replies: ["RPC failed: ${err}"],
 						}
-					}
+				}
 
 			_ =>
 				{
 					state,
 					replies: ["Commands: fetch, rpc"],
 				}
-			},
+		},
 
 	handleToolCall!: |state, toolCall|
 		{
@@ -149,7 +149,7 @@ extract_json_str = |json, field|
 								Ok({ before, after: _ }) => Ok(before)
 								Err(_) => Ok(after)
 							}
-						}
+					}
 				Err(_) => Err(NotFound)
 			}
-		}
+	}

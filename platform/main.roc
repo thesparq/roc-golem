@@ -8,24 +8,24 @@ platform "golem"
 	]
 	packages {}
 	provides {
-		"main_init_for_host_1_exposed_generic": main_init_for_host!,
 		"main_handle_message_for_host_1_exposed_generic": main_handle_message_for_host!,
 		"main_handle_tool_call_for_host_1_exposed_generic": main_handle_tool_call_for_host!,
+		"main_init_for_host_1_exposed_generic": main_init_for_host!,
 		"main_metadata_for_host_1_exposed_generic": main_metadata_for_host,
 	}
 	hosted {
-		"rocFxLog": Host.rocFxLog!,
+		"rocFxGetConfig": Host.rocFxGetConfig!,
 		"rocFxGetWorkerId": Host.rocFxGetWorkerId!,
+		"rocFxHttpRequest": Host.rocFxHttpRequest!,
+		"rocFxLog": Host.rocFxLog!,
+		"rocFxNowMillis": Host.rocFxNowMillis!,
 		"rocFxRpcInvoke": Host.rocFxRpcInvoke!,
 		"rocFxSetPersistence": Host.rocFxSetPersistence!,
-		"rocFxHttpRequest": Host.rocFxHttpRequest!,
-		"rocFxWsConnect": Host.rocFxWsConnect!,
-		"rocFxWsSend": Host.rocFxWsSend!,
-		"rocFxWsReceive": Host.rocFxWsReceive!,
-		"rocFxWsClose": Host.rocFxWsClose!,
 		"rocFxSleepMillis": Host.rocFxSleepMillis!,
-		"rocFxNowMillis": Host.rocFxNowMillis!,
-		"rocFxGetConfig": Host.rocFxGetConfig!,
+		"rocFxWsClose": Host.rocFxWsClose!,
+		"rocFxWsConnect": Host.rocFxWsConnect!,
+		"rocFxWsReceive": Host.rocFxWsReceive!,
+		"rocFxWsSend": Host.rocFxWsSend!,
 	}
 	targets: {
 		wasm32: {
@@ -41,9 +41,9 @@ import Types exposing [
 	FileResponseHeader,
 	HttpMountOption,
 	OpenApiProvider,
+	ToolCall,
 	ToolDefinition,
 	ToolParameter,
-	ToolCall,
 ]
 import Golem
 import Host

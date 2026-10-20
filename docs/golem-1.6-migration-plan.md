@@ -91,7 +91,7 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
   layout, a seamless slice's release and constant strings. The counter now also
   passes the harness built with the newer nightly.
 - **Toolchain pin**: `tooling/build.sh` still refuses a `roc` other than
-  `nightly-2026-09-19-d025939` (`ROC_ALLOW_VERSION_MISMATCH=1` overrides). The
+  `nightly-2026-10-19-601b54c` (`ROC_ALLOW_VERSION_MISMATCH=1` overrides). The
   allocator contract is compiler-independent now, but the emitted *layout facts*
   (sizes, offsets, `Try` discriminants) are still verified against that one
   nightly by `tooling/glue/abi_facts.roc`.

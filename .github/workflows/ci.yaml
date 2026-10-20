@@ -38,7 +38,7 @@ jobs:
           # Pinned on purpose. The Rust host in `host/src/roc_std.rs` implements
           # Roc's memory/ABI contract by hand, so a new nightly can change it
           # under us; the ABI smoke test below is what should gate a bump.
-          ROC_TAG: nightly-2026-09-19-d025939
+          ROC_TAG: nightly-2026-10-19-601b54c
         run: |
           ROC_VERSION="${ROC_TAG#nightly-}"
           mkdir -p "$HOME/roc"
@@ -159,7 +159,7 @@ jobs:
       - name: Install Roc Nightly
         env:
           # Keep in step with the job above and .github/workflows/release.yaml.
-          ROC_TAG: nightly-2026-09-19-d025939
+          ROC_TAG: nightly-2026-10-19-601b54c
         run: |
           ROC_VERSION="${ROC_TAG#nightly-}"
           mkdir -p "$HOME/roc"

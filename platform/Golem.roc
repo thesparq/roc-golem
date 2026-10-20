@@ -1,5 +1,5 @@
 # This module is imported by applications (`import pf.Golem`), so it still uses
-# the legacy module-header syntax: in the pinned nightly (2026-09-19-d025939)
+# the legacy module-header syntax: in the pinned nightly (2026-10-19-601b54c)
 # the new type-module format crashes the compiler when an application imports
 # the module's type through the platform (`exposes`). The internal modules
 # (Types, Effect) have been migrated; revisit Golem once the upstream compiler
