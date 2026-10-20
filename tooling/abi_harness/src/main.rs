@@ -37,7 +37,10 @@ bindgen!({
 
 use exports::golem::agent::guest::Principal;
 use golem::agent::common::PathSegment;
-use golem::core::types::{SchemaValueNode, SchemaValueTree};
+use golem::core::types::{
+    MetadataEnvelope, NamedFieldType, SchemaGraph, SchemaTypeBody, SchemaTypeNode,
+    SchemaValueNode, SchemaValueTree, TypedSchemaValue,
+};
 
 /// Renders a mount's path prefix the way an app author writes it: literal
 /// segments verbatim, captures in braces.
@@ -132,6 +135,10 @@ struct Ctx {
     response_cursor: usize,
     /// Request lines the HTTP stubs saw, for `--expect-http`.
     http_request_lines: Vec<String>,
+    /// The `tool-output-writer`s the harness attached to a
+    /// `golem:tool/guest.invoke` call, by resource rep: what the component
+    /// wrote through each, and how it closed it.
+    tool_outputs: Vec<ToolOutputCapture>,
 }
 
 /// An outgoing request as recorded by the `wasi:http` stubs.
@@ -405,43 +412,76 @@ impl golem::tool::common::Host for Ctx {}
 
 impl golem::tool::streams::Host for Ctx {}
 
+/// What the component wrote through one `tool-output-writer` the harness
+/// attached to a `golem:tool/guest.invoke` call, and how it closed it. The WIT
+/// contract is that the guest writes while the call runs and then finishes (or
+/// fails) the endpoint, so a writer left open shows up here as `abandoned`.
+#[derive(Default)]
+struct ToolOutputCapture {
+    bytes: Vec<u8>,
+    terminal: String,
+}
+
 impl golem::tool::streams::HostToolOutputWriter for Ctx {
     fn drop(
         &mut self,
-        _rep: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
+        rep: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
     ) -> wasmtime::Result<()> {
+        // Dropping an open writer selects `abandoned` in the real host too.
+        if let Some(capture) = self.tool_outputs.get_mut(rep.rep() as usize) {
+            if capture.terminal.is_empty() {
+                capture.terminal = String::from("abandoned");
+            }
+        }
         Ok(())
     }
 }
 
-/// The writer's operations are async imports; the stub accepts everything.
+/// The writer's operations are async imports; the stub records the bytes and
+/// the terminal the component selected, so `--expect-tool-stdout` /
+/// `--expect-tool-stderr` can assert what the app's text became.
 impl golem::tool::streams::HostToolOutputWriterWithStore<Ctx> for Ctx {
     fn write(
-        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
-        _self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
-        _bytes: Vec<u8>,
+        accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
+        bytes: Vec<u8>,
     ) -> impl std::future::Future<
         Output = Result<(), golem::tool::streams::StreamWriteError>,
     > + Send {
+        accessor.with(|mut access| {
+            if let Some(capture) = access.get().tool_outputs.get_mut(self_.rep() as usize) {
+                capture.bytes.extend_from_slice(&bytes);
+            }
+        });
         async move { Ok(()) }
     }
 
     fn finish(
-        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
-        _self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
+        accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
     ) -> impl std::future::Future<
         Output = Result<(), golem::tool::streams::StreamWriteError>,
     > + Send {
+        accessor.with(|mut access| {
+            if let Some(capture) = access.get().tool_outputs.get_mut(self_.rep() as usize) {
+                capture.terminal = String::from("finished");
+            }
+        });
         async move { Ok(()) }
     }
 
     fn fail(
-        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
-        _self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
-        _reason: golem::tool::streams::ByteStreamFailure,
+        accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        self_: wasmtime::component::Resource<golem::tool::streams::ToolOutputWriter>,
+        reason: golem::tool::streams::ByteStreamFailure,
     ) -> impl std::future::Future<
         Output = Result<(), golem::tool::streams::StreamWriteError>,
     > + Send {
+        accessor.with(|mut access| {
+            if let Some(capture) = access.get().tool_outputs.get_mut(self_.rep() as usize) {
+                capture.terminal = format!("failed({reason:?})");
+            }
+        });
         async move { Ok(()) }
     }
 }
@@ -2692,6 +2732,16 @@ struct Expectation {
     /// should contain.
     tool: Option<String>,
     tool_reply: Option<String>,
+    /// A tool to invoke through `golem:tool/guest.invoke` itself — the surface
+    /// `golem tool invoke` uses — with the stdin text below and both output
+    /// writers attached.
+    tool_stream: Option<String>,
+    /// The text the component's stdin reader is handed (empty when absent).
+    tool_stdin: Option<String>,
+    /// Substrings expected in what the component wrote through the stdout /
+    /// stderr writers.
+    expect_tool_stdout: Option<String>,
+    expect_tool_stderr: Option<String>,
     /// The mount path the agent type should publish, rendered as a URL path
     /// (`site/{id}`): literal segments verbatim, captures in braces.
     mount: Option<String>,
@@ -2711,6 +2761,8 @@ fn usage() -> String {
          [--expect-blob SUBSTRING] [--expect-fs SUBSTRING] [--expect-db SUBSTRING] \
          [--expect-trap SUBSTRING] \
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
+         [--tool-stream NAME] [--tool-stdin TEXT] \
+         [--expect-tool-stdout SUBSTRING] [--expect-tool-stderr SUBSTRING] \
          [--expect-kind regular|http-router]",
     )
 }
@@ -2740,6 +2792,10 @@ fn parse_args() -> Result<Expectation> {
         expect_trap: None,
         tool: None,
         tool_reply: None,
+        tool_stream: None,
+        tool_stdin: None,
+        expect_tool_stdout: None,
+        expect_tool_stderr: None,
         mount: None,
         kind: None,
     };
@@ -2769,6 +2825,10 @@ fn parse_args() -> Result<Expectation> {
             "--expect-trap" => expectation.expect_trap = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
+            "--tool-stream" => expectation.tool_stream = args.next(),
+            "--tool-stdin" => expectation.tool_stdin = args.next(),
+            "--expect-tool-stdout" => expectation.expect_tool_stdout = args.next(),
+            "--expect-tool-stderr" => expectation.expect_tool_stderr = args.next(),
             "--expect-mount" => expectation.mount = args.next(),
             "--expect-kind" => expectation.kind = args.next(),
             "-h" | "--help" => bail!("{}", usage()),
@@ -2812,6 +2872,44 @@ fn text_of(value: &SchemaValueTree) -> Option<String> {
             }
         }
         _ => None,
+    }
+}
+
+fn empty_envelope() -> MetadataEnvelope {
+    MetadataEnvelope {
+        doc: None,
+        aliases: Vec::new(),
+        examples: Vec::new(),
+        deprecated: None,
+        role: None,
+    }
+}
+
+/// A tool call's input, shaped the way the runtime builds it for this platform:
+/// every command body declares one positional named `input` of the string type,
+/// so the graph is `record { input: string }` and the value is the one-field
+/// record `text_value` builds.
+fn tool_input_value(s: &str) -> TypedSchemaValue {
+    TypedSchemaValue {
+        graph: SchemaGraph {
+            type_nodes: vec![
+                SchemaTypeNode {
+                    body: SchemaTypeBody::RecordType(vec![NamedFieldType {
+                        name: String::from("input"),
+                        body: 1,
+                        metadata: empty_envelope(),
+                    }]),
+                    metadata: empty_envelope(),
+                },
+                SchemaTypeNode {
+                    body: SchemaTypeBody::StringType,
+                    metadata: empty_envelope(),
+                },
+            ],
+            defs: Vec::new(),
+            root: 0,
+        },
+        value: text_value(s),
     }
 }
 
@@ -2886,6 +2984,7 @@ async fn run() -> Result<ExitCode> {
             response_body: Vec::new(),
             response_cursor: 0,
             http_request_lines: Vec::new(),
+            tool_outputs: Vec::new(),
         },
     );
     let bindings = HarnessWorld::instantiate_async(&mut store, &component, &linker)
@@ -3190,6 +3289,102 @@ async fn run() -> Result<ExitCode> {
                 failures.push(format!("tool {} could not run", tool));
             }
         }
+        }
+    }
+
+    // 5b. The tool export itself (`golem:tool/guest.invoke`, what
+    //     `golem tool invoke` drives): the stubs supply the stdin bytes and
+    //     attach both output writers, so a tool that reads stdin and answers on
+    //     stdout/stderr is checked end to end, including that the writers are
+    //     finished rather than abandoned.
+    if expectation.expect_trap.is_none() {
+        if let Some(tool) = &expectation.tool_stream {
+            let stdin_text = expectation.tool_stdin.clone().unwrap_or_default();
+            let stdout_rep = store.data().tool_outputs.len() as u32;
+            store.data_mut().tool_outputs.push(ToolOutputCapture::default());
+            let stderr_rep = stdout_rep + 1;
+            store.data_mut().tool_outputs.push(ToolOutputCapture::default());
+
+            // The whole stdin is available immediately, so the producer hands
+            // the component one chunk and closes the stream.
+            let stdin = StreamReader::new(&mut store, vec![Ok(stdin_text.clone().into_bytes())])?;
+            // `Resource::new_own` is how a host passes an owned resource to a
+            // guest; the rep is this harness's own index into `tool_outputs`.
+            let stdout = Resource::new_own(stdout_rep);
+            let stderr = Resource::new_own(stderr_rep);
+
+            let tool_guest = bindings.golem_tool_guest();
+            let tool_result = store
+                .run_concurrent(async |accessor| {
+                    tool_guest
+                        .call_invoke(
+                            accessor,
+                            tool.clone(),
+                            Vec::new(),
+                            tool_input_value("{}"),
+                            Some(stdin),
+                            Some(stdout),
+                            Some(stderr),
+                            Principal::Anonymous,
+                        )
+                        .await
+                })
+                .await;
+            match tool_result {
+                Ok(Ok(Ok(invocation))) => {
+                    let raw = invocation
+                        .result
+                        .as_ref()
+                        .and_then(|value| text_of(&value.value))
+                        .unwrap_or_default();
+                    println!("[tool-stream {tool}] = {:?}", raw);
+                    // The runtime rejects a guest that answers with attachment
+                    // streams instead of using the writers it was given.
+                    if invocation.stdout.is_some() || invocation.stderr.is_some() {
+                        failures.push(format!(
+                            "tool {tool} returned attachment streams instead of using the writers"
+                        ));
+                    }
+                }
+                Ok(Ok(Err(err))) => {
+                    println!("[tool-stream {}] = tool error {:?}", tool, err);
+                    failures.push(format!("tool {tool} returned an error: {:?}", err));
+                }
+                Ok(Err(err)) => {
+                    println!("[tool-stream {}] = trap\n{}", tool, err);
+                    failures.push(format!("tool {tool} trapped"));
+                }
+                Err(err) => {
+                    println!("[tool-stream {tool}] = executor error\n{err:?}");
+                    failures.push(format!("tool {tool} could not run"));
+                }
+            }
+
+            for (channel, index, expected) in [
+                ("stdout", stdout_rep as usize, &expectation.expect_tool_stdout),
+                ("stderr", stderr_rep as usize, &expectation.expect_tool_stderr),
+            ] {
+                let capture = &store.data().tool_outputs[index];
+                let text = String::from_utf8_lossy(&capture.bytes).to_string();
+                println!(
+                    "[tool-stream {tool}] {channel} = {:?} ({})",
+                    text, capture.terminal
+                );
+                if capture.terminal != "finished" {
+                    failures.push(format!(
+                        "tool {tool} left its {channel} writer {}",
+                        capture.terminal
+                    ));
+                }
+                if let Some(expected) = expected {
+                    if !text.contains(expected.as_str()) {
+                        failures.push(format!(
+                            "tool {tool}: {channel} {:?} does not contain {:?}",
+                            text, expected
+                        ));
+                    }
+                }
+            }
         }
     }
 

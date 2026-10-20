@@ -73,6 +73,8 @@ agent = defineAgent({
 						id: toolCall.id,
 						success: True,
 						output: "note set",
+						stdout: "",
+						stderr: "",
 					},
 				}
 
@@ -83,6 +85,8 @@ agent = defineAgent({
 						id: toolCall.id,
 						success: True,
 						output: "{\"count\": ${I64.to_str(state.count)}}",
+						stdout: "",
+						stderr: "",
 					},
 				}
 
@@ -93,6 +97,8 @@ agent = defineAgent({
 						id: toolCall.id,
 						success: False,
 						output: "Unknown tool ${toolCall.name}",
+						stdout: "",
+						stderr: "",
 					},
 				}
 		},

@@ -20,6 +20,12 @@ Flags:
   which is how state persistence and multi-step flows are checked.
 - `--tool NAME` / `--tool-reply SUBSTRING` invoke a registered tool (which the
   host routes through the app's `handleToolCall!`) and check its result.
+- `--tool-stream NAME` / `--tool-stdin TEXT` invoke `golem:tool/guest.invoke`
+  itself — the export `golem tool invoke` drives — with the stdin text supplied
+  as one stream chunk and both output writers attached, and
+  `--expect-tool-stdout SUBSTRING` / `--expect-tool-stderr SUBSTRING` check what
+  the component wrote through them. The writers record their terminal as well,
+  so a component that leaves one open fails the check (`abandoned`).
 - `--config` is the agent config handed to `initialize` (the effects example
   takes its base URL from it).
 - `--expect-log` matches a line the agent emitted through `logInfo!` etc.,
@@ -72,6 +78,10 @@ It exits non-zero when any of these fail:
 - an expected log line, WebSocket send, HTTP request, RPC call, quota call,
   retry-policy call, `golem:api/host` call, key-value call, blobstore call,
   filesystem call or database call was never recorded,
+- a `--tool-stream` call failed, returned an error or trap, answered with
+  attachment streams instead of using the writers, left a writer unfinished, or
+  wrote something the `--expect-tool-stdout` / `--expect-tool-stderr` substring
+  is not in,
 - a message expected to trap (`--expect-trap`) returned a reply or failed some
   other way instead.
 
@@ -81,7 +91,9 @@ quota and retry-policy calls, the execution-control calls, the key-value and
 blobstore round trips, which run against the stubs' own stores, the agent
 filesystem round trip, which runs against the stubs' own directory tree, and the
 database round trip, which runs against the stubs' own relational store (a
-rolled-back and a committed transaction included). The
+rolled-back and a committed transaction included). The ai_tool checks also drive
+`golem:tool/guest.invoke` with stdin and both output writers (`--tool-stream`),
+which is the only call whose parameters are component-model streams. The
 streaming agent passes here too, `websocket/client.receive` included. The effects
 agent cannot even be *instantiated* by the harness: its p3 `wasi:http` import is
 not in the harness world (see the toolchain notes below), so the e2e job stays its
@@ -132,7 +144,11 @@ filesystem `wasi:filesystem@0.2.6` (an in-memory directory tree; the preopens
 answer the sandbox root under both `/` and `.` the way Golem does), and the
 three `golem:rdbms` database interfaces (a tiny relational store; see
 `src/main.rs` for the statement shapes it understands). Those
-interfaces are synchronous, which is why they can be driven here at all.
+interfaces are synchronous, which is why they can be driven here at all. The
+world also *exports* `golem:tool/guest@0.1.0` next to `golem:agent/guest@2.0.0`,
+so `--tool-stream` can call the tool export; its `tool-output-writer` stubs
+record the bytes and the terminal the component selected (a writer dropped open
+reads `abandoned`, the way the real host treats it).
 
 Two functions of the blobstore move a component-model stream — the outgoing
 value's `write-body` and the container's `list-objects` — and attaching a host

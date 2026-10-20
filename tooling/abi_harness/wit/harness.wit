@@ -53,4 +53,9 @@ world harness-world {
     import wasi:logging/logging;
 
     export golem:agent/guest@2.0.0;
+    // The tool surface every component built from this platform exports too:
+    // `golem:tool/guest.invoke` is the one call whose stdin/stdout/stderr are
+    // component-model streams, so the harness drives it directly (see
+    // `--tool-stream` in README.md).
+    export golem:tool/guest@0.1.0;
 }

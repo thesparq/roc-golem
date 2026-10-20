@@ -19,7 +19,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | key-value + blobstore | `wasi:keyvalue/eventual`, `wasi:blobstore` | `kvGet!` / `kvSet!` / `kvDelete!` / `kvExists!` and `blobCreateContainer!` / `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!`; both stores are environment-scoped, and values travel as text |
 | databases | `golem:rdbms/{postgres,mysql,ignite2}` | `dbOpen!` / `dbOpenMysql!` / `dbOpenIgnite!` / `dbQuery!` / `dbExecute!` / `dbBegin!` / `dbCommit!` / `dbRollback!`; connections and transactions are `U32` handles, statements' values travel as the JSON `db-value` encoding |
 | oplog + execution control | `golem:api/host` | `trap!`, `idempotencyKey!`, `fork!`, `oplogCommit!`, `resolveComponentId!` / `resolveAgentId!` — the part of the 1.5 surface 1.6 kept (see item 10) |
-| tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance) |
+| tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance); stdin/stdout/stderr as optional streams, with the app's output buffered (see item 11) |
 | read-only methods | agent metadata | declared for tools; until-write cache |
 | HTTP mounts | agent metadata | filesystem bindings (regular agents), static bindings + OpenAPI provider (routers) |
 | the agent's own filesystem | `wasi:filesystem@0.2.6` (p2) | `readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` / `deleteFile!` / `makeDir!` / `listDir!`; per-agent and durable, provisioned from the manifest's `files:` list |
@@ -260,9 +260,68 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
       interface but stay operator-facing (the CLI does them; a trapped agent's
       failed invocation is reverted with `golem agent revert`), so the platform
       does not expose them.
-11. **Tool middleware** (`golem:tool/middleware`) and **tool streams**
-    (`golem:tool/streams`, stdin/stdout/stderr for CLI-shaped tools). Cost:
-    medium.
+11. **Tool streams** (`golem:tool/streams`, stdin/stdout/stderr for
+    CLI-shaped tools) — **done**; **tool middleware**
+    (`golem:tool/middleware`) — **not attempted, on purpose** (see below).
+
+    The streams half: every command `build_tools` emits now declares stdin,
+    stdout and stderr as `stream-spec`s with `required: false`, which is what
+    makes the runtime attach one — it refuses an attachment a command does not
+    declare, and requires one it declares `required`. `golem:tool/guest.invoke`
+    drains the stdin stream into text *before* calling the app (`collect`, the
+    export is async, so the await is direct; a failed item is reported as an
+    invalid input rather than handed to the app as a truncated pipe), and writes
+    the app's answer through the writers afterwards. The app-facing records
+    carry the text: `ToolCall.stdin` in, `ToolResult.stdout` / `.stderr` out.
+    Four details worth knowing:
+
+    - **The app's output is buffered, not streamed.** The writers are written
+      once, after `handleToolCall!` returns; true incremental output needs an
+      output channel the app can write to while the call is in flight, which the
+      `Agent` interface cannot express yet. That is the follow-up this item
+      leaves open (see the README).
+    - **`InvocationResult.stdout`/`stderr` stay absent** and the bytes go
+      through the `tool-output-writer`s only, because the executor rejects a
+      guest that returns attachment streams instead of using them
+      (`materialize_guest_tool_response` in `golem-worker-executor`,
+      `durable_host/tool/mod.rs`, tag `v1.6.0`). Each writer is `finish`ed even
+      when the app wrote nothing, so a reader is never left on a writer the
+      guest abandoned; a `ConsumerCancelled` write failure is not an invocation
+      failure (the reader went away), and any other write/terminal failure is
+      logged rather than failing a call whose result is still valid.
+    - **It is an API break**, handled explicitly: `ToolResult` gained `stdout`
+      and `stderr`, so every existing `handleToolCall!` that constructs one needs
+      the two fields (`""` is the old behaviour). `ToolCall` gaining `stdin`
+      breaks nothing — apps read it or ignore it. The README carries the
+      migration note. There is no cheaper way to do it: the app has to be able
+      to *answer* with output text, and a record type that does not name the
+      fields cannot carry it.
+    - **Stdin is read verbatim up to the next double quote**, because it travels
+      through the same minimal JSON field reader `arguments` uses; documented as
+      a caveat rather than fixed here.
+
+    Covered by the harness (the `golem:tool/streams` stubs now supply stdin bytes
+    and record what the component writes through both writers, with the writer's
+    terminal — a writer left open reads `abandoned`; `--tool-stream` on the
+    ai_tool example drives it, and CI/release run it) and by the e2e (piping
+    `piped stdin bytes` through `golem tool invoke --stdin - --stdout --output …
+    --stderr --stderr-output …` and checking both files).
+
+    The middleware half is **not** attempted, and cannot be reached from this
+    platform's shape: middleware is a *separate component shape*. The executor
+    binds the world `golem:tool/tool-middleware-runtime` (not `tool-guest`) for
+    it, and the registry recognises a middleware component by the interface it
+    exports — `tool-middleware-guest`
+    (`discover-tool-middlewares`, `get-tool-middleware`,
+    `invoke-tool-middleware`), which an agent component does not export. Adding
+    it means a second export on every component built from this platform, plus
+    the surface that export needs: the runtime-owned `underlying-tool`
+    capability (an async `invoke` returning a result resource plus two output
+    streams, i.e. output that *is* incremental — the very thing the buffered
+    writer above cannot express), `typed-schema-value` in and out, and the
+    `tool-middleware` metadata (`parameter-schema`, monomorphic scope with a
+    presented and an expected tool). Cost: large, and it buys nothing for an app
+    that just wants its own tools to read stdin and write stdout.
 12. **RPC across components**: `rpc!` resolves the target through the calling
     component's own agent types, so cross-component calls fail with
     `Agent type not found` (documented in the README). Cost: unknown — needs
@@ -282,4 +341,5 @@ in the ABI harness (recording stubs) or the e2e (real server) — the suites and
 the patterns for both already exist.
 
 Items 1 and 2 are the two that are *not* mechanical: they need the stream/export
-machinery discussed above.
+machinery discussed above. Item 11's middleware half is in the same class — it
+needs a second export and a component shape of its own (see item 11).

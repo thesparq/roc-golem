@@ -3073,9 +3073,12 @@ impl Guest for GolemAgentHost {
                 }
             }
         } else {
-            // Tool invocation through the agent's own method surface.
-            match run_tool_call(&method_name, &input_str) {
-                Ok(output) => Ok(Some(single_string_value_tree(&output))),
+            // Tool invocation through the agent's own method surface: no
+            // streams are attached here, so the app sees empty stdin and its
+            // stdout/stderr text has nowhere to go (only the result payload
+            // travels).
+            match run_tool_call(&method_name, &input_str, "") {
+                Ok(outcome) => Ok(Some(single_string_value_tree(&outcome.output))),
                 Err(err) => Err(err),
             }
         }
@@ -3098,15 +3101,28 @@ impl Guest for GolemAgentHost {
 
 export!(GolemAgentHost);
 
+/// One tool invocation's answer from the app: the result payload, plus the
+/// text the app wrote to the tool's stdout/stderr (`""` when it wrote
+/// nothing). The `golem:tool/guest` surface sends the two through the writers
+/// the runtime attached; the agent method surface has no writers, so it only
+/// reports the payload.
+struct ToolOutcome {
+    output: String,
+    stdout: String,
+    stderr: String,
+}
+
 /// Runs the app's `handleToolCall!` hook for one tool invocation and returns
-/// the tool's output string, updating the persisted state as a side effect.
+/// its answer, updating the persisted state as a side effect. `stdin` is the
+/// text the caller piped into the tool (`""` for a call that carried none).
 /// Shared by the agent method surface and the `golem:tool/guest` surface.
-fn run_tool_call(tool_name: &str, args: &str) -> Result<String, AgentError> {
+fn run_tool_call(tool_name: &str, args: &str, stdin: &str) -> Result<ToolOutcome, AgentError> {
     let state_str = get_current_state();
     let tool_call_json = serde_json::json!({
         "id": "call-1",
         "name": tool_name,
         "arguments": args,
+        "stdin": stdin,
     })
     .to_string();
 
@@ -3126,22 +3142,105 @@ fn run_tool_call(tool_name: &str, args: &str) -> Result<String, AgentError> {
                     if let Some(next_state) = parsed.get("state") {
                         set_current_state(next_state.to_string());
                     }
-                    if let Some(out_val) = parsed.get("output") {
-                        if let Some(s) = out_val.as_str() {
-                            Ok(s.into())
-                        } else {
-                            Ok(out_val.to_string())
-                        }
-                    } else {
-                        Ok(String::from("{}"))
-                    }
+                    Ok(ToolOutcome {
+                        output: json_text_field(&parsed, "output")
+                            .unwrap_or_else(|| String::from("{}")),
+                        stdout: json_text_field(&parsed, "stdout").unwrap_or_default(),
+                        stderr: json_text_field(&parsed, "stderr").unwrap_or_default(),
+                    })
                 } else {
-                    Ok(payload_str.into())
+                    Ok(ToolOutcome {
+                        output: payload_str.into(),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    })
                 }
             }
             Err(err) => Err(AgentError::InvalidMethod(err.to_string())),
         }
     }
+}
+
+/// Reads a text field out of a JSON payload the app produced. `None` when the
+/// field is absent, which is what an app built before tool streams (or one
+/// that only ever answers with a result payload) produces.
+fn json_text_field(value: &serde_json::Value, field: &str) -> Option<String> {
+    match value.get(field) {
+        Some(serde_json::Value::String(text)) => Some(text.clone()),
+        Some(other) => Some(other.to_string()),
+        None => None,
+    }
+}
+
+/// Folds the items drained from a caller's stdin stream into text: successful
+/// chunks concatenate, and a failed item is reported instead of handing the
+/// app half of its input (clean end-of-input is stream closure, not a failed
+/// item).
+fn tool_stdin_text(
+    items: Vec<Result<Vec<u8>, golem::tool::streams::ByteStreamFailure>>,
+) -> Result<String, String> {
+    let mut text = String::new();
+    for item in items {
+        match item {
+            Ok(chunk) => text.push_str(&String::from_utf8_lossy(&chunk)),
+            Err(failure) => return Err(format!("the tool's stdin stream failed: {failure:?}")),
+        }
+    }
+    Ok(text)
+}
+
+/// Drains the stdin stream the runtime attached to a tool invocation. The
+/// export is async, so the reader is awaited directly (the platform's
+/// synchronous effects drive their host calls with `wit_bindgen::block_on`
+/// instead).
+async fn drain_tool_stdin(
+    reader: wit_bindgen::StreamReader<Result<Vec<u8>, golem::tool::streams::ByteStreamFailure>>,
+) -> Result<String, String> {
+    tool_stdin_text(reader.collect().await)
+}
+
+/// Writes one channel of the app's buffered output through the writer the
+/// runtime attached, then finishes it — finishing is what turns the last write
+/// into a clean end-of-stream for the reader, and an empty text still finishes
+/// so a reader is never left waiting on a writer the guest abandoned.
+///
+/// Output is written *after* the app returns: the app answers with a whole
+/// string, so there is nothing to stream while it runs (see the README).
+async fn write_tool_output(
+    writer: Option<golem::tool::streams::ToolOutputWriter>,
+    text: &str,
+    channel: &str,
+) {
+    let Some(writer) = writer else { return };
+    if !text.is_empty() {
+        match writer.write(text.as_bytes().to_vec()).await {
+            Ok(()) => {}
+            Err(err) => {
+                note_tool_stream_stop(channel, err);
+                return;
+            }
+        }
+    }
+    if let Err(err) = writer.finish().await {
+        note_tool_stream_stop(channel, err);
+    }
+}
+
+/// A writer that closed because the consumer cancelled is not a failure — the
+/// reader went away (a CLI that stopped reading, say), and the invocation's
+/// result still stands. Anything else is logged for the operator rather than
+/// failing a call whose answer is valid.
+fn note_tool_stream_stop(channel: &str, error: golem::tool::streams::StreamWriteError) {
+    use golem::tool::streams::{ByteStreamCloseCause, StreamWriteError};
+
+    if let StreamWriteError::Closed(ByteStreamCloseCause::ConsumerCancelled) = error {
+        return;
+    }
+    wasi::logging::logging::log(
+        wasi::logging::logging::Level::Warn,
+        "roc-agent",
+        &format!("could not write the tool's {channel}: {error:?}"),
+    );
 }
 
 /// The app's declared tools, exposed through `golem:tool/guest` so other agents
@@ -3170,11 +3269,11 @@ impl exports::golem::tool::guest::Guest for GolemAgentHost {
         tool_name: String,
         _command_path: Vec<String>,
         input: golem::core::types::TypedSchemaValue,
-        _stdin: Option<
+        stdin: Option<
             wit_bindgen::StreamReader<Result<Vec<u8>, golem::tool::streams::ByteStreamFailure>>,
         >,
-        _stdout: Option<golem::tool::streams::ToolOutputWriter>,
-        _stderr: Option<golem::tool::streams::ToolOutputWriter>,
+        stdout: Option<golem::tool::streams::ToolOutputWriter>,
+        stderr: Option<golem::tool::streams::ToolOutputWriter>,
         _principal: Principal,
     ) -> Result<golem::tool::common::InvocationResult, exports::golem::tool::guest::ToolError> {
         let args = extract_input_string(&input.value);
@@ -3187,15 +3286,32 @@ impl exports::golem::tool::guest::Guest for GolemAgentHost {
             .ok_or_else(|| {
                 exports::golem::tool::guest::ToolError::InvalidToolName(tool_name.clone())
             })?;
-        match run_tool_call(&app_name, &args) {
-            Ok(output) => Ok(golem::tool::common::InvocationResult {
-                result: Some(golem::core::types::TypedSchemaValue {
-                    graph: string_schema_graph(),
-                    value: single_string_value_tree(&output),
-                }),
-                stdout: None,
-                stderr: None,
-            }),
+        // stdin is drained before the app is called: the app reads it as one
+        // string, so a stream that is still being written to has nothing to
+        // hand it mid-call.
+        let stdin_text = match stdin {
+            Some(reader) => drain_tool_stdin(reader).await.map_err(
+                exports::golem::tool::guest::ToolError::InvalidInput,
+            )?,
+            None => String::new(),
+        };
+        match run_tool_call(&app_name, &args, &stdin_text) {
+            Ok(outcome) => {
+                // The app's answer is written after it returns, through the
+                // writers the runtime attached. `InvocationResult`'s own
+                // `stdout`/`stderr` stay absent: the runtime rejects a guest
+                // that returns attachment streams instead of using them.
+                write_tool_output(stdout, &outcome.stdout, "stdout").await;
+                write_tool_output(stderr, &outcome.stderr, "stderr").await;
+                Ok(golem::tool::common::InvocationResult {
+                    result: Some(golem::core::types::TypedSchemaValue {
+                        graph: string_schema_graph(),
+                        value: single_string_value_tree(&outcome.output),
+                    }),
+                    stdout: None,
+                    stderr: None,
+                })
+            }
             Err(err) => Err(exports::golem::tool::guest::ToolError::InvalidInput(format!(
                 "{err:?}"
             ))),
@@ -3219,6 +3335,12 @@ fn tool_command_name(name: &str) -> String {
 /// The app's tools as single-command tools with one optional string input and a
 /// string result — the shape the platform declares everywhere else. Each entry
 /// keeps the app's own tool name alongside the CLI-shaped tool.
+///
+/// Every command declares stdin, stdout and stderr as *optional* streams: the
+/// runtime refuses an attachment a command did not declare, and requires one it
+/// declared as `required`, so `required: false` is what makes
+/// `golem tool invoke --stdin … --stdout` work while a plain invocation
+/// attaches nothing.
 fn build_tools() -> Vec<(String, golem::tool::common::Tool)> {
     use golem::tool::common::{
         CommandBody, CommandNode, CommandTree, Doc, Formatter, Globals, Positional, Positionals,
@@ -3262,9 +3384,15 @@ fn build_tools() -> Vec<(String, golem::tool::common::Tool)> {
                     options: Vec::new(),
                     flags: Vec::new(),
                     constraints: Vec::new(),
-                    stdin: None,
-                    stdout: None,
-                    stderr: None,
+                    stdin: Some(tool_stream_spec(
+                        "Text the caller pipes in; the app reads it as `toolCall.stdin`.",
+                    )),
+                    stdout: Some(tool_stream_spec(
+                        "Text the app answers with in `ToolResult.stdout`.",
+                    )),
+                    stderr: Some(tool_stream_spec(
+                        "Text the app answers with in `ToolResult.stderr`.",
+                    )),
                     result: Some(ResultSpec {
                         type_: 0,
                         doc: doc.clone(),
@@ -3303,6 +3431,23 @@ fn build_tools() -> Vec<(String, golem::tool::common::Tool)> {
     }
 
     tools
+}
+
+/// One of the three optional streams a tool command declares. The `mime` list
+/// is metadata only (the platform's chunks are raw bytes); `required: false`
+/// keeps the attachment up to the caller.
+fn tool_stream_spec(doc: &str) -> golem::tool::common::StreamSpec {
+    use golem::tool::common::{Doc, StreamSpec};
+
+    StreamSpec {
+        doc: Doc {
+            summary: doc.to_string(),
+            description: String::new(),
+            examples: Vec::new(),
+        },
+        mime: vec![String::from("application/octet-stream")],
+        required: false,
+    }
 }
 
 /// Reads the app metadata JSON (the same source `build_agent_type` uses).
@@ -3556,6 +3701,85 @@ mod tests {
             root: 0,
         };
         assert_eq!(extract_input_string(&empty), "{}");
+    }
+
+    /// Every tool advertises the three streams the `golem:tool/guest` surface
+    /// can attach. The runtime refuses an attachment a command does not
+    /// declare, so a missing spec here is what would make
+    /// `golem tool invoke --stdin … --stdout` fail before the app runs; a spec
+    /// declared `required` would make a plain invocation fail instead.
+    #[test]
+    fn test_build_tools_declares_optional_streams() {
+        let tools = build_tools();
+        assert!(!tools.is_empty(), "the stub app declares tools");
+        for (app_name, tool) in &tools {
+            let body = tool.commands.nodes[0]
+                .body
+                .as_ref()
+                .expect("every tool has a command body");
+            for (channel, spec) in [
+                ("stdin", &body.stdin),
+                ("stdout", &body.stdout),
+                ("stderr", &body.stderr),
+            ] {
+                let spec = spec
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{app_name}: no {channel} stream spec"));
+                assert!(
+                    !spec.required,
+                    "{app_name}: {channel} must stay optional"
+                );
+                assert!(
+                    !spec.doc.summary.is_empty(),
+                    "{app_name}: {channel} should say what it carries"
+                );
+            }
+        }
+    }
+
+    /// The tool call contract the Roc records describe, end to end: stdin goes
+    /// into the call payload, and the app's answer carries the text for both
+    /// output channels back out.
+    #[test]
+    fn test_tool_call_streams_round_trip() {
+        let outcome =
+            run_tool_call("echo", "{\"text\": \"hi\"}", "piped text").expect("tool call");
+        assert!(outcome.output.contains("hi"), "output: {}", outcome.output);
+        assert_eq!(outcome.stdout, "piped text");
+        assert_eq!(outcome.stderr, "echo tool: read 10 bytes of stdin");
+
+        // A tool that writes nothing answers with empty channels, and the
+        // payload is still the result.
+        let quiet = run_tool_call("get_count", "{}", "").expect("tool call");
+        assert_eq!(quiet.stdout, "");
+        assert_eq!(quiet.stderr, "");
+        assert!(quiet.output.contains("count"));
+    }
+
+    /// Drained stdin items fold into one text; a failed item is reported
+    /// rather than handed to the app as a truncated input.
+    #[test]
+    fn test_stdin_text_assembly() {
+        use golem::tool::streams::ByteStreamFailure;
+
+        assert_eq!(tool_stdin_text(vec![]).expect("empty stdin"), "");
+        assert_eq!(
+            tool_stdin_text(vec![Ok(b"piped ".to_vec()), Ok(b"text".to_vec())])
+                .expect("two chunks"),
+            "piped text"
+        );
+        // Chunks are bytes on the wire; a partial UTF-8 sequence is replaced
+        // rather than failing the call.
+        assert_eq!(
+            tool_stdin_text(vec![Ok(vec![0x61, 0xff])]).expect("lossy chunk"),
+            "a\u{fffd}"
+        );
+        let failure = tool_stdin_text(vec![
+            Ok(b"half".to_vec()),
+            Err(ByteStreamFailure::Abandoned),
+        ])
+        .expect_err("a failed item is an error");
+        assert!(failure.contains("Abandoned"), "failure: {failure}");
     }
 
     /// A scheduled call's time is `now + delay`, with the nanoseconds field

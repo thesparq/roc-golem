@@ -138,7 +138,12 @@ main_handle_tool_call_for_host! = |state_json, tool_call_json| {
 				False => "false"
 			}
 			escaped_output = escape_json_str(res.result.output)
-			Ok("{\"state\":${next_state_json},\"success\":${success_str},\"output\":\"${escaped_output}\"}")
+			# The tool's stdout/stderr travel next to the payload: the host writes
+			# them through the streams the caller attached (`golem tool invoke
+			# --stdout` / `--stderr`).
+			escaped_stdout = escape_json_str(res.result.stdout)
+			escaped_stderr = escape_json_str(res.result.stderr)
+			Ok("{\"state\":${next_state_json},\"success\":${success_str},\"output\":\"${escaped_output}\",\"stdout\":\"${escaped_stdout}\",\"stderr\":\"${escaped_stderr}\"}")
 		}
 	}
 }
@@ -284,7 +289,11 @@ parse_tool_call = |raw_json| {
 		Ok(v) => v
 		Err(_) => "{}"
 	}
-	{ id, name, arguments }
+	stdin = match extract_json_field(raw_json, "stdin") {
+		Ok(v) => v
+		Err(_) => ""
+	}
+	{ id, name, arguments, stdin }
 }
 
 extract_json_field : Str, Str -> Try(Str, [NotFound])

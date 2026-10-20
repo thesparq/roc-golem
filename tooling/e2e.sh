@@ -208,6 +208,21 @@ get_count_output="$(tool_output "$counter" get-count)"
 check_true "counter: stateful tool reports the missing state" \
     "$(grep -q 'Missing count field' <<<"$get_count_output" && echo true || echo false)"
 
+# Tool streams: the ai tool's `echo` is the stateless tool that uses them — the
+# bytes piped into `--stdin` come back out on the tool's stdout, and its stderr
+# says how many arrived. Nothing here reads agent state, which is what the fresh
+# instance a tool runs in requires.
+tool_stdout_file="$WORK_DIR/tool-stdout.txt"
+tool_stderr_file="$WORK_DIR/tool-stderr.txt"
+printf 'piped stdin bytes' | "$CLI" $CLI_EXTRA -L -A "$MANIFEST" tool invoke \
+    --agent "ai-tool-agent(\"$RUN_ID\")" echo --stdin - \
+    --stdout --output "$tool_stdout_file" \
+    --stderr --stderr-output "$tool_stderr_file" >/dev/null 2>&1 || true
+check "tool: stdin comes back on the tool's stdout" "piped stdin bytes" \
+    "$(cat "$tool_stdout_file" 2>/dev/null || true)"
+check "tool: stderr reports what arrived" "read 17 bytes of stdin" \
+    "$(cat "$tool_stderr_file" 2>/dev/null || true)"
+
 check "streaming: status" "WebSocket is disconnected" \
     "$(invoke "streaming-agent(\"$RUN_ID\")" handle-message '"status"')"
 

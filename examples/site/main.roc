@@ -46,6 +46,8 @@ agent = defineAgent({
 				id: toolCall.id,
 				success: False,
 				output: "file-site agent exposes no tools",
+				stdout: "",
+				stderr: "",
 			},
 		},
 
