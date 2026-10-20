@@ -26,6 +26,7 @@ use core::cell::RefCell;
 use core::mem::MaybeUninit;
 use core::ptr;
 use std::boxed::Box;
+use std::thread::LocalKey;
 use roc_std::{RocResult, RocStr};
 
 #[cfg(not(any(feature = "stub-guest", test)))]
@@ -800,6 +801,129 @@ pub unsafe extern "C" fn rocFxGetWorkerId() -> RocStr {
     RocStr::from_str(&worker_id)
 }
 
+// Resource handle tables
+//
+// Some effects hand a host-side resource (a websocket connection, a
+// cancellation token) to the app as a `U32` handle: the index into a
+// thread-local table, offset by one so that 0 is never a valid handle.
+
+fn handle_store<T>(table: &'static LocalKey<RefCell<Vec<Option<T>>>>, value: T) -> u32 {
+    table.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        if let Some(index) = slots.iter().position(|slot| slot.is_none()) {
+            slots[index] = Some(value);
+            (index + 1) as u32
+        } else {
+            slots.push(Some(value));
+            slots.len() as u32
+        }
+    })
+}
+
+fn handle_with<T, R>(
+    table: &'static LocalKey<RefCell<Vec<Option<T>>>>,
+    handle: u32,
+    f: impl FnOnce(&T) -> R,
+) -> Option<R> {
+    if handle == 0 {
+        return None;
+    }
+    table.with(|slots| {
+        slots
+            .borrow()
+            .get((handle - 1) as usize)
+            .and_then(|slot| slot.as_ref())
+            .map(f)
+    })
+}
+
+fn handle_take<T>(table: &'static LocalKey<RefCell<Vec<Option<T>>>>, handle: u32) -> Option<T> {
+    if handle == 0 {
+        return None;
+    }
+    table.with(|slots| {
+        slots
+            .borrow_mut()
+            .get_mut((handle - 1) as usize)
+            .and_then(|slot| slot.take())
+    })
+}
+
+thread_local! {
+    static WS_CONNECTIONS: RefCell<Vec<Option<golem::websocket::client::WebsocketConnection>>> =
+        const { RefCell::new(Vec::new()) };
+    /// Cancellation tokens of scheduled invocations that have not run yet.
+    static CANCELABLE_INVOCATIONS: RefCell<
+        Vec<Option<golem::agent::host::CancellationToken>>,
+    > = const { RefCell::new(Vec::new()) };
+}
+
+// Agent-to-agent calls
+//
+// `rpc!` is the invoke-and-await form. The rest of what `golem:agent/host`
+// offers for calling another agent lives next to it: fire-and-forget,
+// scheduled (optionally cancelable) invocations, and the agent-id helpers the
+// RPC path resolves its target with.
+
+/// Resolves an agent id into an RPC client the way `rpc!` always has. The
+/// target is an agent id, as produced by `make-agent-id` / the Golem CLI (for
+/// example `counter-agent("{}")`); `parse-agent-id` returns the target's
+/// constructor parameters as a self-contained typed value, which the 2.0
+/// `wasm-rpc` resource accepts directly. `WasmRpc::new` is the fail-fast
+/// constructor, so an unusable target traps rather than returning an error.
+fn rpc_client_for(target: &str) -> Result<golem::agent::host::WasmRpc, String> {
+    match golem::agent::host::parse_agent_id(target) {
+        Ok((agent_type_name, constructor, phantom_id)) => Ok(golem::agent::host::WasmRpc::new(
+            &agent_type_name,
+            constructor.value,
+            phantom_id,
+            Vec::new(),
+        )),
+        Err(err) => Err(format!("invalid agent id {:?}: {:?}", target, err)),
+    }
+}
+
+/// Renders the identity Golem allocated for one outbound invocation
+/// (`invocation-metadata`) as JSON, which is how the platform hands
+/// multi-field results to Roc.
+fn invocation_identity_json(metadata: &golem::agent::host::InvocationMetadata) -> String {
+    serde_json::json!({
+        "agentId": metadata.agent_id.as_str(),
+        "idempotencyKey": metadata.idempotency_key.as_str(),
+    })
+    .to_string()
+}
+
+/// `now` plus `delay_millis`, as the `instant` the scheduling calls take
+/// (`nanoseconds` stays below a second, which is what the host expects).
+fn instant_after(
+    now: golem::agent::host::Datetime,
+    delay_millis: u64,
+) -> golem::agent::host::Datetime {
+    let nanos = (now.nanoseconds as u64).saturating_add(delay_millis.saturating_mul(1_000_000));
+    golem::agent::host::Datetime {
+        seconds: now.seconds.saturating_add((nanos / 1_000_000_000) as i64),
+        nanoseconds: (nanos % 1_000_000_000) as u32,
+    }
+}
+
+/// The instant `delay_millis` from now. Reading the clock is a durable host
+/// call: Golem records it in the agent's oplog, so a replayed invocation
+/// computes the same scheduled time instead of drifting by however long the
+/// replay took.
+fn scheduled_instant_in(delay_millis: u64) -> golem::agent::host::Datetime {
+    instant_after(wasi::clocks0_3_0::system_clock::now(), delay_millis)
+}
+
+/// The `Try(Str, Str)` every RPC effect returns, from the `Result` its host
+/// calls produce.
+fn rpc_result(result: Result<String, String>) -> RocResult<RocStr, RocStr> {
+    match result {
+        Ok(text) => RocResult::ok(RocStr::from_str(&text)),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcInvoke(
     target: RocStr,
@@ -811,34 +935,175 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
     let method = function_name.as_str();
     let payload_str = if payload.is_empty() { "{}" } else { payload.as_str() };
 
-    // The target is an agent id, as produced by `make-agent-id` / the Golem CLI
-    // (for example `counter-agent("{}")`). `parse-agent-id` returns the target's
-    // constructor parameters as a self-contained typed value, which the 2.0
-    // `wasm-rpc` resource accepts directly.
-    let result = match golem::agent::host::parse_agent_id(target_str) {
-        Ok((agent_type_name, constructor, phantom_id)) => {
-            let rpc = golem::agent::host::WasmRpc::new(
-                &agent_type_name,
-                constructor.value,
-                phantom_id,
-                Vec::new(),
-            );
-            let input = single_param_value_tree(payload_str);
-            match rpc.invoke_and_await(method, input, None) {
-                Ok(invocation) => match invocation.result {
-                    Some(tree) => Ok(extract_input_string(&tree)),
-                    None => Ok(String::from("")),
-                },
-                Err(err) => Err(format!("rpc to {} failed: {:?}", target_str, err)),
-            }
-        }
-        Err(err) => Err(format!("invalid agent id {:?}: {:?}", target_str, err)),
+    let result = match rpc_client_for(target_str) {
+        Ok(rpc) => match rpc.invoke_and_await(method, single_param_value_tree(payload_str), None) {
+            Ok(invocation) => match invocation.result {
+                Some(tree) => Ok(extract_input_string(&tree)),
+                None => Ok(String::from("")),
+            },
+            Err(err) => Err(format!("rpc to {} failed: {:?}", target_str, err)),
+        },
+        Err(err) => Err(err),
     };
 
-    match result {
-        Ok(text) => RocResult::ok(RocStr::from_str(&text)),
+    rpc_result(result)
+}
+
+/// Triggers a remote method and returns its invocation identity right away,
+/// instead of waiting for the reply the way `rocFxRpcInvoke` does.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxRpcFireAndForget(
+    target: RocStr,
+    function_name: RocStr,
+    payload: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    let target_str = target.as_str();
+    let method = function_name.as_str();
+    let payload_str = if payload.is_empty() { "{}" } else { payload.as_str() };
+
+    let result = match rpc_client_for(target_str) {
+        Ok(rpc) => match rpc.invoke(method, single_param_value_tree(payload_str), None) {
+            Ok(metadata) => Ok(invocation_identity_json(&metadata)),
+            Err(err) => Err(format!("rpc to {} failed: {:?}", target_str, err)),
+        },
+        Err(err) => Err(err),
+    };
+
+    rpc_result(result)
+}
+
+/// Schedules a remote method for `delay_millis` from now and returns the
+/// scheduled invocation's identity.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxRpcSchedule(
+    target: RocStr,
+    function_name: RocStr,
+    payload: RocStr,
+    delay_millis: u64,
+) -> RocResult<RocStr, RocStr> {
+    let target_str = target.as_str();
+    let method = function_name.as_str();
+    let payload_str = if payload.is_empty() { "{}" } else { payload.as_str() };
+
+    let result = match rpc_client_for(target_str) {
+        Ok(rpc) => {
+            let input = single_param_value_tree(payload_str);
+            let scheduled_time = scheduled_instant_in(delay_millis);
+            match rpc.schedule_invocation(scheduled_time, method, input, None) {
+                Ok(receipt) => Ok(invocation_identity_json(&receipt.metadata)),
+                Err(err) => Err(format!(
+                    "scheduling {} on {} failed: {:?}",
+                    method, target_str, err
+                )),
+            }
+        }
+        Err(err) => Err(err),
+    };
+
+    rpc_result(result)
+}
+
+/// The same as `rocFxRpcSchedule`, but the returned handle can cancel the
+/// invocation up to its scheduled time (`rocFxRpcCancel`).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxRpcScheduleCancelable(
+    target: RocStr,
+    function_name: RocStr,
+    payload: RocStr,
+    delay_millis: u64,
+) -> RocResult<u32, RocStr> {
+    let target_str = target.as_str();
+    let method = function_name.as_str();
+    let payload_str = if payload.is_empty() { "{}" } else { payload.as_str() };
+
+    match rpc_client_for(target_str) {
+        Ok(rpc) => {
+            let input = single_param_value_tree(payload_str);
+            let scheduled_time = scheduled_instant_in(delay_millis);
+            match rpc.schedule_cancelable_invocation(scheduled_time, method, input, None) {
+                Ok(receipt) => RocResult::ok(handle_store(
+                    &CANCELABLE_INVOCATIONS,
+                    receipt.cancellation_token,
+                )),
+                Err(err) => RocResult::err(RocStr::from_str(&format!(
+                    "scheduling {} on {} failed: {:?}",
+                    method, target_str, err
+                ))),
+            }
+        }
         Err(err) => RocResult::err(RocStr::from_str(&err)),
     }
+}
+
+/// Cancels a scheduled invocation that has not run yet. The handle comes from
+/// `rocFxRpcScheduleCancelable` and can be used once.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxRpcCancel(handle: u32) -> RocResult<(), RocStr> {
+    match handle_take(&CANCELABLE_INVOCATIONS, handle) {
+        Some(token) => {
+            token.cancel();
+            drop(token);
+            RocResult::ok(())
+        }
+        None => RocResult::err(RocStr::from_str(&format!(
+            "unknown cancellation handle {}",
+            handle
+        ))),
+    }
+}
+
+/// `parse-agent-id`: an agent id split into the agent type name, the
+/// constructor parameter and the (usually absent) phantom id, as JSON.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxParseAgentId(agent_id: RocStr) -> RocResult<RocStr, RocStr> {
+    let id = agent_id.as_str();
+
+    let result = match golem::agent::host::parse_agent_id(id) {
+        Ok((agent_type_name, constructor, phantom_id)) => Ok(serde_json::json!({
+            "agentType": agent_type_name.as_str(),
+            "constructor": extract_input_string(&constructor.value),
+            "phantomId": phantom_id.as_ref().map(uuid_string),
+        })
+        .to_string()),
+        Err(err) => Err(format!("invalid agent id {:?}: {:?}", id, err)),
+    };
+
+    rpc_result(result)
+}
+
+/// `make-agent-id`: the inverse of `rocFxParseAgentId`, for the ids this
+/// platform's agents have — one constructor parameter, no phantom id.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxMakeAgentId(
+    agent_type_name: RocStr,
+    constructor_param: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    let type_name = agent_type_name.as_str();
+    let input = single_param_value_tree(constructor_param.as_str());
+
+    let result = match golem::agent::host::make_agent_id(type_name, input, None) {
+        Ok(agent_id) => Ok(agent_id),
+        Err(err) => Err(format!(
+            "cannot build an id for agent type {:?}: {:?}",
+            type_name, err
+        )),
+    };
+
+    rpc_result(result)
+}
+
+/// The canonical UUID spelling of Golem's two-word `uuid` type.
+fn uuid_string(id: &golem::core::types::Uuid) -> String {
+    let high = id.high_bits;
+    let low = id.low_bits;
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        high >> 32,
+        (high >> 16) & 0xffff,
+        high & 0xffff,
+        low >> 48,
+        low & 0xffff_ffff_ffff,
+    )
 }
 
 #[no_mangle]
@@ -1153,51 +1418,6 @@ pub unsafe extern "C" fn rocFxHttpRequest(req_json: RocStr) -> RocResult<RocStr,
 }
 
 // WebSocket Effect C-ABI
-//
-// Handles are indices into this table, offset by one so that 0 is never a valid
-// connection (Roc's `websocketConnect!` returns a `U32`).
-thread_local! {
-    static WS_CONNECTIONS: RefCell<Vec<Option<golem::websocket::client::WebsocketConnection>>> =
-        const { RefCell::new(Vec::new()) };
-}
-
-fn ws_store(connection: golem::websocket::client::WebsocketConnection) -> u32 {
-    WS_CONNECTIONS.with(|list| {
-        let mut list = list.borrow_mut();
-        if let Some(index) = list.iter().position(|slot| slot.is_none()) {
-            list[index] = Some(connection);
-            (index + 1) as u32
-        } else {
-            list.push(Some(connection));
-            list.len() as u32
-        }
-    })
-}
-
-fn ws_take(handle: u32) -> Option<golem::websocket::client::WebsocketConnection> {
-    if handle == 0 {
-        return None;
-    }
-    WS_CONNECTIONS.with(|list| {
-        let mut list = list.borrow_mut();
-        list.get_mut((handle - 1) as usize).and_then(|slot| slot.take())
-    })
-}
-
-fn ws_with<R>(
-    handle: u32,
-    f: impl FnOnce(&golem::websocket::client::WebsocketConnection) -> R,
-) -> Option<R> {
-    if handle == 0 {
-        return None;
-    }
-    WS_CONNECTIONS.with(|list| {
-        let list = list.borrow();
-        list.get((handle - 1) as usize)
-            .and_then(|slot| slot.as_ref())
-            .map(f)
-    })
-}
 
 fn ws_message_text(message: golem::websocket::client::Message) -> String {
     match message {
@@ -1212,10 +1432,7 @@ pub unsafe extern "C" fn rocFxWsConnect(url: RocStr) -> RocResult<u32, RocStr> {
     // Golem 1.6.0 added a third parameter (the connection's reconstruction
     // policy); `None` keeps the default, which reconnects automatically.
     match golem::websocket::client::WebsocketConnection::connect(url_str, None, None) {
-        Ok(connection) => {
-            let handle = ws_store(connection);
-            RocResult::ok(handle)
-        }
+        Ok(connection) => RocResult::ok(handle_store(&WS_CONNECTIONS, connection)),
         Err(err) => RocResult::err(RocStr::from_str(&format!("{:?}", err))),
     }
 }
@@ -1223,7 +1440,7 @@ pub unsafe extern "C" fn rocFxWsConnect(url: RocStr) -> RocResult<u32, RocStr> {
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsSend(handle: u32, msg: RocStr) -> RocResult<(), RocStr> {
     let text = msg.as_str();
-    let sent = ws_with(handle, |connection| {
+    let sent = handle_with(&WS_CONNECTIONS, handle, |connection| {
         connection.send(&golem::websocket::client::Message::Text(String::from(text)))
     });
     match sent {
@@ -1242,7 +1459,9 @@ pub unsafe extern "C" fn rocFxWsReceive(handle: u32) -> RocResult<RocStr, RocStr
     // this effect synchronously, so the fork's `block_on` drives the async call
     // to completion (it waits on the guest's waitable set while the host call is
     // in flight).
-    let received = ws_with(handle, |connection| wit_bindgen::block_on(connection.receive()));
+    let received = handle_with(&WS_CONNECTIONS, handle, |connection| {
+        wit_bindgen::block_on(connection.receive())
+    });
     match received {
         Some(Ok(message)) => {
             let text = ws_message_text(message);
@@ -1258,7 +1477,7 @@ pub unsafe extern "C" fn rocFxWsReceive(handle: u32) -> RocResult<RocStr, RocStr
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxWsClose(handle: u32) -> RocResult<(), RocStr> {
-    match ws_take(handle) {
+    match handle_take(&WS_CONNECTIONS, handle) {
         Some(connection) => {
             let _ = connection.close(None, None);
             drop(connection);
@@ -1875,6 +2094,90 @@ mod tests {
             root: 0,
         };
         assert_eq!(extract_input_string(&empty), "{}");
+    }
+
+    /// A scheduled call's time is `now + delay`, with the nanoseconds field
+    /// normalised: the host rejects an `instant` whose nanoseconds field does
+    /// not fit below a second, and a delay crossing a second has to carry.
+    #[test]
+    fn test_instant_after() {
+        let now = golem::agent::host::Datetime {
+            seconds: 1_700_000_000,
+            nanoseconds: 400_000_000,
+        };
+
+        let later = instant_after(now, 1_500);
+        assert_eq!(later.seconds, 1_700_000_001);
+        assert_eq!(later.nanoseconds, 900_000_000);
+
+        let later = instant_after(now, 1_000);
+        assert_eq!(later.seconds, 1_700_000_001);
+        assert_eq!(later.nanoseconds, 400_000_000);
+
+        let now_again = instant_after(now, 0);
+        assert_eq!(now_again.seconds, now.seconds);
+        assert_eq!(now_again.nanoseconds, now.nanoseconds);
+
+        // A delay long enough to overflow the millisecond→nanosecond
+        // conversion saturates rather than wrapping, and still produces a
+        // well-formed instant.
+        let far = instant_after(now, u64::MAX);
+        assert_eq!(far.seconds, 1_700_000_000 + 18_446_744_073);
+        assert_eq!(far.nanoseconds, 709_551_615);
+    }
+
+    /// The invocation identity the fire-and-forget and scheduling effects
+    /// return is handed to Roc as JSON, which is how the platform reports
+    /// multi-field results. Agent ids carry quotes, so escaping matters.
+    #[test]
+    fn test_invocation_identity_json() {
+        let metadata = golem::agent::host::InvocationMetadata {
+            agent_id: String::from("counter-agent(\"c-1\")"),
+            idempotency_key: String::from("d372f3c4-0950-5dbd-b198-6570a53386f0"),
+        };
+
+        let json: serde_json::Value = serde_json::from_str(&invocation_identity_json(&metadata))
+            .expect("the identity must be valid JSON");
+        assert_eq!(json["agentId"], "counter-agent(\"c-1\")");
+        assert_eq!(json["idempotencyKey"], "d372f3c4-0950-5dbd-b198-6570a53386f0");
+    }
+
+    /// Golem's `uuid` is two words; `parseAgentId!` reports a phantom id in the
+    /// canonical spelling.
+    #[test]
+    fn test_uuid_string() {
+        let id = golem::core::types::Uuid {
+            high_bits: 0x0102_0304_0506_0708,
+            low_bits: 0x090a_0b0c_0d0e_0f10,
+        };
+        assert_eq!(uuid_string(&id), "01020304-0506-0708-090a-0b0c0d0e0f10");
+    }
+
+    /// Handles are indices into a thread-local table, offset by one. Taking one
+    /// frees its slot for the next resource, which is why a handle can only be
+    /// used once; 0 is never a handle.
+    #[test]
+    fn test_handle_table() {
+        thread_local! {
+            static TEST_SLOTS: RefCell<Vec<Option<String>>> = const { RefCell::new(Vec::new()) };
+        }
+
+        let first = handle_store(&TEST_SLOTS, String::from("a"));
+        let second = handle_store(&TEST_SLOTS, String::from("b"));
+        assert_eq!((first, second), (1, 2));
+
+        assert_eq!(
+            handle_with(&TEST_SLOTS, first, |value| value.clone()),
+            Some(String::from("a"))
+        );
+        assert_eq!(handle_with(&TEST_SLOTS, 0, |value| value.clone()), None);
+        assert_eq!(handle_with(&TEST_SLOTS, 99, |value| value.clone()), None);
+
+        assert_eq!(handle_take(&TEST_SLOTS, first), Some(String::from("a")));
+        assert_eq!(handle_take(&TEST_SLOTS, first), None);
+        assert_eq!(handle_take(&TEST_SLOTS, 0), None);
+        assert_eq!(handle_store(&TEST_SLOTS, String::from("c")), first);
+        assert_eq!(handle_take(&TEST_SLOTS, first), Some(String::from("c")));
     }
 
     #[test]

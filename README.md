@@ -273,16 +273,20 @@ Three defects were fixed to get there, all in the hand-written Roc ABI in
 The layout values now match the compiler's own emitted facts, dumped by
 `tooling/glue/abi_facts.roc`.
 
+**Agent-to-agent calls** beyond invoke-and-await are exposed as effects:
+`rpcFireAndForget!` (trigger and return the invocation's identity),
+`rpcSchedule!` (the same for a call scheduled `delayMillis` from now),
+`rpcScheduleCancelable!`/`rpcCancel!` (schedule and cancel before the scheduled
+time), and the `parseAgentId!`/`makeAgentId!` helpers `rpc!` resolves its target
+with. The e2e drives all of them from the effects agent into the counter agent —
+which is also what proves cross-component calls: on Golem 1.6
+`parse-agent-id` falls back to the deployment's registered agent types when the
+name is not one of the calling component's own, so `rpc!` (and the rest) reach
+another component's agents. On 1.5.9 the same call answered
+`Agent type not found`, which is why the effects example used to call itself.
+
 Still open:
 
-- **Cross-component RPC** works only inside a component: Golem resolves the
-  target agent type from the calling component's own agent types, so
-  `rpc!("effects-agent(\"other\")", …)` succeeds while
-  `rpc!("counter-agent(\"{}\")", …)` from another component answers
-  `Agent type not found`. Declaring the target in the agent type's
-  `dependencies` did not change that on golem 1.5.9 (the server does not seem to
-  use component-declared dependencies), so cross-component calls need a newer
-  Golem or a different mechanism.
 - **A layout-sensitive trap** has been seen once in a release build of the
   effects example: `initialize` trapped while slicing a host-provided heap string
   (`Str.split_first` on the agent config). The same source passes when rebuilt,
@@ -437,7 +441,12 @@ apps call them through `pf.Golem`.
 | `now!` | `wasi:clocks/monotonic-clock` | monotonic milliseconds |
 | `sleep!` | `wasi:clocks/monotonic-clock` | blocking wait; Golem records it in the oplog, so a resumed agent does not repeat it |
 | `http!` | `wasi:http/client` (p3) | request/response as JSON; response is `{status, headers, body}`. Buffered: the body is uploaded alongside the request through a p3 stream, and the response body is collected before returning |
-| `rpc!` | `golem:agent/host` | target is an agent id such as `counter-agent("{}")`; returns the reply text || `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
+| `rpc!` | `golem:agent/host` | invoke-and-await; target is an agent id such as `counter-agent("{}")`, and the reply text comes back |
+| `rpcFireAndForget!` | `golem:agent/host` | triggers the call and returns its invocation identity (`{"agentId": …, "idempotencyKey": …}`) right away |
+| `rpcSchedule!` | `golem:agent/host` | the same, `delayMillis` from now; the wall clock read is durable, so a replay schedules the same instant |
+| `rpcScheduleCancelable!` / `rpcCancel!` | `golem:agent/host` | schedules and returns a `U32` handle; `rpcCancel!` cancels the invocation before its scheduled time |
+| `parseAgentId!` / `makeAgentId!` | `golem:agent/host` | an agent id split into `{"agentType", "constructor", "phantomId"}` and back (`makeAgentId!` always builds ids without a phantom id) |
+| `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
@@ -453,7 +462,7 @@ anything is published:
 | --- | --- | --- |
 | Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, and the `httpMount` metadata mapping |
 | ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, and agent-to-agent RPC. No stubs |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, and agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers). No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so

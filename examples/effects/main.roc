@@ -1,7 +1,17 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
-import pf.Golem exposing [http!, logInfo!, rpc!]
+import pf.Golem exposing [
+	http!,
+	logInfo!,
+	makeAgentId!,
+	parseAgentId!,
+	rpc!,
+	rpcCancel!,
+	rpcFireAndForget!,
+	rpcSchedule!,
+	rpcScheduleCancelable!,
+]
 
 # Agent State
 #
@@ -13,6 +23,9 @@ State :: {
 	lastStatus : Str,
 	lastBody : Str,
 	lastRpc : Str,
+	# Handle of the most recent cancelable scheduled invocation; 0 means there
+	# is none, which is what `cancel` reports back.
+	cancelHandle : U32,
 }
 
 agent : Agent(State)
@@ -23,6 +36,7 @@ agent = defineAgent({
 			lastStatus: "none",
 			lastBody: "",
 			lastRpc: "none",
+			cancelHandle: 0,
 		},
 
 	handleMessage!: |state, message|
@@ -52,11 +66,11 @@ agent = defineAgent({
 			}
 
 			"rpc" =>
-			# The target is an agent id: <agent-type>(<constructor params>).
-			# Golem resolves agent types inside the calling component, so this example
-			# calls another instance of itself. Calling an agent in a different
-			# component needs the target declared as an agent-type dependency, which
-			# Golem 1.5 does not resolve from component metadata yet.
+			# The target is an agent id: <agent-type>(<constructor params>). Golem
+			# 1.6 resolves the target's agent type from the deployment's registered
+			# types, so this can be another component's agent; this arm calls another
+			# instance of itself for a cheap check of the same component, while the
+			# `runCommand` commands below call the counter agent.
 				match rpc!("effects-agent(\"other\")", "handle-message", "status") {
 					Ok(reply) =>
 						{
@@ -71,11 +85,29 @@ agent = defineAgent({
 						}
 				}
 
-			_ =>
+			"status" =>
 				{
 					state,
-					replies: ["Commands: fetch, rpc"],
+					replies: ["effects-agent is up"],
 				}
+
+			"cancel" =>
+				match rpcCancel!(state.cancelHandle) {
+					Ok(_) =>
+						{
+							state: { ..state, cancelHandle: 0 },
+							replies: ["Canceled scheduled invocation (handle ${U32.to_str(state.cancelHandle)})"],
+						}
+
+					Err(err) =>
+						{
+							state,
+							replies: ["Cancel failed: ${err}"],
+						}
+				}
+
+			_ =>
+				runCommand(state, message)
 		},
 
 	handleToolCall!: |state, toolCall|
@@ -100,7 +132,7 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"baseUrl\":\"${state.baseUrl}\",\"lastStatus\":\"${state.lastStatus}\",\"lastBody\":\"${state.lastBody}\",\"lastRpc\":\"${state.lastRpc}\"}",
+		"{\"baseUrl\":\"${state.baseUrl}\",\"lastStatus\":\"${state.lastStatus}\",\"lastBody\":\"${state.lastBody}\",\"lastRpc\":\"${state.lastRpc}\",\"cancelHandle\":${U32.to_str(state.cancelHandle)}}",
 
 	deserializeState: |stateJson|
 		Ok({
@@ -108,8 +140,153 @@ agent = defineAgent({
 			lastStatus: extract_json_str(stateJson, "lastStatus") ?? "none",
 			lastBody: extract_json_str(stateJson, "lastBody") ?? "",
 			lastRpc: extract_json_str(stateJson, "lastRpc") ?? "none",
+			cancelHandle: U32.from_str(extract_json_str(stateJson, "cancelHandle") ?? "0") ?? 0,
 		}),
 })
+
+## Commands that call another agent — everything `golem:agent/host` offers
+## beyond `rpc!` — are `<verb> <arguments…>`, with one space-separated token per
+## argument. Every verb's arguments are listed in the usage reply below.
+runCommand : State, Str => { state : State, replies : List(Str) }
+runCommand = |state, message| {
+	command = splitCommand(message)
+
+	match command.verb {
+		"fire-and-forget" =>
+		# fire-and-forget <target> <method> <payload>
+			match rpcFireAndForget!(command.a, command.b, command.c) {
+				Ok(identity) =>
+					{
+						state: { ..state, lastRpc: quote_free(identity) },
+						replies: ["Fire-and-forget sent: ${identity}"],
+					}
+
+				Err(err) =>
+					{
+						state,
+						replies: ["Fire-and-forget failed: ${err}"],
+					}
+			}
+
+		"schedule" =>
+		# schedule <target> <method> <payload> <delayMillis>
+			match U64.from_str(command.d) {
+				Err(_) =>
+					{
+						state,
+						replies: ["schedule needs a delay in milliseconds"],
+					}
+
+				Ok(delayMillis) =>
+					match rpcSchedule!(command.a, command.b, command.c, delayMillis) {
+						Ok(identity) =>
+							{
+								state: { ..state, lastRpc: quote_free(identity) },
+								replies: ["Scheduled in ${U64.to_str(delayMillis)}ms: ${identity}"],
+							}
+
+						Err(err) =>
+							{
+								state,
+								replies: ["Scheduling failed: ${err}"],
+							}
+					}
+			}
+
+		"schedule-cancelable" =>
+		# schedule-cancelable <target> <method> <payload> <delayMillis>
+			match U64.from_str(command.d) {
+				Err(_) =>
+					{
+						state,
+						replies: ["schedule-cancelable needs a delay in milliseconds"],
+					}
+
+				Ok(delayMillis) =>
+					match rpcScheduleCancelable!(command.a, command.b, command.c, delayMillis) {
+						Ok(handle) =>
+							{
+								state: { ..state, cancelHandle: handle },
+								replies: ["Cancelable scheduled in ${U64.to_str(delayMillis)}ms: handle ${U32.to_str(handle)}"],
+							}
+
+						Err(err) =>
+							{
+								state,
+								replies: ["Cancelable scheduling failed: ${err}"],
+							}
+					}
+			}
+
+		"parse-agent-id" =>
+		# parse-agent-id <agent-id>
+			match parseAgentId!(command.a) {
+				Ok(details) =>
+					{
+						state: { ..state, lastRpc: quote_free(details) },
+						replies: ["Parsed agent id: ${details}"],
+					}
+
+				Err(err) =>
+					{
+						state,
+						replies: ["Parsing failed: ${err}"],
+					}
+			}
+
+		"make-agent-id" =>
+		# make-agent-id <agent-type-name> <constructor-parameter>
+			match makeAgentId!(command.a, command.b) {
+				Ok(agentId) =>
+					{
+						state: { ..state, lastRpc: quote_free(agentId) },
+						replies: ["Made agent id: ${agentId}"],
+					}
+
+				Err(err) =>
+					{
+						state,
+						replies: ["Making an agent id failed: ${err}"],
+					}
+			}
+
+		_ =>
+			{
+				state,
+				replies: ["Commands: fetch, rpc, cancel, fire-and-forget <id> <method> <payload>, schedule <id> <method> <payload> <millis>, schedule-cancelable <id> <method> <payload> <millis>, parse-agent-id <id>, make-agent-id <type> <param>"],
+			}
+	}
+}
+
+Command : {
+	verb : Str,
+	a : Str,
+	b : Str,
+	c : Str,
+	d : Str,
+}
+
+## Splits a command message into its tokens; missing trailing ones come back
+## empty, so each verb reads only the arguments it takes.
+splitCommand : Str -> Command
+splitCommand = |message| {
+	verb = splitToken(message)
+	a = splitToken(verb.rest)
+	b = splitToken(a.rest)
+	c = splitToken(b.rest)
+	d = splitToken(c.rest)
+	{ verb: verb.first, a: a.first, b: b.first, c: c.first, d: d.first }
+}
+
+## Splits the first space-separated token off `text`; `rest` keeps what follows
+## (empty when there is no space left).
+splitToken : Str -> { first : Str, rest : Str }
+splitToken = |text|
+	match Str.split_first(text, " ") {
+		Ok({ before, after }) => { first: before, rest: after }
+
+		Err(_) => { first: text, rest: "" }
+	}
 
 ## The state is embedded in JSON without an escaper, so keep stored strings free
 ## of characters that would break it. The reply itself is escaped by the

@@ -129,7 +129,11 @@ else
 fi
 
 invoke() { # invoke <agent-id> <method> <argument> -> result line
+    # A result wider than the terminal comes back wrapped onto continuation
+    # lines indented by five spaces, so the wrap is undone before the checks
+    # see the text (the CLI only wraps when it can see a terminal width).
     "$CLI" $CLI_EXTRA -L -A "$MANIFEST" agent invoke "$1" "$2" "$3" 2>&1 \
+        | sed -e ':slurp' -e '$!{N;bslurp}' -e 's/\n     / /g' \
         | tail -n 1 \
         | sed -e 's/^"//' -e 's/"$//' -e 's/\\"/"/g'
 }
@@ -193,6 +197,71 @@ check "effects: real HTTP call" "HTTP 200" \
     "$(invoke "effects-agent(\"http://127.0.0.1:$HTTP_PORT/\")" handle-message '"fetch"')"
 check "effects: agent-to-agent RPC" "RPC reply:" \
     "$(invoke "effects-agent(\"$RUN_ID\")" handle-message '"rpc"')"
+
+say "==> Agent-to-agent calls beyond invoke-and-await"
+# Fire-and-forget, scheduled and cancelable calls. All of them target a counter
+# in another component, so these checks also cover the cross-component
+# resolution the platform's `parse-agent-id` does on the way to `wasm-rpc`.
+calls_counter="counter-agent(\"$RUN_ID-calls\")"
+effects_caller="effects-agent(\"$RUN_ID\")"
+
+# `handle-message` takes one JSON string argument, so a message carrying an
+# agent id (which has quotes in it) has to be escaped for that.
+message_arg() { # message_arg <message> -> JSON argument
+    printf '"%s"' "${1//\"/\\\"}"
+}
+
+# The fire-and-forget and scheduled calls are asynchronous, so the target's
+# state is polled for the effect rather than read once; giving up fails the
+# check instead of hanging the run.
+poll_reply() { # poll_reply <agent-id> <message> <expected substring>
+    local agent="$1" message="$2" expected="$3" actual=""
+    for _ in $(seq 1 20); do
+        actual="$(invoke "$agent" handle-message "$message")"
+        [[ "$actual" == *"$expected"* ]] && break
+        sleep 1
+    done
+    printf '%s' "$actual"
+}
+
+check "effects: fire-and-forget returns an invocation identity" "idempotencyKey" \
+    "$(invoke "$effects_caller" handle-message \
+        "$(message_arg "fire-and-forget $calls_counter handle-message increment")")"
+check "effects: fire-and-forget reaches the counter" "Current count is 1" \
+    "$(poll_reply "$calls_counter" '"get"' "Current count is 1")"
+
+check "effects: scheduled invocation returns an invocation identity" "idempotencyKey" \
+    "$(invoke "$effects_caller" handle-message \
+        "$(message_arg "schedule $calls_counter handle-message increment 1500")")"
+check "effects: scheduled invocation reaches the counter" "Current count is 2" \
+    "$(poll_reply "$calls_counter" '"get"' "Current count is 2")"
+
+# A cancelable schedule that is left alone still runs, which is what makes the
+# canceled one below meaningful.
+check "effects: cancelable schedule returns a handle" "Cancelable scheduled in" \
+    "$(invoke "$effects_caller" handle-message \
+        "$(message_arg "schedule-cancelable $calls_counter handle-message increment 1500")")"
+check "effects: an uncanceled schedule reaches the counter" "Current count is 3" \
+    "$(poll_reply "$calls_counter" '"get"' "Current count is 3")"
+
+# The schedule's own reply is not what this pair checks, so it is dropped. The
+# delay leaves room for the cancel below to arrive well before it.
+invoke "$effects_caller" handle-message \
+    "$(message_arg "schedule-cancelable $calls_counter handle-message increment 8000")" >/dev/null
+check "effects: canceling a scheduled invocation" "Canceled scheduled invocation" \
+    "$(invoke "$effects_caller" handle-message "$(message_arg "cancel")")"
+# Past the canceled invocation's scheduled time: the counter must not have
+# moved.
+sleep 8
+check "effects: the canceled invocation never reached the counter" "Current count is 3" \
+    "$(invoke "$calls_counter" handle-message '"get"')"
+
+check "effects: make-agent-id builds an id" "counter-agent(\"$RUN_ID-calls\")" \
+    "$(invoke "$effects_caller" handle-message \
+        "$(message_arg "make-agent-id counter-agent $RUN_ID-calls")")"
+check "effects: parse-agent-id reads an id back" "\"constructor\":\"$RUN_ID-calls\"" \
+    "$(invoke "$effects_caller" handle-message \
+        "$(message_arg "parse-agent-id $calls_counter")")"
 
 say "==> HTTP mount (file-site agent serving its own filesystem on $API_DOMAIN)"
 site_agent="file-site-agent(\"$RUN_ID\")"

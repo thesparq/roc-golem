@@ -25,6 +25,36 @@ Effect := {}.{
 		Host.rocFxRpcInvoke!(targetWorker, fnName, payload)
 	}
 
+	rpcFireAndForget! : Str, Str, Str => Try(Str, Str)
+	rpcFireAndForget! = |targetWorker, fnName, payload| {
+		Host.rocFxRpcFireAndForget!(targetWorker, fnName, payload)
+	}
+
+	rpcSchedule! : Str, Str, Str, U64 => Try(Str, Str)
+	rpcSchedule! = |targetWorker, fnName, payload, delayMillis| {
+		Host.rocFxRpcSchedule!(targetWorker, fnName, payload, delayMillis)
+	}
+
+	rpcScheduleCancelable! : Str, Str, Str, U64 => Try(U32, Str)
+	rpcScheduleCancelable! = |targetWorker, fnName, payload, delayMillis| {
+		Host.rocFxRpcScheduleCancelable!(targetWorker, fnName, payload, delayMillis)
+	}
+
+	rpcCancel! : U32 => Try({}, Str)
+	rpcCancel! = |handle| {
+		Host.rocFxRpcCancel!(handle)
+	}
+
+	parseAgentId! : Str => Try(Str, Str)
+	parseAgentId! = |agentId| {
+		Host.rocFxParseAgentId!(agentId)
+	}
+
+	makeAgentId! : Str, Str => Try(Str, Str)
+	makeAgentId! = |agentTypeName, constructorParam| {
+		Host.rocFxMakeAgentId!(agentTypeName, constructorParam)
+	}
+
 	setPersistenceMode! : PersistenceMode => {}
 	setPersistenceMode! = |mode| {
 		modeU8 : U8

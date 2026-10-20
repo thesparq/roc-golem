@@ -15,6 +15,12 @@ module [
 	logError!,
 	workerId!,
 	rpc!,
+	rpcFireAndForget!,
+	rpcSchedule!,
+	rpcScheduleCancelable!,
+	rpcCancel!,
+	parseAgentId!,
+	makeAgentId!,
 	setPersistence!,
 	http!,
 	websocketConnect!,
@@ -69,6 +75,42 @@ workerId! = |_|
 rpc! : Str, Str, Str => Try(Str, Str)
 rpc! = |targetWorker, fnName, payload|
 	Effect.rpcInvoke!(targetWorker, fnName, payload)
+
+## Triggers a remote method and returns its invocation identity right away
+## (`{"agentId": …, "idempotencyKey": …}`) instead of waiting for the reply.
+rpcFireAndForget! : Str, Str, Str => Try(Str, Str)
+rpcFireAndForget! = |targetWorker, fnName, payload|
+	Effect.rpcFireAndForget!(targetWorker, fnName, payload)
+
+## Schedules a remote method for `delayMillis` from now and returns the
+## scheduled invocation's identity, in the same shape as `rpcFireAndForget!`.
+rpcSchedule! : Str, Str, Str, U64 => Try(Str, Str)
+rpcSchedule! = |targetWorker, fnName, payload, delayMillis|
+	Effect.rpcSchedule!(targetWorker, fnName, payload, delayMillis)
+
+## The same as `rpcSchedule!`, but returns a handle for `rpcCancel!`, which
+## cancels the invocation as long as it has not run yet.
+rpcScheduleCancelable! : Str, Str, Str, U64 => Try(U32, Str)
+rpcScheduleCancelable! = |targetWorker, fnName, payload, delayMillis|
+	Effect.rpcScheduleCancelable!(targetWorker, fnName, payload, delayMillis)
+
+## Cancels a scheduled invocation that has not run yet. The handle comes from
+## `rpcScheduleCancelable!` and can be used once.
+rpcCancel! : U32 => Try({}, Str)
+rpcCancel! = |handle|
+	Effect.rpcCancel!(handle)
+
+## Splits an agent id into `{"agentType": …, "constructor": …,
+## "phantomId": …}` — the same resolution `rpc!` does on its target.
+parseAgentId! : Str => Try(Str, Str)
+parseAgentId! = |agentId|
+	Effect.parseAgentId!(agentId)
+
+## Builds an agent id from an agent type name and its constructor parameter,
+## the inverse of `parseAgentId!`.
+makeAgentId! : Str, Str => Try(Str, Str)
+makeAgentId! = |agentTypeName, constructorParam|
+	Effect.makeAgentId!(agentTypeName, constructorParam)
 
 setPersistence! : PersistenceMode => {}
 setPersistence! = |mode|
