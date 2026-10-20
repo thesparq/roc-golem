@@ -82,6 +82,18 @@ jobs:
             --then-reply "Counter incremented to 2" \
             --tool get_count --tool-reply '{"count": 2}'
 
+          # The quota and retry effects are synchronous host imports, so the
+          # harness can drive them (unlike the effects agent's async HTTP
+          # import): the stubs record what the component asked the host for,
+          # including the retry continuation the app threaded through the JSON
+          # round trip.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "quota 6" --reply "Committed 6 units" \
+            --expect-quota "commit(used=6)" \
+            --then-message retry --then-reply '"countBox"' \
+            --expect-retry "state=3 bytes"
+
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
             --message hello --reply "AI assistant" \

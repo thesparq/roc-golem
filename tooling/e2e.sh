@@ -43,6 +43,7 @@ CLI_EXTRA="${GOLEM_CLI_EXTRA:-}"
 export GOLEM_BUILTIN_LOCAL_URL="${GOLEM_BUILTIN_LOCAL_URL:-http://127.0.0.1:$PORT}"
 
 failures=0
+skipped=0
 server_pid=""
 http_pid=""
 
@@ -272,6 +273,47 @@ check "effects: parse-agent-id reads an id back" "\"constructor\":\"$RUN_ID-call
     "$(invoke "$effects_caller" handle-message \
         "$(message_arg "parse-agent-id $calls_counter")")"
 
+say "==> Quotas (golem:quota/types against the manifest's resourceDefaults)"
+# The counter's `quota` command reserves and commits from `example-requests`,
+# which the manifest declares with a capacity of ten and
+# `enforcementAction: reject`. Capacity is consumed as it is committed, and it
+# is durable and shared by the whole environment (not per agent), so a fresh data
+# directory is the only place the first reservation fits — a rerun against the
+# same one finds it spent and says so instead of failing.
+quota_agent="counter-agent(\"$RUN_ID-quota\")"
+quota_first="$(invoke "$quota_agent" handle-message '"quota 6"')"
+if [[ "$quota_first" == *"Committed 6 units"* ]]; then
+    say "PASS  quota: a reservation that fits is committed"
+elif [[ "$quota_first" == *"quota reservation failed"* ]]; then
+    say "SKIP  quota: a reservation that fits is committed (the environment's capacity is already spent)"
+    skipped=$((skipped + 1))
+else
+    say "FAIL  quota: a reservation that fits is committed"
+    say "      actual: ${quota_first:-<empty>}"
+    failures=$((failures + 1))
+fi
+check "quota: the next reservation exceeds the capacity" "quota reservation failed" \
+    "$(invoke "$quota_agent" handle-message '"quota 6"')"
+
+say "==> Retry policies (golem:api/retry against the manifest's retryPolicyDefaults)"
+# The counter's `retry` command reports the policies the environment declares,
+# resolves the rule that matches a `send` operation, and walks the resolved
+# policy's delay schedule twice. `send-retries` is the manifest's rule: two
+# retries with a fixed 100ms delay, and a priority that beats the environment's
+# own `predTrue` default (which every other verb resolves to).
+retry_reply="$(invoke "$quota_agent" handle-message '"retry"')"
+# The reply is one long line of JSON that the CLI wraps, and a wrap only ever
+# adds whitespace, so the checks compare a space-free copy against space-free
+# substrings.
+retry_reply="${retry_reply// /}"
+check "retry: the declared policy is visible" '"name":"send-retries"' "$retry_reply"
+check "retry: a matching operation resolves the policy" \
+    'match={"nodes":[{"countBox":{"maxRetries":2,"inner":1}}' "$retry_reply"
+check "retry: the first walk step returns the policy's delay" \
+    'first={"delayNanos":100000000' "$retry_reply"
+check "retry: the second walk step returns the policy's delay" \
+    'second={"delayNanos":100000000' "$retry_reply"
+
 say "==> Webhooks (promise + POST callback)"
 # `createWebhook!` registers a promise and returns the URL that completes it.
 # The app stores that URL in its own state, so the POST can arrive between
@@ -408,7 +450,11 @@ check "update: a fresh agent on the new revision has its own default" "Note is v
 
 say ""
 if [[ "$failures" -eq 0 ]]; then
-    say "All end-to-end checks passed."
+    if [[ "$skipped" -gt 0 ]]; then
+        say "All end-to-end checks passed ($skipped skipped)."
+    else
+        say "All end-to-end checks passed."
+    fi
 else
     say "$failures end-to-end check(s) failed."
     exit 1

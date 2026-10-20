@@ -21,6 +21,8 @@ pub mod guest_bridge;
 #[allow(clashing_extern_declarations)]
 pub mod roc_platform_abi;
 pub mod roc_std;
+/// The JSON mirror of the retry policy/predicate trees (`golem:api/retry`).
+mod retry_json;
 
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
@@ -1604,6 +1606,256 @@ pub unsafe extern "C" fn rocFxGetConfig(key: RocStr) -> RocResult<RocStr, RocStr
     }
 }
 
+// Quota effects
+//
+// `golem:quota/types` is a synchronous host interface. `newQuotaToken!` asks the
+// host for a capability on a resource the manifest declares, `quotaReserve!`
+// waits for capacity (or returns the rejection the resource's enforcement
+// action produced), and `quotaCommit!` reports what was actually used — a
+// reservation that is never committed counts as zero usage. Tokens and
+// reservations are host-side resources, so the app holds them as `U32` handles
+// in the same kind of table the WebSocket effects use.
+
+thread_local! {
+    static QUOTA_TOKENS: RefCell<Vec<Option<golem::core::types::QuotaToken>>> =
+        const { RefCell::new(Vec::new()) };
+    static QUOTA_RESERVATIONS: RefCell<Vec<Option<golem::quota::types::Reservation>>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// The `failed-reservation` of a `reject`ing resource, rendered for the effect's
+/// error channel. The host's estimate of how long the caller would have to wait
+/// for capacity comes along when it has one (only rate limits can predict one).
+fn failed_reservation_text(failure: &golem::quota::types::FailedReservation) -> String {
+    match failure.estimated_wait_nanos {
+        Some(nanos) => format!(
+            "quota reservation failed (retry after {:?})",
+            core::time::Duration::from_nanos(nanos)
+        ),
+        None => String::from("quota reservation failed"),
+    }
+}
+
+/// The handle of a quota token, for the resource the manifest declares under
+/// `resourceDefaults.<env>.<name>`.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxNewQuotaToken(resource_name: RocStr, expected_use: u64) -> u32 {
+    // `resource_name` is owned by this function and released when it drops.
+    let name = resource_name.as_str();
+    handle_store(
+        &QUOTA_TOKENS,
+        golem::quota::types::new_token(name, expected_use),
+    )
+}
+
+/// Reserves `amount` from the token's allocation: `Ok` is the handle of a
+/// reservation to commit (or drop, which commits zero), `Err` is the rejection a
+/// `reject`ing resource answered with. A `throttle` resource waits here instead,
+/// and a `terminate` one traps the invocation.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxQuotaReserve(handle: u32, amount: u64) -> RocResult<u32, RocStr> {
+    let reserved = handle_with(&QUOTA_TOKENS, handle, |token| {
+        golem::quota::types::reserve(token, amount)
+    });
+
+    match reserved {
+        Some(Ok(reservation)) => RocResult::ok(handle_store(&QUOTA_RESERVATIONS, reservation)),
+        Some(Err(failure)) => RocResult::err(RocStr::from_str(&failed_reservation_text(&failure))),
+        None => RocResult::err(RocStr::from_str(&format!(
+            "unknown quota token handle {handle}"
+        ))),
+    }
+}
+
+/// Commits what the reserved work actually used; a handle is spent once. A
+/// `Try` because an unknown or already-committed handle is the app's mistake to
+/// see, the way `wsClose!` and `rpcCancel!` report theirs.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxQuotaCommit(handle: u32, used: u64) -> RocResult<(), RocStr> {
+    match handle_take(&QUOTA_RESERVATIONS, handle) {
+        Some(reservation) => {
+            golem::quota::types::Reservation::commit(reservation, used);
+            RocResult::ok(())
+        }
+        None => RocResult::err(RocStr::from_str(&format!(
+            "unknown quota reservation handle {handle}"
+        ))),
+    }
+}
+
+/// Splits `child_expected_use` off the token into a new one. The host traps if
+/// the child would exceed the parent's expected use.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxQuotaSplit(
+    handle: u32,
+    child_expected_use: u64,
+) -> RocResult<u32, RocStr> {
+    let child = handle_with(&QUOTA_TOKENS, handle, |token| {
+        golem::quota::types::split(token, child_expected_use)
+    });
+
+    match child {
+        Some(token) => RocResult::ok(handle_store(&QUOTA_TOKENS, token)),
+        None => RocResult::err(RocStr::from_str(&format!(
+            "unknown quota token handle {handle}"
+        ))),
+    }
+}
+
+/// Merges `other` into the token: `other` is consumed, and the host traps if the
+/// two tokens name different resources.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxQuotaMerge(handle: u32, other: u32) -> RocResult<(), RocStr> {
+    let unknown = |handle: u32| {
+        RocResult::err(RocStr::from_str(&format!(
+            "unknown quota token handle {handle}"
+        )))
+    };
+
+    // `merge` borrows the receiver and takes the other token, so both handles are
+    // checked before either is consumed (merging a token with itself would take
+    // the receiver away under the call).
+    if handle == other {
+        return RocResult::err(RocStr::from_str("cannot merge a quota token with itself"));
+    }
+    if handle_with(&QUOTA_TOKENS, handle, |_| ()).is_none() {
+        return unknown(handle);
+    }
+    let Some(other_token) = handle_take(&QUOTA_TOKENS, other) else {
+        return unknown(other);
+    };
+
+    handle_with(&QUOTA_TOKENS, handle, |token| {
+        golem::quota::types::merge(token, other_token)
+    });
+    RocResult::ok(())
+}
+
+// Retry-policy effects
+//
+// `golem:api/retry` is synchronous too. Policies and predicates are flattened
+// trees, which Roc can only see as text: `retry_json` renders them as JSON and
+// parses the same shape back, and the effects below are the thin shell around
+// that (`getRetryPolicies!` hands over an array of named policies). A policy the
+// app reads can be fed straight back into `setRetryPolicy!` or
+// `nextRetryDelay!`.
+
+/// Every retry policy active for this agent, as a JSON array of named policies.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxGetRetryPolicies() -> RocStr {
+    RocStr::from_str(&retry_json::policies_to_json(
+        &golem::api::retry::get_retry_policies(),
+    ))
+}
+
+/// One named policy as JSON, or the empty string when no policy has that name
+/// (the host answers with an `option`, and `resolveRetryPolicy!` reports "none"
+/// the same way).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxGetRetryPolicy(name: RocStr) -> RocResult<RocStr, RocStr> {
+    let name_str = name.as_str();
+    match golem::api::retry::get_retry_policy_by_name(name_str) {
+        Some(policy) => RocResult::ok(RocStr::from_str(&retry_json::to_json(
+            &retry_json::NamedPolicyJson::from(&policy),
+        ))),
+        None => RocResult::ok(RocStr::from_str("")),
+    }
+}
+
+/// The first named policy whose predicate matches the context, as JSON — or the
+/// empty string when none does. The host reports a predicate it could not
+/// evaluate as an error, without trapping the invocation.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxResolveRetryPolicy(
+    verb: RocStr,
+    noun_uri: RocStr,
+    properties_json: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    let properties = match retry_json::properties_from_json(properties_json.as_str()) {
+        Ok(properties) => properties,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+
+    let resolved =
+        golem::api::retry::resolve_retry_policy(verb.as_str(), noun_uri.as_str(), &properties);
+    match resolved {
+        Ok(Some(policy)) => RocResult::ok(RocStr::from_str(&retry_json::to_json(
+            &retry_json::PolicyJson::from(&policy),
+        ))),
+        Ok(None) => RocResult::ok(RocStr::from_str("")),
+        Err(err) => RocResult::err(RocStr::from_str(&format!(
+            "resolving a retry policy failed: {err}"
+        ))),
+    }
+}
+
+/// Advances the host's retry evaluator once: `policy_json` is a policy (empty
+/// takes the agent's configured default), `state_json` the continuation the
+/// previous decision returned (`[]` starts a sequence), `elapsed_nanos` the time
+/// since the first attempt, and `context_json` `{verb, nounUri, properties}`.
+/// The answer is `{state, delayNanos}`, with `null` for an exhausted policy.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxNextRetryDelay(
+    policy_json: RocStr,
+    state_json: RocStr,
+    elapsed_nanos: u64,
+    context_json: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    let policy = if policy_json.is_empty() {
+        None
+    } else {
+        match retry_json::policy_from_json(policy_json.as_str()) {
+            Ok(policy) => Some(policy),
+            Err(err) => return RocResult::err(RocStr::from_str(&err)),
+        }
+    };
+    let state = match retry_json::state_from_json(state_json.as_str()) {
+        Ok(state) => state,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+    let context = match retry_json::decision_context_from_json(context_json.as_str()) {
+        Ok(context) => context,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+
+    // A changed policy or a continuation the host cannot read comes back as an
+    // error here, never as a reset retry budget.
+    let decision = golem::api::retry::next_retry_delay(
+        policy.as_ref(),
+        &state,
+        elapsed_nanos,
+        &context.verb,
+        &context.noun_uri,
+        &context.properties,
+    );
+    match decision {
+        Ok(decision) => RocResult::ok(RocStr::from_str(&retry_json::decision_to_json(&decision))),
+        Err(err) => RocResult::err(RocStr::from_str(&format!(
+            "the next retry delay could not be computed: {err}"
+        ))),
+    }
+}
+
+/// Adds or overwrites a named policy (the host records it in the agent's oplog,
+/// so it survives a restart). The argument is the JSON `getRetryPolicies!`
+/// prints.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxSetRetryPolicy(policy_json: RocStr) -> RocResult<(), RocStr> {
+    match retry_json::named_policy_from_json(policy_json.as_str()) {
+        Ok(policy) => {
+            golem::api::retry::set_retry_policy(&policy);
+            RocResult::ok(())
+        }
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+/// Removes a named policy by name (recorded in the oplog as well).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxRemoveRetryPolicy(name: RocStr) {
+    golem::api::retry::remove_retry_policy(name.as_str());
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
@@ -2453,5 +2705,49 @@ mod tests {
         assert!(matches!(parse_method("DELETE"), wasi::http0_3_0::types::Method::Delete));
         assert!(matches!(parse_method("PATCH"), wasi::http0_3_0::types::Method::Patch));
         assert!(matches!(parse_method("custom"), wasi::http0_3_0::types::Method::Other(s) if s == "CUSTOM"));
+    }
+
+    /// A rejected reservation renders the host's `failed-reservation`: the
+    /// estimated wait is only there when the resource can predict one (a rate
+    /// limit can, a capacity limit cannot), and both halves stay readable in the
+    /// effect's error channel.
+    #[test]
+    fn test_failed_reservation_text() {
+        use golem::quota::types::FailedReservation;
+
+        assert_eq!(
+            failed_reservation_text(&FailedReservation {
+                estimated_wait_nanos: None
+            }),
+            "quota reservation failed"
+        );
+        assert_eq!(
+            failed_reservation_text(&FailedReservation {
+                estimated_wait_nanos: Some(250_000_000)
+            }),
+            "quota reservation failed (retry after 250ms)"
+        );
+        assert_eq!(
+            failed_reservation_text(&FailedReservation {
+                estimated_wait_nanos: Some(1_500_000_000)
+            }),
+            "quota reservation failed (retry after 1.5s)"
+        );
+    }
+
+    /// A handle this instance never handed out is reported, not passed to the
+    /// host APIs (which are stubbed outside wasm, so a call would panic here the
+    /// way it would fail on a real server).
+    #[test]
+    fn test_quota_unknown_handles() {
+        unsafe {
+            assert!(crate::rocFxQuotaReserve(9999, 1).is_err());
+            assert!(crate::rocFxQuotaCommit(9999, 0).is_err());
+            assert!(crate::rocFxQuotaSplit(9999, 1).is_err());
+            assert!(crate::rocFxQuotaMerge(1, 2).is_err());
+            // Merging a token with itself would consume the receiver, so it is
+            // refused before either handle is looked up.
+            assert!(crate::rocFxQuotaMerge(1, 1).is_err());
+        }
     }
 }

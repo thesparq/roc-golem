@@ -112,4 +112,63 @@ Effect := {}.{
 	getConfig! = |key| {
 		Host.rocFxGetConfig!(key)
 	}
+
+	## Quotas: a token, a reservation and the commit are three host calls, so
+	## the app carries the two handles between them.
+	newQuotaToken! : Str, U64 => U32
+	newQuotaToken! = |resourceName, expectedUse| {
+		Host.rocFxNewQuotaToken!(resourceName, expectedUse)
+	}
+
+	quotaReserve! : U32, U64 => Try(U32, Str)
+	quotaReserve! = |token, amount| {
+		Host.rocFxQuotaReserve!(token, amount)
+	}
+
+	quotaCommit! : U32, U64 => Try({}, Str)
+	quotaCommit! = |reservation, used| {
+		Host.rocFxQuotaCommit!(reservation, used)
+	}
+
+	quotaSplit! : U32, U64 => Try(U32, Str)
+	quotaSplit! = |token, childExpectedUse| {
+		Host.rocFxQuotaSplit!(token, childExpectedUse)
+	}
+
+	quotaMerge! : U32, U32 => Try({}, Str)
+	quotaMerge! = |token, other| {
+		Host.rocFxQuotaMerge!(token, other)
+	}
+
+	## Retry policies: the trees travel as the JSON `getRetryPolicies!`
+	## prints, so nothing is parsed on the Roc side.
+	getRetryPolicies! : {} => Str
+	getRetryPolicies! = |_| {
+		Host.rocFxGetRetryPolicies!({})
+	}
+
+	getRetryPolicy! : Str => Try(Str, Str)
+	getRetryPolicy! = |name| {
+		Host.rocFxGetRetryPolicy!(name)
+	}
+
+	resolveRetryPolicy! : Str, Str, Str => Try(Str, Str)
+	resolveRetryPolicy! = |verb, nounUri, propertiesJson| {
+		Host.rocFxResolveRetryPolicy!(verb, nounUri, propertiesJson)
+	}
+
+	nextRetryDelay! : Str, Str, U64, Str => Try(Str, Str)
+	nextRetryDelay! = |policyJson, stateJson, elapsedNanos, contextJson| {
+		Host.rocFxNextRetryDelay!(policyJson, stateJson, elapsedNanos, contextJson)
+	}
+
+	setRetryPolicy! : Str => Try({}, Str)
+	setRetryPolicy! = |policyJson| {
+		Host.rocFxSetRetryPolicy!(policyJson)
+	}
+
+	removeRetryPolicy! : Str => {}
+	removeRetryPolicy! = |name| {
+		Host.rocFxRemoveRetryPolicy!(name)
+	}
 }

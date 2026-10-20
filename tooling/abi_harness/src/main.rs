@@ -52,6 +52,10 @@ struct Ctx {
     connections: Vec<StubConnection>,
     /// Remote calls the agent made through `rpc!`.
     rpc_calls: Vec<String>,
+    /// Quota host calls (`golem:quota/types`) the agent made.
+    quota_calls: Vec<String>,
+    /// Retry-policy host calls (`golem:api/retry`) the agent made.
+    retry_calls: Vec<String>,
     /// HTTP state used by the `wasi:http` stubs in `stubs.rs`.
     fields_table: Vec<std::collections::HashMap<String, Vec<Vec<u8>>>>,
     requests_table: Vec<StubRequest>,
@@ -114,6 +118,74 @@ impl golem::core::types::HostQuotaToken for Ctx {
     fn drop(
         &mut self,
         _rep: wasmtime::component::Resource<golem::core::types::QuotaToken>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+/// The quota interface, stubbed: every call is recorded so a check can see what
+/// the component asked the host for. The tokens and reservations the agent
+/// holds are plain rep numbers — nothing here enforces a limit, and a
+/// reservation is never rejected (the e2e run is where a real resource's
+/// `enforcementAction` shows up).
+impl golem::quota::types::Host for Ctx {
+    fn new_token(
+        &mut self,
+        resource_name: String,
+        expected_use: u64,
+    ) -> wasmtime::component::Resource<golem::quota::types::QuotaToken> {
+        let rep = self.quota_calls.len() as u32 + 1;
+        self.quota_calls.push(format!(
+            "new-token({resource_name}, expected-use={expected_use})"
+        ));
+        wasmtime::component::Resource::new_own(rep)
+    }
+
+    fn reserve(
+        &mut self,
+        _token: wasmtime::component::Resource<golem::quota::types::QuotaToken>,
+        amount: u64,
+    ) -> Result<
+        wasmtime::component::Resource<golem::quota::types::Reservation>,
+        golem::quota::types::FailedReservation,
+    > {
+        let rep = self.quota_calls.len() as u32 + 1;
+        self.quota_calls.push(format!("reserve(amount={amount})"));
+        Ok(wasmtime::component::Resource::new_own(rep))
+    }
+
+    fn split(
+        &mut self,
+        _token: wasmtime::component::Resource<golem::quota::types::QuotaToken>,
+        child_expected_use: u64,
+    ) -> wasmtime::component::Resource<golem::quota::types::QuotaToken> {
+        let rep = self.quota_calls.len() as u32 + 1;
+        self.quota_calls
+            .push(format!("split(child-expected-use={child_expected_use})"));
+        wasmtime::component::Resource::new_own(rep)
+    }
+
+    fn merge(
+        &mut self,
+        _token: wasmtime::component::Resource<golem::quota::types::QuotaToken>,
+        _other: wasmtime::component::Resource<golem::quota::types::QuotaToken>,
+    ) {
+        self.quota_calls.push(String::from("merge()"));
+    }
+}
+
+impl golem::quota::types::HostReservation for Ctx {
+    fn commit(
+        &mut self,
+        _this: wasmtime::component::Resource<golem::quota::types::Reservation>,
+        used: u64,
+    ) {
+        self.quota_calls.push(format!("commit(used={used})"));
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::quota::types::Reservation>,
     ) -> wasmtime::Result<()> {
         Ok(())
     }
@@ -638,6 +710,117 @@ impl golem::agent::host::HostCancellationToken for Ctx {
     }
 }
 
+/// The retry interface, stubbed. The environment would hold the named policies
+/// and the host would evaluate them; the harness holds one canned policy and
+/// records every call, so a check can see that the component read it, resolved
+/// it and walked its schedule.
+const STUB_RETRY_POLICY: &str = "harness-retry";
+
+fn stub_named_policy() -> golem::api::retry::NamedRetryPolicy {
+    golem::api::retry::NamedRetryPolicy {
+        name: String::from(STUB_RETRY_POLICY),
+        priority: 100,
+        predicate: golem::api::retry::RetryPredicate {
+            nodes: vec![golem::api::retry::PredicateNode::PropEq(
+                golem::api::retry::PropertyComparison {
+                    property_name: String::from("verb"),
+                    value: golem::api::retry::PredicateValue::Text(String::from("send")),
+                },
+            )],
+        },
+        policy: golem::api::retry::RetryPolicy {
+            nodes: vec![
+                golem::api::retry::PolicyNode::CountBox(golem::api::retry::CountBoxConfig {
+                    max_retries: 2,
+                    inner: 1,
+                }),
+                golem::api::retry::PolicyNode::Periodic(100_000_000),
+            ],
+        },
+    }
+}
+
+/// `property=value` pairs of a retry context, so a recording keeps its shape.
+fn render_properties(
+    properties: &[(String, golem::api::retry::PredicateValue)],
+) -> String {
+    properties
+        .iter()
+        .map(|(name, value)| {
+            let rendered = match value {
+                golem::api::retry::PredicateValue::Text(text) => text.clone(),
+                golem::api::retry::PredicateValue::Integer(number) => number.to_string(),
+                golem::api::retry::PredicateValue::Boolean(flag) => flag.to_string(),
+            };
+            format!("{name}={rendered}")
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+impl golem::api::retry::Host for Ctx {
+    fn get_retry_policies(&mut self) -> Vec<golem::api::retry::NamedRetryPolicy> {
+        self.retry_calls.push(String::from("get-retry-policies"));
+        vec![stub_named_policy()]
+    }
+
+    fn get_retry_policy_by_name(
+        &mut self,
+        name: String,
+    ) -> Option<golem::api::retry::NamedRetryPolicy> {
+        self.retry_calls.push(format!("get-retry-policy-by-name({name})"));
+        (name == STUB_RETRY_POLICY).then(stub_named_policy)
+    }
+
+    fn resolve_retry_policy(
+        &mut self,
+        verb: String,
+        noun_uri: String,
+        properties: Vec<(String, golem::api::retry::PredicateValue)>,
+    ) -> Result<Option<golem::api::retry::RetryPolicy>, String> {
+        self.retry_calls.push(format!(
+            "resolve(verb={verb}, noun-uri={noun_uri}, properties={})",
+            render_properties(&properties)
+        ));
+        // The stub's policy is `propEq(verb, "send")`, so it applies to exactly
+        // that verb.
+        Ok((verb == "send").then(|| stub_named_policy().policy))
+    }
+
+    fn next_retry_delay(
+        &mut self,
+        policy: Option<golem::api::retry::RetryPolicy>,
+        state: Vec<u8>,
+        elapsed: golem::api::retry::Duration,
+        verb: String,
+        noun_uri: String,
+        properties: Vec<(String, golem::api::retry::PredicateValue)>,
+    ) -> Result<golem::api::retry::RetryDecision, String> {
+        self.retry_calls.push(format!(
+            "next-retry-delay(policy={} nodes, state={} bytes, elapsed={elapsed}ns, verb={verb}, noun-uri={noun_uri}, properties={})",
+            policy.as_ref().map_or(0, |policy| policy.nodes.len()),
+            state.len(),
+            render_properties(&properties),
+        ));
+        Ok(golem::api::retry::RetryDecision {
+            // Non-empty, so a continuation that the component dropped on the
+            // way shows up as `state=0 bytes` on the next call.
+            state: vec![1, 2, 3],
+            delay: Some(100_000_000),
+        })
+    }
+
+    fn set_retry_policy(&mut self, policy: golem::api::retry::NamedRetryPolicy) {
+        self.retry_calls
+            .push(format!("set-retry-policy({})", policy.name));
+    }
+
+    fn remove_retry_policy(&mut self, name: String) {
+        self.retry_calls
+            .push(format!("remove-retry-policy({name})"));
+    }
+}
+
 /// What the component under test is expected to report and do.
 struct Expectation {
     component: PathBuf,
@@ -661,6 +844,12 @@ struct Expectation {
     expect_http: Option<String>,
     /// Substring expected in the remote calls the agent made through `rpc!`.
     expect_rpc: Option<String>,
+    /// Substring expected in the quota calls (`new-token`, `reserve`, …) the
+    /// agent made through the `golem:quota/types` interface.
+    expect_quota: Option<String>,
+    /// Substring expected in the retry-policy calls the agent made through the
+    /// `golem:api/retry` interface.
+    expect_retry: Option<String>,
     /// A tool (registered as a method) to invoke, and the substring its result
     /// should contain.
     tool: Option<String>,
@@ -679,6 +868,7 @@ fn usage() -> String {
          [--message TEXT] [--reply SUBSTRING] [--then-message TEXT] \
          [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING] \
          [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING] \
+         [--expect-quota SUBSTRING] [--expect-retry SUBSTRING] \
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
          [--expect-kind regular|http-router]",
     )
@@ -699,6 +889,8 @@ fn parse_args() -> Result<Expectation> {
         config: None,
         expect_http: None,
         expect_rpc: None,
+        expect_quota: None,
+        expect_retry: None,
         tool: None,
         tool_reply: None,
         mount: None,
@@ -720,6 +912,8 @@ fn parse_args() -> Result<Expectation> {
             "--config" => expectation.config = args.next(),
             "--expect-http" => expectation.expect_http = args.next(),
             "--expect-rpc" => expectation.expect_rpc = args.next(),
+            "--expect-quota" => expectation.expect_quota = args.next(),
+            "--expect-retry" => expectation.expect_retry = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
             "--expect-mount" => expectation.mount = args.next(),
@@ -808,6 +1002,8 @@ async fn run() -> Result<ExitCode> {
             sent: Vec::new(),
             connections: Vec::new(),
             rpc_calls: Vec::new(),
+            quota_calls: Vec::new(),
+            retry_calls: Vec::new(),
             fields_table: Vec::new(),
             requests_table: Vec::new(),
             body_slots: Vec::new(),
@@ -1089,6 +1285,32 @@ async fn run() -> Result<ExitCode> {
                 failures.push(format!(
                     "no rpc call contains {:?} (made: {:?})",
                     expected, ctx.rpc_calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_quota {
+            let hit = ctx
+                .quota_calls
+                .iter()
+                .any(|call| call.contains(expected.as_str()));
+            println!("[quota calls] {:?}", ctx.quota_calls);
+            if !hit {
+                failures.push(format!(
+                    "no quota call contains {:?} (made: {:?})",
+                    expected, ctx.quota_calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_retry {
+            let hit = ctx
+                .retry_calls
+                .iter()
+                .any(|call| call.contains(expected.as_str()));
+            println!("[retry calls] {:?}", ctx.retry_calls);
+            if !hit {
+                failures.push(format!(
+                    "no retry-policy call contains {:?} (made: {:?})",
+                    expected, ctx.retry_calls
                 ));
             }
         }

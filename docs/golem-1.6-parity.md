@@ -15,6 +15,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | agent-to-agent RPC | `golem:agent/host` wasm-rpc | `rpc!` (invoke-and-await), `rpcFireAndForget!`, `rpcSchedule!`, `rpcScheduleCancelable!` / `rpcCancel!`, `parseAgentId!` / `makeAgentId!` |
 | webhooks | `golem:agent/host` + `golem:api/host` promises | `createWebhook!` / `awaitWebhook!`; the POST callback completes a durable promise |
 | user-defined snapshots | `golem:api/save-snapshot`/`load-snapshot` | state JSON; e2e-covered across an incompatible revision |
+| quotas + retry policies | `golem:quota/types`, `golem:api/retry` | `newQuotaToken!` / `quotaReserve!` / `quotaCommit!` / `quotaSplit!` / `quotaMerge!`, and `getRetryPolicies!` / `resolveRetryPolicy!` / `nextRetryDelay!` / … with the policy trees as JSON |
 | tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance) |
 | read-only methods | agent metadata | declared for tools; until-write cache |
 | HTTP mounts | agent metadata | filesystem bindings (regular agents), static bindings + OpenAPI provider (routers) |
@@ -69,8 +70,36 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 6. **Permissions** (`golem:permissions/{types,inspect,derive,revoke,wallet,kernel-introspection}`):
    cards, grants, and the principal the runtime passes to methods (we accept
    `Principal` and ignore it). Cost: medium-large.
-7. **Resource quotas** (`golem:quota/types`) and **retry policies**
-   (`golem:api/retry`). Cost: small each.
+7. ~~**Resource quotas** (`golem:quota/types`) and **retry policies**
+   (`golem:api/retry`)~~ — **done**: the five quota effects (`newQuotaToken!`,
+   `quotaReserve!`, `quotaCommit!`, `quotaSplit!`, `quotaMerge!`) and six retry
+   effects (`getRetryPolicies!`, `getRetryPolicy!`, `resolveRetryPolicy!`,
+   `nextRetryDelay!`, `setRetryPolicy!`, `removeRetryPolicy!`), with both
+   interfaces added to `wit/world.wit`. Tokens and reservations travel as `U32`
+   handles in the host's handle table, the way WebSocket connections do. Policies,
+   predicates and decisions are flattened trees, so they travel as JSON text
+   (`host/src/retry_json.rs` mirrors them in both directions: camelCase WIT names,
+   durations as nanosecond numbers, predicate values as plain JSON
+   strings/numbers/booleans, the root at `nodes[0]`); the shape is spelled out in
+   the README. Both interfaces are synchronous, so the ABI harness covers the
+   quota path and a two-step retry walk with recording stubs — that check runs on
+   the counter component in CI and the release workflow — and the e2e covers them
+   against a real server: a resource that commits one reservation and rejects the
+   next past its capacity, and a manifest-declared policy that is listed, resolved
+   and walked twice. Two details about a live environment worth knowing: besides
+   the policies a manifest declares it carries a `default` rule (`predTrue`, the
+   lowest priority), so `resolveRetryPolicy!` only answers `""` when the
+   environment has no rules at all; and `quotaCommit!` returns `Try({}, Str)`
+   rather than `{}`, so a handle that was already spent is reported the way
+   `websocketClose!` reports one (`getRetryPolicy!` reports a missing name as
+   `""`, the same way `resolveRetryPolicy!` reports no match). The
+   `resourceDefaults` / `retryPolicyDefaults` in `golem.yaml` are declared for the
+   `local` environment only, which is the one this repo's e2e and `golem -L
+   deploy` use, and a resource's capacity is environment-level and durable rather
+   than per agent — the e2e reports that one check as `SKIP` when a rerun finds
+   the data directory's capacity already spent. Not exposed: passing a quota token
+   to another agent. The SDKs send tokens through schema values, and
+   `schema-value-tree` in this platform carries no resources.
 8. **Databases** (`golem:rdbms/{postgres,mysql,ignite2}`), **blobstore**
    (`wasi:blobstore`), **key-value** (`wasi:keyvalue`), **durability**
    (`golem:durability`). Cost: small each (a Roc effect per operation), but the
