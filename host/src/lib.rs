@@ -1,5 +1,25 @@
 #[cfg(any(feature = "stub-guest", test))]
 pub mod guest_bridge;
+/// The compiler-generated ABI layer (`roc glue` with the official
+/// `RustGlue.roc`): the ABI-visible types, retain/release plans, the hosted
+/// symbols the host must export, and owning wrappers for the provided
+/// entrypoints. Regenerate with:
+///
+/// ```bash
+/// curl -s -o /tmp/RustGlue.roc \
+///   https://raw.githubusercontent.com/roc-lang/roc/<nightly-sha>/src/glue/src/RustGlue.roc
+/// roc glue /tmp/RustGlue.roc host/src host/src/main.roc  # see tooling/glue/README.md
+/// ```
+///
+/// It is checked in so the hand-written ABI in `roc_std.rs` can be compared
+/// against it (see `tests::test_generated_abi_agrees_with_hand_written`), and so
+/// the migration to the generated types can proceed incrementally.
+///
+/// While both layers exist, the generated `extern` declarations of the provided
+/// entrypoints and this crate's own `sret`-style definitions describe the same C
+/// ABI in two spellings; the definitions go away as the migration completes.
+#[allow(clashing_extern_declarations)]
+pub mod roc_platform_abi;
 pub mod roc_std;
 
 use core::cell::RefCell;
@@ -1919,6 +1939,63 @@ mod tests {
         assert!(validate_openapi_document("not json").is_err());
         assert!(validate_openapi_document(r#"{"openapi":"3.0.0","paths":{}}"#).is_err());
         assert!(validate_openapi_document(r#"{"openapi":"3.1.0"}"#).is_err());
+    }
+
+    /// The hand-written ABI must agree with the compiler-generated one: same
+    /// layout, and the same small-string, seamless-slice and refcount rules.
+    /// This is the safety net while `roc_std.rs` is being replaced by the
+    /// generated module (`roc glue` + the official `RustGlue.roc`).
+    #[test]
+    fn test_generated_abi_agrees_with_hand_written() {
+        use crate::roc_platform_abi as generated;
+        use crate::roc_std::RocStr as HandWritten;
+
+        // Same committed layout.
+        assert_eq!(
+            core::mem::size_of::<generated::RocStr>(),
+            core::mem::size_of::<HandWritten>()
+        );
+        assert_eq!(
+            core::mem::align_of::<generated::RocStr>(),
+            core::mem::align_of::<HandWritten>()
+        );
+
+        // A heap string built by the hand-written side reads the same through
+        // the generated accessors, including the capacity encoding (shifted left
+        // by one) and the absence of the slice tag.
+        let text = "a string long enough to be heap allocated by both sides";
+        let mine = HandWritten::from_str(text);
+        let theirs = generated::RocStr {
+            bytes: mine.words()[0] as *mut u8,
+            capacity_or_alloc_ptr: mine.words()[1],
+            length: mine.words()[2],
+        };
+        assert_eq!(theirs.len(), text.len());
+        assert_eq!(theirs.as_slice(), text.as_bytes());
+        assert!(!theirs.is_small_str());
+        assert!(!theirs.is_seamless_slice());
+        assert_eq!(theirs.capacity_or_alloc_ptr, text.len() << 1);
+
+        // A seamless slice is recognised by both, and both follow it back to the
+        // allocation it belongs to.
+        let data_ptr = mine.words()[0];
+        let slice = generated::RocStr {
+            bytes: (data_ptr + 8) as *mut u8,
+            capacity_or_alloc_ptr: data_ptr | 1,
+            length: text.len() - 8,
+        };
+        assert!(slice.is_seamless_slice());
+        assert_eq!(slice.as_slice(), &text.as_bytes()[8..]);
+        let ours = HandWritten::from_parts(slice.bytes, slice.capacity_or_alloc_ptr, slice.length);
+        assert_eq!(ours.as_str(), &text[8..]);
+        assert_eq!(ours.allocation_ptr_for_test(), data_ptr as *mut u8);
+
+        // And the refcount protocol: the word before the allocation, zero for
+        // static data.
+        unsafe {
+            let refcount = *((data_ptr as *const isize).sub(1));
+            assert_eq!(refcount, 1, "both sides start a fresh string at one");
+        }
     }
 
     #[test]

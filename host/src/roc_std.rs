@@ -85,22 +85,51 @@ pub unsafe extern "C" fn roc_panic(msg: *mut RocStr, _tag_id: u32) {
     panic!("Roc guest panic: {}", msg_str);
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn roc_crashed(_msg: *mut RocStr, _tag: u32) {
-    panic!("Roc execution crashed");
+/// Roc's runtime reporting hooks. The generated ABI
+/// (`tooling/glue/generated/roc_platform_abi.rs`) declares all of them as
+/// `(bytes: *const u8, len: usize)`: these used to take two `*mut RocStr`s and
+/// ignore them, so `dbg!` output, `expect` failures and crashes were silent.
+/// `roc_crashed` must not return — Roc traps right after the call.
+unsafe fn log_roc_bytes(level: crate::wasi::logging::logging::Level, prefix: &str, bytes: *const u8, len: usize) {
+    let slice = if bytes.is_null() {
+        &[][..]
+    } else {
+        core::slice::from_raw_parts(bytes, len)
+    };
+    let text = String::from_utf8_lossy(slice);
+    crate::wasi::logging::logging::log(level, "roc-agent", &format!("{prefix}{text}"));
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc_expect_failed(_loc: *mut RocStr, _msg: *mut RocStr) {
-    eprintln!("Roc expect failed");
+pub unsafe extern "C" fn roc_crashed(bytes: *const u8, len: usize) {
+    log_roc_bytes(
+        crate::wasi::logging::logging::Level::Error,
+        "Roc crashed: ",
+        bytes,
+        len,
+    );
+    // The contract is that this never returns.
+    unreachable!("Roc execution crashed");
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc_dbg(_loc: *mut RocStr, msg: *mut RocStr) {
-    if !msg.is_null() {
-        let m = (*msg).as_str();
-        eprintln!("[ROC_DBG] {}", m);
-    }
+pub unsafe extern "C" fn roc_expect_failed(bytes: *const u8, len: usize) {
+    log_roc_bytes(
+        crate::wasi::logging::logging::Level::Error,
+        "Roc expect failed: ",
+        bytes,
+        len,
+    );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn roc_dbg(bytes: *const u8, len: usize) {
+    log_roc_bytes(
+        crate::wasi::logging::logging::Level::Debug,
+        "roc dbg: ",
+        bytes,
+        len,
+    );
 }
 
 #[no_mangle]
@@ -256,6 +285,26 @@ impl RocStr {
                 roc_str
             }
         }
+    }
+
+    /// The raw words, for the cross-check test against the generated ABI.
+    #[cfg(test)]
+    pub fn words(&self) -> [usize; 3] {
+        self.words
+    }
+
+    /// Builds a string from raw words, for the cross-check test.
+    #[cfg(test)]
+    pub fn from_parts(bytes: *mut u8, capacity_or_alloc_ptr: usize, length: usize) -> Self {
+        Self {
+            words: [bytes as usize, capacity_or_alloc_ptr, length],
+        }
+    }
+
+    /// The allocation a string owns, for the cross-check test.
+    #[cfg(test)]
+    pub fn allocation_ptr_for_test(&self) -> *mut u8 {
+        self.data_ptr().unwrap_or(core::ptr::null_mut())
     }
 
     pub fn is_small(&self) -> bool {
