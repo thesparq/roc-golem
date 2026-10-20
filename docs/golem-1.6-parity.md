@@ -122,7 +122,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
     same commands against a real deployment plus `fork!` and `idempotencyKey!` on
     the effects agent.
 
-    Two things worth knowing about the surface itself:
+    Three things worth knowing about the surface itself:
 
     - **Most of the 1.5 execution-control interface is gone in 1.6, on purpose**
       (`wit/deps/golem-1.x/golem-host.wit` has none of them, and
