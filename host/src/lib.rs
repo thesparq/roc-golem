@@ -2123,6 +2123,14 @@ fn blob_put(container: &str, object: &str, value: &str) -> Result<(), String> {
     container.write_data(object, &outgoing)
 }
 
+fn blob_create_container(name: &str) -> Result<(), String> {
+    // The host reads the container back to report its creation time, which the
+    // effect does not expose: drop the handle and keep the outcome. Creating a
+    // container that is already there is not an error — the store keeps a
+    // directory entry, and a second call leaves it alone.
+    wasi::blobstore::blobstore::create_container(name).map(|_container| ())
+}
+
 fn blob_has(container: &str, object: &str) -> Result<bool, String> {
     let container = blob_container(container)?;
     container.has_object(object)
@@ -2175,14 +2183,9 @@ pub unsafe extern "C" fn rocFxKvExists(bucket: RocStr, key: RocStr) -> RocResult
 }
 
 /// `blobCreateContainer!`: creates the container if it is not there yet.
-/// Creating one that exists is not an error — the store keeps a directory entry
-/// and a second call leaves it alone.
 #[no_mangle]
 pub unsafe extern "C" fn rocFxBlobCreateContainer(name: RocStr) -> RocResult<(), RocStr> {
-    let name = name.as_str();
-    // The host reads the container back to report its creation time, which the
-    // effect does not expose: drop the handle and keep the outcome.
-    unit_result(wasi::blobstore::blobstore::create_container(name).map(|_container| ()))
+    unit_result(blob_create_container(name.as_str()))
 }
 
 /// `blobPut!`: stores `value` (as UTF-8 bytes) as `object` in `container`,
