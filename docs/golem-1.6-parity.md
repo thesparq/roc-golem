@@ -322,6 +322,14 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
     `tool-middleware` metadata (`parameter-schema`, monomorphic scope with a
     presented and an expected tool). Cost: large, and it buys nothing for an app
     that just wants its own tools to read stdin and write stdout.
+
+    Adjacent, and also not exposed: the *client* half of the tool surface,
+    `golem:tool/host` (`get-all-tools` / `get-tool`, and `tool-rpc`'s
+    `invoke-and-await` / `invoke` / `async-invoke-and-await` with
+    `create-stdin` / `create-output`). An agent can publish and answer tools,
+    but cannot call another component's tool from Roc — a new interface to
+    import plus the same stream machinery the writers above use. That is a gap
+    of its own, not one of item 11's two halves.
 12. **RPC across components**: `rpc!` resolves the target through the calling
     component's own agent types, so cross-component calls fail with
     `Agent type not found` (documented in the README). Cost: unknown — needs
