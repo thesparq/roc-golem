@@ -763,28 +763,20 @@ async fn handle_router_request(
         value_nodes: vec![SchemaValueNode::ListValue(body_nodes)],
         root: 0,
     };
-    wit_bindgen::spawn_local(async move {
-        wasi::logging::logging::log(
-            wasi::logging::logging::Level::Info,
-            "roc-agent",
-            "router: writing response body",
-        );
-        let leftover = body_tx.write_all(vec![chunk]).await;
-        drop(body_tx);
-        wasi::logging::logging::log(
-            wasi::logging::logging::Level::Info,
-            "roc-agent",
-            "router: response body written",
-        );
-        if !leftover.is_empty() {
-            wasi::logging::logging::log(
-                wasi::logging::logging::Level::Warn,
-                "roc-agent",
-                "the response body was not fully delivered to the runtime",
-            );
-        }
-    });
+    // The order matters: handing the read end to the runtime first (`wrap`) lets
+    // it start draining the stream, which is what the write below waits for. The
+    // Rust SDK's router does the same, and a body written *before* the transfer
+    // deadlocks (the stream is a rendezvous).
     let handle = golem::core::types::SchemaValueStream::wrap(body_rx).await;
+    let leftover = body_tx.write_all(vec![chunk]).await;
+    drop(body_tx);
+    if !leftover.is_empty() {
+        crate::wasi::logging::logging::log(
+            crate::wasi::logging::logging::Level::Warn,
+            "roc-agent",
+            "the response body was not fully delivered to the runtime",
+        );
+    }
     let body_index = value_nodes.len() as i32;
     value_nodes.push(SchemaValueNode::StreamValue(handle));
     value_nodes[0] = SchemaValueNode::RecordValue(vec![1, 2, body_index]);
