@@ -35,3 +35,25 @@ against the same Golem 1.6.0 server and watch whether its body arrives. If it
 does, the SDK's machinery has the keep-alive and this platform can adopt that
 shape; if it does not, the response body is a runtime limitation and the
 static/provider router is the right deliverable for this kind.
+
+## Update: the ordering experiment, and what the SDK's probe changed
+
+The Rust SDK probe (`tooling/sdk_router_probe`, built with `golem-rust v3.0.0`)
+**does** deliver a body: its router answers `200` with `sdk probe body for
+/sdk-probe/hello`. So the response body is not a runtime limitation.
+
+That pointed at ordering, and moving the write *after* the read end is handed
+over (`SchemaValueStream::wrap` first, then `write_all`, inline — no spawn)
+changed the symptom but not the outcome:
+
+- before: the write blocked and the invocation timed out (504);
+- after: the write **completes** (no leftover bytes, so the runtime did consume
+  the chunk) but the client receives `200` with a **0-byte, truncated** body.
+
+The most consistent reading: the runtime drains the stream as soon as it owns the
+read end — which is what unblocks our write — but it has not yet attached that
+stream to a response, so the drained bytes are not the response body. The SDK
+must therefore deliver the response head *before* the body is written, i.e. the
+`task.return`-then-continue shape that wasi-http p3 uses and that the fork's
+generated export (a plain async fn) does not express. That is the thing to study
+next, and it is a change in the export machinery rather than in this handler.

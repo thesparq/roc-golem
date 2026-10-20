@@ -1,0 +1,22 @@
+# An experiment, not part of any build: does the Rust SDK's HTTP router deliver a
+# response *body* to the client? The Roc platform's dynamic router handler can
+# produce a response head but not a body (see docs/router-handler-status.md on
+# wip/router-handler), because a guest-created stream is a rendezvous and the
+# fork's export completes its task when our `invoke` resolves. If the SDK — whose
+# machinery has the same shape — does deliver a body, that is the shape to adopt.
+[package]
+name = "sdk-router-probe"
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = "symbols"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+golem-rust = { version = "3.0.0", features = ["export_golem_agentic"] }
