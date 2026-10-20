@@ -18,9 +18,14 @@ environments:
     server: cloud
 
 # The file-site agent publishes its mount on the local server's HTTP API
-# listener. The CLI expands `subdomain` to `roc-golem.localhost:<port>` using
+# listener, and the CLI expands `subdomain` to `roc-golem.localhost:<port>` using
 # this port, so a server started with a different `--custom-request-port` will
 # not be reachable under that domain (the CLI warns when they differ).
+#
+# `effects-agent` is listed too: Golem only lets agent types deployed through an
+# HTTP API create webhooks, and its mount is what gives the webhook callback
+# route a place to live. Its callback URLs come out under `/webhooks/` (the
+# deployment's default `webhookUrl` prefix) followed by the agent type name.
 localServer:
   customRequestPort: 9882
 
@@ -31,6 +36,7 @@ httpApi:
         agents:
           file-site-agent: {}
           static-site-agent: {}
+          effects-agent: {}
 
 tools:
   # The tool surface (`golem:tool/guest`) exposes each app tool under its

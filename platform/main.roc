@@ -14,6 +14,8 @@ platform "golem"
 		"main_metadata_for_host_1_exposed_generic": main_metadata_for_host,
 	}
 	hosted {
+		"rocFxAwaitWebhook": Host.rocFxAwaitWebhook!,
+		"rocFxCreateWebhook": Host.rocFxCreateWebhook!,
 		"rocFxGetConfig": Host.rocFxGetConfig!,
 		"rocFxGetWorkerId": Host.rocFxGetWorkerId!,
 		"rocFxHttpRequest": Host.rocFxHttpRequest!,

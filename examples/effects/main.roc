@@ -2,6 +2,8 @@ app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [Agent, defineAgent]
 import pf.Golem exposing [
+	awaitWebhook!,
+	createWebhook!,
 	http!,
 	logInfo!,
 	makeAgentId!,
@@ -17,7 +19,9 @@ import pf.Golem exposing [
 #
 # `baseUrl` is taken from the agent config when it looks like a URL, so a test
 # harness can hand the agent an address to call; otherwise it falls back to a
-# local default.
+# local default. `webhookUrl` is the callback URL of the webhook this agent
+# created (`webhook-create`), kept in state because the webhook lives across
+# invocations: the POST arrives while no invocation is running.
 State :: {
 	baseUrl : Str,
 	lastStatus : Str,
@@ -26,6 +30,7 @@ State :: {
 	# Handle of the most recent cancelable scheduled invocation; 0 means there
 	# is none, which is what `cancel` reports back.
 	cancelHandle : U32,
+	webhookUrl : Str,
 }
 
 agent : Agent(State)
@@ -37,6 +42,7 @@ agent = defineAgent({
 			lastBody: "",
 			lastRpc: "none",
 			cancelHandle: 0,
+			webhookUrl: "",
 		},
 
 	handleMessage!: |state, message|
@@ -127,12 +133,22 @@ agent = defineAgent({
 		tools: [],
 		config: [],
 		agentKind: Regular,
-		httpMount: None,
+		# Golem only lets agent types deployed through an HTTP API create
+		# webhooks, and a deployment entry needs a mount. This agent serves no
+		# files, so the mount carries no bindings; its `{id}` capture is the
+		# constructor parameter, the way every regular mount is bound.
+		httpMount: Mount({
+			pathPrefix: ["effects", "{id}"],
+			staticBindings: [],
+			filesystemBindings: [],
+			fileResponseHeaders: [],
+			corsAllowedPatterns: [],
+		}),
 		openapiProvider: NoOpenApi,
 	},
 
 	serializeState: |state|
-		"{\"baseUrl\":\"${state.baseUrl}\",\"lastStatus\":\"${state.lastStatus}\",\"lastBody\":\"${state.lastBody}\",\"lastRpc\":\"${state.lastRpc}\",\"cancelHandle\":${U32.to_str(state.cancelHandle)}}",
+		"{\"baseUrl\":\"${state.baseUrl}\",\"lastStatus\":\"${state.lastStatus}\",\"lastBody\":\"${state.lastBody}\",\"lastRpc\":\"${state.lastRpc}\",\"cancelHandle\":${U32.to_str(state.cancelHandle)},\"webhookUrl\":\"${state.webhookUrl}\"}",
 
 	deserializeState: |stateJson|
 		Ok({
@@ -141,6 +157,7 @@ agent = defineAgent({
 			lastBody: extract_json_str(stateJson, "lastBody") ?? "",
 			lastRpc: extract_json_str(stateJson, "lastRpc") ?? "none",
 			cancelHandle: U32.from_str(extract_json_str(stateJson, "cancelHandle") ?? "0") ?? 0,
+			webhookUrl: extract_json_str(stateJson, "webhookUrl") ?? "",
 		}),
 })
 
@@ -250,10 +267,44 @@ runCommand = |state, message| {
 					}
 			}
 
+		"webhook-create" =>
+		# Creates the promise + webhook pair and stores the callback URL; a POST
+		# to that URL (from outside Golem) completes the promise.
+			match createWebhook!({}) {
+				Ok(url) =>
+					{
+						state: { ..state, webhookUrl: quote_free(url) },
+						replies: ["Webhook created: ${url}"],
+					}
+
+				Err(err) =>
+					{
+						state,
+						replies: ["Webhook creation failed: ${err}"],
+					}
+			}
+
+		"webhook-await" =>
+		# Waits for the POST that completes the stored URL's promise and returns
+		# its body.
+			match awaitWebhook!(state.webhookUrl) {
+				Ok(body) =>
+					{
+						state,
+						replies: ["Webhook body: ${body}"],
+					}
+
+				Err(err) =>
+					{
+						state,
+						replies: ["Webhook await failed: ${err}"],
+					}
+			}
+
 		_ =>
 			{
 				state,
-				replies: ["Commands: fetch, rpc, cancel, fire-and-forget <id> <method> <payload>, schedule <id> <method> <payload> <millis>, schedule-cancelable <id> <method> <payload> <millis>, parse-agent-id <id>, make-agent-id <type> <param>"],
+				replies: ["Commands: fetch, rpc, cancel, webhook-create, webhook-await, fire-and-forget <id> <method> <payload>, schedule <id> <method> <payload> <millis>, schedule-cancelable <id> <method> <payload> <millis>, parse-agent-id <id>, make-agent-id <type> <param>"],
 			}
 	}
 }

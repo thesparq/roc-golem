@@ -1,6 +1,8 @@
 Host :: [].{
 	rocFxLog! : U8, Str => {}
 	rocFxGetWorkerId! : {} => Str
+	rocFxCreateWebhook! : {} => Try(Str, Str)
+	rocFxAwaitWebhook! : Str => Try(Str, Str)
 	rocFxRpcInvoke! : Str, Str, Str => Try(Str, Str)
 	rocFxRpcFireAndForget! : Str, Str, Str => Try(Str, Str)
 	rocFxRpcSchedule! : Str, Str, Str, U64 => Try(Str, Str)

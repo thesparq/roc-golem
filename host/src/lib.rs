@@ -26,6 +26,7 @@ use core::cell::RefCell;
 use core::mem::MaybeUninit;
 use core::ptr;
 use std::boxed::Box;
+use std::collections::HashMap;
 use std::thread::LocalKey;
 use roc_std::{RocResult, RocStr};
 
@@ -1106,6 +1107,80 @@ fn uuid_string(id: &golem::core::types::Uuid) -> String {
     )
 }
 
+// Webhook effects
+//
+// A webhook is a promise plus a URL Golem serves: a POST to the URL completes
+// the promise with the request body, so the agent hands the URL to an external
+// system and awaits the callback later. The promise id never leaves the host —
+// the URL is the handle the app stores in its own state between invocations,
+// and it is unique per webhook.
+
+thread_local! {
+    /// Promise ids of the webhooks this instance created, keyed by the callback
+    /// URL `createWebhook!` returned. The map is part of the instance's memory,
+    /// so it survives between invocations and comes back with the agent's state
+    /// (restored from a snapshot, or rebuilt by replaying `createWebhook!`).
+    static WEBHOOK_PROMISES: RefCell<HashMap<String, golem::core::types::PromiseId>> =
+        RefCell::new(HashMap::new());
+}
+
+fn remember_webhook_promise(url: &str, promise_id: golem::core::types::PromiseId) {
+    WEBHOOK_PROMISES.with(|promises| {
+        promises.borrow_mut().insert(url.to_string(), promise_id);
+    });
+}
+
+fn webhook_promise(url: &str) -> Option<golem::core::types::PromiseId> {
+    WEBHOOK_PROMISES.with(|promises| promises.borrow().get(url).cloned())
+}
+
+/// The `webhook-error` variant rendered for the `Try(Str, Str)` error channel.
+fn webhook_error_text(error: golem::agent::host::WebhookError) -> String {
+    match error {
+        golem::agent::host::WebhookError::PermissionDenied => "permission-denied".to_string(),
+        golem::agent::host::WebhookError::InternalError(message) => {
+            format!("internal-error: {message}")
+        }
+    }
+}
+
+/// `createWebhook!`: creates a promise, creates the webhook that completes it,
+/// and returns the callback URL. Only agent types currently deployed through an
+/// HTTP API may create webhooks; Golem reports anything else as the
+/// `webhook-error` this effect carries.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxCreateWebhook() -> RocResult<RocStr, RocStr> {
+    let promise_id = golem::api::host::create_promise();
+    match golem::agent::host::create_webhook(&promise_id) {
+        Ok(url) => {
+            remember_webhook_promise(&url, promise_id);
+            RocResult::ok(RocStr::from_str(&url))
+        }
+        Err(err) => RocResult::err(RocStr::from_str(&webhook_error_text(err))),
+    }
+}
+
+/// `awaitWebhook!`: waits for the POST that completes the URL's promise and
+/// returns the body as lossy UTF-8, the convention `http!` uses for bytes. The
+/// URL comes from `createWebhook!` in an earlier invocation (or a replay of
+/// one); a URL this instance never created is an error, not a hang.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxAwaitWebhook(url: RocStr) -> RocResult<RocStr, RocStr> {
+    let url_str = url.as_str();
+    let Some(promise_id) = webhook_promise(url_str) else {
+        return RocResult::err(RocStr::from_str(&format!(
+            "no webhook was created for URL {url_str:?}"
+        )));
+    };
+
+    // `get` is an async host import (like `websocketReceive!`), so the
+    // synchronous effect drives it with the fork's `block_on`.
+    let result = golem::api::host::get_promise(&promise_id);
+    let body = wit_bindgen::block_on(result.get());
+    let text = String::from_utf8_lossy(&body);
+    RocResult::ok(RocStr::from_str(&text))
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rocFxSetPersistence(mode: u8) {
     // Golem 1.6 removed persistence levels: durable agents are durable all the
@@ -2178,6 +2253,59 @@ mod tests {
         assert_eq!(handle_take(&TEST_SLOTS, 0), None);
         assert_eq!(handle_store(&TEST_SLOTS, String::from("c")), first);
         assert_eq!(handle_take(&TEST_SLOTS, first), Some(String::from("c")));
+    }
+
+    /// A webhook's promise id stays host-side, keyed by the URL the app carries
+    /// in its state; an unknown URL is an error rather than a lookup of someone
+    /// else's promise.
+    #[test]
+    fn test_webhook_promise_table() {
+        let url = "http://roc-golem.localhost:9882/webhooks/effects-agent/abc123";
+        assert!(webhook_promise(url).is_none());
+
+        remember_webhook_promise(
+            url,
+            golem::core::types::PromiseId {
+                agent_id: golem::core::types::AgentId {
+                    component_id: golem::core::types::ComponentId {
+                        uuid: golem::core::types::Uuid {
+                            high_bits: 0x0102_0304_0506_0708,
+                            low_bits: 0x090a_0b0c_0d0e_0f10,
+                        },
+                    },
+                    agent_id: String::from("effects-agent(\"e2e\")"),
+                },
+                oplog_idx: 7,
+            },
+        );
+
+        let found = webhook_promise(url).expect("the URL should resolve to its promise");
+        assert_eq!(found.oplog_idx, 7);
+        assert_eq!(found.agent_id.agent_id, "effects-agent(\"e2e\")");
+        assert_eq!(
+            found.agent_id.component_id.uuid.high_bits,
+            0x0102_0304_0506_0708
+        );
+        assert!(webhook_promise(
+            "http://roc-golem.localhost:9882/webhooks/effects-agent/other"
+        )
+        .is_none());
+    }
+
+    /// The `webhook-error` variant is rendered for the effect's error channel:
+    /// `permission-denied` and the host's message stay distinguishable.
+    #[test]
+    fn test_webhook_error_text() {
+        assert_eq!(
+            webhook_error_text(golem::agent::host::WebhookError::PermissionDenied),
+            "permission-denied"
+        );
+        assert_eq!(
+            webhook_error_text(golem::agent::host::WebhookError::InternalError(
+                "not deployed as part of an http api".to_string()
+            )),
+            "internal-error: not deployed as part of an http api"
+        );
     }
 
     #[test]
