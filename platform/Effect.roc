@@ -20,6 +20,12 @@ Effect := {}.{
 	getWorkerId! : {} => Str
 	getWorkerId! = |_| Host.rocFxGetWorkerId!({})
 
+	createWebhook! : {} => Try(Str, Str)
+	createWebhook! = |_| Host.rocFxCreateWebhook!({})
+
+	awaitWebhook! : Str => Try(Str, Str)
+	awaitWebhook! = |url| Host.rocFxAwaitWebhook!(url)
+
 	rpcInvoke! : Str, Str, Str => Try(Str, Str)
 	rpcInvoke! = |targetWorker, fnName, payload| {
 		Host.rocFxRpcInvoke!(targetWorker, fnName, payload)

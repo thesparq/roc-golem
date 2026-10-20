@@ -13,6 +13,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | WebSockets | `golem:websocket/client` | connect/send/receive/close |
 | config + secrets | `golem:agent/host.get-config-value` | `getConfig!`, `secret: true` declarations |
 | agent-to-agent RPC | `golem:agent/host` wasm-rpc | `rpc!` (invoke-and-await), `rpcFireAndForget!`, `rpcSchedule!`, `rpcScheduleCancelable!` / `rpcCancel!`, `parseAgentId!` / `makeAgentId!` |
+| webhooks | `golem:agent/host` + `golem:api/host` promises | `createWebhook!` / `awaitWebhook!`; the POST callback completes a durable promise |
 | user-defined snapshots | `golem:api/save-snapshot`/`load-snapshot` | state JSON; e2e-covered across an incompatible revision |
 | tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance) |
 | read-only methods | agent metadata | declared for tools; until-write cache |
@@ -46,8 +47,21 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    component. Still not exposed: `async-invoke-and-await` (`future-invoke-result`)
    and `invoke-and-await`'s `invocation-result-with-metadata` (our `rpc!` drops
    the metadata and returns the reply text).
-4. **Webhooks** (`golem:agent/host.create-webhook`) — the SDKs expose them on
-   agent methods. Cost: small (one effect + manifest support).
+4. ~~**Webhooks** (`golem:agent/host.create-webhook`)~~ — **done**: effects
+   `createWebhook!` / `awaitWebhook!`. `createWebhook!` creates the promise
+   (`golem:api/host.create-promise`) and the webhook for it, and returns the
+   callback URL; the promise id stays host-side, in a per-instance map keyed by
+   the URL, so the app stores the URL in its own state between invocations.
+   `awaitWebhook!` awaits the POST (`get-promise-result.get`, an async import
+   driven with `wit_bindgen::block_on`) and returns the body as lossy UTF-8.
+   The URL is `<scheme>://<domain>/<webhookUrl>/<agent-type-name>/<id>` (the
+   mount's `webhook-suffix` is still empty, so the agent type name is the
+   suffix); the route is POST only, unauthenticated, answers 204, and 404s an
+   id it cannot verify. Golem only allows it for agent types deployed through
+   an HTTP API, so the effects agent joined `golem.yaml`'s deployment with a
+   binding-less mount, and the e2e covers create → POST → await plus the 404.
+   Not exposed: the mount's `webhook-suffix` (adding a field to `HttpMount`
+   would break every existing `Mount({…})` literal).
 5. **Multimodal values** (`golem:core` text/binary/…): agent methods that take
    or return multimodal content, as the TS/Rust SDKs do. Cost: medium — schema
    graph construction (the router work already builds a graph, so the pattern

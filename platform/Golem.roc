@@ -14,6 +14,8 @@ module [
 	logWarn!,
 	logError!,
 	workerId!,
+	createWebhook!,
+	awaitWebhook!,
 	rpc!,
 	rpcFireAndForget!,
 	rpcSchedule!,
@@ -71,6 +73,19 @@ logError! = |msg|
 workerId! : {} => Str
 workerId! = |_|
 	Effect.getWorkerId!({})
+
+## Creates a webhook for this agent and returns its callback URL: a POST to the
+## URL completes the promise this effect created. The URL is the handle the app
+## stores in its own state; `awaitWebhook!` resolves it back to the promise.
+createWebhook! : {} => Try(Str, Str)
+createWebhook! = |_|
+	Effect.createWebhook!({})
+
+## Waits for the POST to `url` (from `createWebhook!`) and returns its body as
+## text.
+awaitWebhook! : Str => Try(Str, Str)
+awaitWebhook! = |url|
+	Effect.awaitWebhook!(url)
 
 rpc! : Str, Str, Str => Try(Str, Str)
 rpc! = |targetWorker, fnName, payload|

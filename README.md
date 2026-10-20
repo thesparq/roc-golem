@@ -428,6 +428,61 @@ reaches the deployment's spec).
 
 ---
 
+## 🔔 Webhooks
+
+A webhook lets an agent hand a callback URL to an external system and receive
+the POST it makes later, durable across invocations: the pair is a Golem
+**promise** plus a URL that completes it. Two effects (`platform/Golem.roc`):
+
+| Effect | What it does |
+| --- | --- |
+| `createWebhook! : {} => Try(Str, Str)` | creates the promise, registers the webhook and returns the callback URL; `Err` carries Golem's `webhook-error` (`permission-denied`, or `internal-error: …`) |
+| `awaitWebhook! : Str => Try(Str, Str)` | waits for the POST to that URL and returns its body as lossy UTF-8 text, the convention `http!` uses for bytes |
+
+The promise id never reaches the app: the host keeps it in a per-instance map
+keyed by the URL, so the URL the app stores in its own state is the handle that
+survives between invocations (a URL this instance never created is an error, not
+a hang).
+
+**Prerequisites.** Golem only lets agent types that are *currently* deployed
+through an HTTP API create webhooks, and a deployment entry needs a mount, so
+the manifest needs both:
+
+```yaml
+httpApi:
+  deployments:
+    local:
+      - subdomain: roc-golem
+        # Optional: the prefix callback URLs come out under (default `/webhooks`).
+        webhookUrl: /webhooks
+        agents:
+          effects-agent: {}
+```
+
+The agent's `metadata.httpMount` supplies the rest — any regular mount works,
+including a binding-less one like `examples/effects/main.roc`'s. Calling
+`createWebhook!` from an agent type that is not deployed that way fails with the
+`webhook-error` rather than trapping.
+
+**URL shape and contract.** The callback URL is
+`<scheme>://<domain>/<webhookUrl>/<agent-type-name>/<id>`, where the id is an
+opaque, checksummed blob. This platform leaves the mount's `webhook-suffix`
+empty, so the agent type name is the suffix. The route is:
+
+- **POST only** — other methods answer 404,
+- **no auth** — the checksummed id is the capability,
+- **204** on success, with the request body delivered to the waiting
+  `awaitWebhook!` as bytes,
+- **404** for an id Golem cannot verify (a URL that was never created, or one
+  whose id was tampered with).
+
+The `effects` example is the worked case: `webhook-create` creates the webhook
+and stores the URL in its state, `webhook-await` returns the POSTed body, and
+the `webhook:` checks in `tooling/e2e.sh` POST to the returned URL and assert
+the 204 and 404 answers.
+
+---
+
 ## ✨ Effects
 
 Every effect is declared in `platform/Effect.roc` and wrapped by `platform/Golem.roc`;
@@ -446,6 +501,7 @@ apps call them through `pf.Golem`.
 | `rpcSchedule!` | `golem:agent/host` | the same, `delayMillis` from now; the wall clock read is durable, so a replay schedules the same instant |
 | `rpcScheduleCancelable!` / `rpcCancel!` | `golem:agent/host` | schedules and returns a `U32` handle; `rpcCancel!` cancels the invocation before its scheduled time |
 | `parseAgentId!` / `makeAgentId!` | `golem:agent/host` | an agent id split into `{"agentType", "constructor", "phantomId"}` and back (`makeAgentId!` always builds ids without a phantom id) |
+| `createWebhook!` / `awaitWebhook!` | `golem:agent/host` + `golem:api/host` | creates a promise and the callback URL that completes it; a POST to the URL delivers its body to `awaitWebhook!` (see [Webhooks](#-webhooks)) |
 | `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
 
 The linker only keeps the effects an app actually calls, so a component's import
@@ -462,7 +518,7 @@ anything is published:
 | --- | --- | --- |
 | Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, and the `httpMount` metadata mapping |
 | ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, and agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers). No stubs |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), and a webhook created from an agent and completed by a POST (204/404). No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so

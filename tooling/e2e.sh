@@ -138,6 +138,15 @@ invoke() { # invoke <agent-id> <method> <argument> -> result line
         | sed -e 's/^"//' -e 's/"$//' -e 's/\\"/"/g'
 }
 
+invoke_within() { # invoke_within <seconds> <agent-id> <method> <argument>
+    # The same, but bounded: `awaitWebhook!` blocks until the callback arrives,
+    # so a callback that never came has to fail its check, not hang the run.
+    timeout "$1" "$CLI" $CLI_EXTRA -L -A "$MANIFEST" agent invoke "$2" "$3" "$4" 2>&1 \
+        | sed -e ':slurp' -e '$!{N;bslurp}' -e 's/\n     / /g' \
+        | tail -n 1 \
+        | sed -e 's/^"//' -e 's/"$//' -e 's/\\"/"/g' || true
+}
+
 # Requests to a mounted agent are routed by the `Host` header, which must be the
 # domain the deployment registered.
 fetch() { # fetch <path> -> body
@@ -262,6 +271,41 @@ check "effects: make-agent-id builds an id" "counter-agent(\"$RUN_ID-calls\")" \
 check "effects: parse-agent-id reads an id back" "\"constructor\":\"$RUN_ID-calls\"" \
     "$(invoke "$effects_caller" handle-message \
         "$(message_arg "parse-agent-id $calls_counter")")"
+
+say "==> Webhooks (promise + POST callback)"
+# `createWebhook!` registers a promise and returns the URL that completes it.
+# The app stores that URL in its own state, so the POST can arrive between
+# invocations; the callback route lives on the deployment's domain under the
+# deployment's `webhookUrl` prefix (default `/webhooks`) and the agent type's
+# name (the mount's `webhook-suffix` is empty in this platform).
+webhook_agent="effects-agent(\"$RUN_ID\")"
+webhook_reply="$(invoke "$webhook_agent" handle-message '"webhook-create"')"
+check "webhook: create returns a callback URL" "/webhooks/effects-agent/" "$webhook_reply"
+# The URL is one long token, so the CLI's wrap can split it and the un-wrapping
+# above joins the halves with a space; URLs never contain one.
+webhook_url="${webhook_reply#Webhook created: }"
+webhook_url="${webhook_url// /}"
+
+# The URL carries the deployment's domain (`roc-golem.localhost:<port>`), which
+# resolves to the listener; the request is a POST with a body, no auth.
+check "webhook: the callback POST answers 204" "204" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -X POST --data 'webhook payload' "$webhook_url")"
+
+check "webhook: awaiting the URL returns the POSTed body" "webhook payload" \
+    "$(invoke_within 120 "$webhook_agent" handle-message '"webhook-await"')"
+
+# The id in the URL is a checksummed blob, so an id that decodes but does not
+# verify is a 404 — it must not complete some other promise. Flip a character
+# deep in the trailing checksum (not the last one: that would change the
+# padding bits and the id would fail to decode, which is a 400 instead).
+webhook_id="${webhook_url##*/}"
+flip_at=$(( ${#webhook_id} - 5 ))
+replacement="A"
+[[ "${webhook_id:$flip_at:1}" == "A" ]] && replacement="B"
+tampered_id="${webhook_id:0:$flip_at}${replacement}${webhook_id:$((flip_at + 1))}"
+check "webhook: an unverifiable id answers 404" "404" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Host: $API_DOMAIN" \
+        --data 'payload' "http://127.0.0.1:$API_PORT/webhooks/effects-agent/$tampered_id")"
 
 say "==> HTTP mount (file-site agent serving its own filesystem on $API_DOMAIN)"
 site_agent="file-site-agent(\"$RUN_ID\")"
