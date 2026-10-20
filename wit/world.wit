@@ -7,6 +7,11 @@ world golem-agent {
     import golem:core/types@2.0.0;
     import golem:websocket/client@1.5.0;
     import wasi:clocks/monotonic-clock@0.2.6;
+    // Scheduling a call for a later time takes an absolute `instant`, so the
+    // host reads the wall clock to turn a delay into one. `golem:agent/host`
+    // already names this interface (it is where its `datetime` comes from);
+    // importing it is what makes the clock readable from the guest.
+    import wasi:clocks/system-clock@0.3.0;
     // Outgoing HTTP is WASI p3 in Golem 1.6: the p2 interfaces
     // (`wasi:http/outgoing-handler@0.2.6`) are no longer registered by the
     // executor, so the `http!` effect goes through `wasi:http/client@0.3.0`.

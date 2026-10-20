@@ -12,7 +12,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | outgoing HTTP | `wasi:http/client@0.3.0` (p3) | buffered request/response |
 | WebSockets | `golem:websocket/client` | connect/send/receive/close |
 | config + secrets | `golem:agent/host.get-config-value` | `getConfig!`, `secret: true` declarations |
-| agent-to-agent RPC | `golem:agent/host` wasm-rpc | `rpc!`, invoke-and-await only |
+| agent-to-agent RPC | `golem:agent/host` wasm-rpc | `rpc!` (invoke-and-await), `rpcFireAndForget!`, `rpcSchedule!`, `rpcScheduleCancelable!` / `rpcCancel!`, `parseAgentId!` / `makeAgentId!` |
 | user-defined snapshots | `golem:api/save-snapshot`/`load-snapshot` | state JSON; e2e-covered across an incompatible revision |
 | tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance) |
 | read-only methods | agent metadata | declared for tools; until-write cache |
@@ -32,10 +32,20 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    SDKs derive from them. Our platform's methods are string-in/string-out.
    Cost: large — needs stream-typed schema values on both sides plus a Roc-facing
    API.
-3. **Agent-to-agent calls beyond invoke-and-await**: fire-and-forget `invoke`,
-   `schedule-invocation`, cancelable scheduling, and `parse-agent-id` /
-   `make-agent-id` helpers. All are in `golem:agent/host`, so this is a
-   Roc-effect-per-function change. Cost: small each, mechanical.
+3. ~~**Agent-to-agent calls beyond invoke-and-await**~~ — **done**: effects
+   `rpcFireAndForget!` (`invoke`), `rpcSchedule!` (`schedule-invocation`),
+   `rpcScheduleCancelable!` + `rpcCancel!` (cancelable scheduling), and
+   `parseAgentId!` / `makeAgentId!`, all in `golem:agent/host` as expected. Two
+   details worth knowing: the scheduling effects take a delay in milliseconds
+   rather than an absolute `instant`, so the host reads the wall clock
+   (`wasi:clocks/system-clock@0.3.0`, added to the world) and converts the delay
+   into the absolute time the host API takes; and the cancelable receipt's
+   `metadata` is not surfaced — the
+   effect returns the cancellation handle only, the way the WebSocket effects
+   return handles. All of them are e2e-covered against a counter in another
+   component. Still not exposed: `async-invoke-and-await` (`future-invoke-result`)
+   and `invoke-and-await`'s `invocation-result-with-metadata` (our `rpc!` drops
+   the metadata and returns the reply text).
 4. **Webhooks** (`golem:agent/host.create-webhook`) — the SDKs expose them on
    agent methods. Cost: small (one effect + manifest support).
 5. **Multimodal values** (`golem:core` text/binary/…): agent methods that take
