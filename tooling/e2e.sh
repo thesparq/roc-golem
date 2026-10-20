@@ -166,10 +166,26 @@ check "counter: first increment" "Counter incremented to 1" \
     "$(invoke "$counter" handle-message '"increment"')"
 check "counter: state persisted" "Counter incremented to 2" \
     "$(invoke "$counter" handle-message '"increment"')"
-check "counter: tool call" '{"count": 2}' \
+check "counter: method named like a tool" '{"count": 2}' \
     "$(invoke "$counter" get_count '"{}"')"
 check "ai_tool: greeting" "I am an AI assistant agent" \
     "$(invoke "ai-tool-agent(\"$RUN_ID\")" handle-message '"hello"')"
+
+say '==> Tool surface (golem:tool/guest, what `golem tool invoke` and MCP use)'
+# Tools run on the agent's instance but without its state, so a stateless tool
+# answers and a stateful one reports the missing state instead of inventing one.
+tool_output() { # tool_output <agent-id> <tool>
+    # A failing tool is a non-zero exit, which is exactly what one of the checks
+    # below expects, so keep the output either way.
+    "$CLI" $CLI_EXTRA -L -A "$MANIFEST" tool invoke --agent "$1" "$2" 2>&1 || true
+}
+calculator_output="$(tool_output "ai-tool-agent(\"$RUN_ID\")" calculator)"
+check_true "ai_tool: stateless tool answers through the tool surface" \
+    "$(grep -q 'Success' <<<"$calculator_output" && grep -q '42' <<<"$calculator_output" && echo true || echo false)"
+get_count_output="$(tool_output "$counter" get-count)"
+check_true "counter: stateful tool reports the missing state" \
+    "$(grep -q 'Missing count field' <<<"$get_count_output" && echo true || echo false)"
+
 check "streaming: status" "WebSocket is disconnected" \
     "$(invoke "streaming-agent(\"$RUN_ID\")" handle-message '"status"')"
 

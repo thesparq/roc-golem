@@ -536,6 +536,59 @@ mod tests {
         }
     }
 
+    /// The allocator Roc's runtime calls for every value it creates: the size
+    /// header must survive realloc and the layout must match on free (a
+    /// mismatch shows up as a panic inside the allocator, which is how the
+    /// string-drop bug in this file was first seen).
+    #[test]
+    fn test_roc_allocator_round_trip() {
+        unsafe {
+            for (size, alignment) in [(1usize, 1u32), (8, 4), (64, 8), (4096, 16)] {
+                let ptr = roc_alloc(size, alignment);
+                assert!(!ptr.is_null());
+                let align = (alignment as usize)
+                    .max(mem::align_of::<usize>())
+                    .max(ALLOC_HEADER_SIZE);
+                assert_eq!(ptr as usize % align, 0, "allocation must be aligned");
+                let total = *(ptr.sub(ALLOC_HEADER_SIZE) as *const usize);
+                assert!(total >= ALLOC_HEADER_SIZE + size);
+                ptr::write_bytes(ptr, 0xab, size);
+
+                let bigger = roc_realloc(ptr, size * 2, alignment);
+                assert!(!bigger.is_null());
+                // The old bytes survive the move and the header follows.
+                assert_eq!(*bigger, 0xab);
+                assert_eq!(*(bigger.add(size - 1)), 0xab);
+                let total = *(bigger.sub(ALLOC_HEADER_SIZE) as *const usize);
+                assert!(total >= ALLOC_HEADER_SIZE + size * 2);
+                roc_dealloc(bigger, alignment);
+            }
+        }
+    }
+
+    /// `Try`'s discriminant byte and payload offsets are what the host's calls
+    /// into Roc depend on. `tooling/glue/abi_facts.roc` reports the 32-bit
+    /// shape (3 words per `Str`, 16 bytes per `Try(Str, Str)`, discriminant at
+    /// offset 12, `Ok = 1`); the same ratios hold at 64 bits, where the unit
+    /// tests run.
+    #[test]
+    fn test_roc_result_layout() {
+        let word = mem::size_of::<usize>();
+        assert_eq!(mem::size_of::<RocStr>(), 3 * word);
+        assert_eq!(mem::size_of::<RocResult<RocStr, RocStr>>(), 4 * word);
+
+        let ok: RocResult<RocStr, RocStr> = RocResult::ok(RocStr::from_str("ok"));
+        let bytes = unsafe {
+            slice::from_raw_parts(&ok as *const _ as *const u8, mem::size_of_val(&ok))
+        };
+        assert_eq!(bytes[3 * word], 1, "Try uses 1 for Ok");
+        let err: RocResult<RocStr, RocStr> = RocResult::err(RocStr::from_str("err"));
+        let bytes = unsafe {
+            slice::from_raw_parts(&err as *const _ as *const u8, mem::size_of_val(&err))
+        };
+        assert_eq!(bytes[3 * word], 0, "Try uses 0 for Err");
+    }
+
     #[test]
     fn test_empty_roc_str() {
         let roc_str = RocStr::empty();
