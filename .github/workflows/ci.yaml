@@ -93,12 +93,19 @@ jobs:
           #   --then-message hello --then-reply "Sent: hello" \
           #   --expect-sent hello
 
-          check "$HARNESS" build/effects_agent.wasm \
-            --type effects-agent --config "http://example.test/" \
-            --message fetch --reply "HTTP 200" \
-            --expect-http "GET / host=example.test" \
-            --then-message rpc --then-reply "RPC reply: stub-rpc-reply" \
-            --expect-rpc "invoke-and-await(handle-message)"
+          # The effects agent now imports an async host function too
+          # (`wasi:http/client.send`, the p3 replacement for the p2 interfaces
+          # Golem 1.6.0 dropped), which traps inside the harness's wasmtime for
+          # the same reason the streaming agent does (see
+          # tooling/abi_harness/README.md). The e2e job below is the
+          # authoritative check for it until the harness can drive async
+          # imports.
+          # check "$HARNESS" build/effects_agent.wasm \
+          #   --type effects-agent --config "http://example.test/" \
+          #   --message fetch --reply "HTTP 200" \
+          #   --expect-http "GET / host=example.test" \
+          #   --then-message rpc --then-reply "RPC reply: stub-rpc-reply" \
+          #   --expect-rpc "invoke-and-await(handle-message)"
 
           # The site agent's mount is app metadata that has to survive the trip
           # to the registered agent type (the runtime serves files from it
@@ -109,19 +116,20 @@ jobs:
             --message ping --reply "is serving its mount"
 
           # The platform has had build-sensitive ABI bugs, so the same checks
-          # also run against a debug build of the most effect-heavy example.
+          # also run against a debug build of an effect-heavy example. The
+          # effects example itself is skipped above, so this uses the site
+          # example (which needs no async imports).
           # roc exits 2 when an otherwise-successful build emitted warnings
           # (the module-header deprecations); tooling/build.sh tolerates that,
           # so the debug build does too.
           roc build --debug --target=wasm32 \
-            --output=build/effects_debug_raw.wasm examples/effects/main.roc \
+            --output=build/site_debug_raw.wasm examples/site/main.roc \
             || test $? -eq 2
-          wasm-tools component new build/effects_debug_raw.wasm \
-            -o build/effects_debug_agent.wasm
-          check "$HARNESS" build/effects_debug_agent.wasm \
-            --type effects-agent --config "http://example.test/" \
-            --message fetch --reply "HTTP 200" \
-            --expect-http "GET / host=example.test"
+          wasm-tools component new build/site_debug_raw.wasm \
+            -o build/site_debug_agent.wasm
+          check "$HARNESS" build/site_debug_agent.wasm \
+            --type file-site-agent --expect-mount "site/{id}" \
+            --message ping --reply "is serving its mount"
 
           exit $status
 

@@ -194,8 +194,8 @@ those.
 
 | golem CLI | Local deploy | Notes |
 | --- | --- | --- |
-| 1.6.0 (GA) | works, one gap | verified end-to-end on this branch: deploy, invoke, state, tools, HTTP mounts, snapshots. The `http!` effect still targets the p2 HTTP interfaces 1.6.0 removed — see the migration plan |
-| 1.6.0-rc2.1 | works | earlier pin; the same examples ran, including `http!` (rc2.1 still registered p2 HTTP) |
+| 1.6.0 (GA) | works | verified end-to-end on this branch: deploy, invoke, state, tools, `http!` over WASI p3, HTTP mounts, snapshots |
+| 1.6.0-rc2.1 | works | earlier pin; the same examples ran, with `http!` still on p2 HTTP (rc2.1 registered it) |
 | 1.5.9 / 1.5.10 | not compatible | those servers expect `golem:agent/guest@1.5.0`, which this branch no longer exports |
 
 > [!NOTE]
@@ -288,12 +288,12 @@ Still open:
   code-generation issue rather than a platform one. CI's ABI smoke test is the
   safety net; if it reappears, keep the failing `.wasm` and compare `roc build`
   with and without `--debug`.
-- **`http!` needs the p3 migration**: Golem 1.6.0 dropped the p2 WASI HTTP
-  interfaces (`wasi:http/outgoing-handler@0.2.6`) — its executor registers WASI
-  p3 only — so a component importing them cannot instantiate, which is why the
-  effects example is skipped in the e2e on 1.6.0. The fix is to move `http!` to
-  `wasi:http@0.3.0` (`types` + `client`); `docs/golem-1.6-migration-plan.md`
-  records the evidence and the shape of the change.
+- **The ABI harness cannot drive async imports**: a component that imports an
+  async host function traps inside the harness's wasmtime (a fork-vs-wasmtime
+  async-ABI gap — see `tooling/abi_harness/README.md`). That is now the
+  streaming agent (`websocket/client.receive`) and the effects agent
+  (`wasi:http/client.send`), so both are covered by the e2e instead. The same
+  components run on a real Golem server.
 - **Local deploy** is verified with golem CLI 1.6.0 (GA), 1.6.0-rc2.1 and 1.5.9
   on the `v0.5.x` line; the version matrix is in the deploy section above.
 - `host/src/roc_std.rs` is still hand-written; generated glue (`roc glue`) would
@@ -385,7 +385,7 @@ apps call them through `pf.Golem`.
 | `setPersistence!` | `golem:api/host` | `PersistNothing` / `PersistStateOnly` / `PersistEverything` |
 | `now!` | `wasi:clocks/monotonic-clock` | monotonic milliseconds |
 | `sleep!` | `wasi:clocks/monotonic-clock` | blocking wait; Golem records it in the oplog, so a resumed agent does not repeat it |
-| `http!` | `wasi:http/outgoing-handler` (p2) | request/response as JSON; response is `{status, headers, body}`. **Not available on Golem 1.6.0**: see the p3 migration note above |
+| `http!` | `wasi:http/client` (p3) | request/response as JSON; response is `{status, headers, body}`. Buffered: the body is uploaded alongside the request through a p3 stream, and the response body is collected before returning |
 | `rpc!` | `golem:agent/host` | target is an agent id such as `counter-agent("{}")`; returns the reply text || `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
 
 The linker only keeps the effects an app actually calls, so a component's import
