@@ -19,4 +19,15 @@ Host :: [].{
 	rocFxSleepMillis! : U64 => {}
 	rocFxNowMillis! : {} => U64
 	rocFxGetConfig! : Str => Try(Str, Str)
+	rocFxNewQuotaToken! : Str, U64 => U32
+	rocFxQuotaReserve! : U32, U64 => Try(U32, Str)
+	rocFxQuotaCommit! : U32, U64 => Try({}, Str)
+	rocFxQuotaSplit! : U32, U64 => Try(U32, Str)
+	rocFxQuotaMerge! : U32, U32 => Try({}, Str)
+	rocFxGetRetryPolicies! : {} => Str
+	rocFxGetRetryPolicy! : Str => Try(Str, Str)
+	rocFxResolveRetryPolicy! : Str, Str, Str => Try(Str, Str)
+	rocFxNextRetryDelay! : Str, Str, U64, Str => Try(Str, Str)
+	rocFxSetRetryPolicy! : Str => Try({}, Str)
+	rocFxRemoveRetryPolicy! : Str => {}
 }

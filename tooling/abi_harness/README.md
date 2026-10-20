@@ -24,9 +24,10 @@ Flags:
   takes its base URL from it).
 - `--expect-log` matches a line the agent emitted through `logInfo!` etc.,
   `--expect-sent` matches a WebSocket message the agent sent, `--expect-http`
-  matches a request line the HTTP stub received, and `--expect-rpc` matches a
-  remote call the agent made. All of them are recorded by the stubs, so effect
-  wiring is verified, not just reply text.
+  matches a request line the HTTP stub received, `--expect-rpc` matches a
+  remote call the agent made, and `--expect-quota` / `--expect-retry` match the
+  quota and retry-policy calls the agent made. All of them are recorded by the
+  stubs, so effect wiring is verified, not just reply text.
 - `--expect-mount PATH` checks the mount path the agent type publishes
   (`site/{id}`), which is how the site example's `metadata.httpMount` is
   verified to survive the trip to the registered agent type.
@@ -50,11 +51,12 @@ It exits non-zero when any of these fail:
 - `initialize` traps or returns an error,
 - `invoke handle-message` traps, returns an error, or returns a reply that does
   not contain the expected text,
-- an expected log line, WebSocket send, HTTP request or RPC call was never
-  recorded.
+- an expected log line, WebSocket send, HTTP request, RPC call, quota call or
+  retry-policy call was never recorded.
 
 Current state of the components built from this tree: counter, ai_tool, site and
-effects pass every check, including the effects agent's HTTP and RPC calls.
+effects pass every check, including the effects agent's HTTP and RPC calls and
+the counter's quota and retry-policy calls.
 
 Toolchain notes found while porting to 1.6:
 
@@ -95,7 +97,10 @@ examples' components import, so the harness can supply the missing host
 interfaces with no Golem runtime present: agent types, the clocks, `wasi:io`,
 `wasi:http` (answered from a canned response while recording the request),
 `golem:agent/host` (RPC calls recorded), the WebSocket client (a recording
-connection) and `wasi:logging` (recorded).
+connection), `wasi:logging` (recorded), and `golem:api/retry` /
+`golem:quota/types` (recorded too). Both of the last two are synchronous
+interfaces, which is why they can be driven here at all; a component that
+imports an *async* host function cannot be (see the toolchain notes above).
 
 `src/stubs.rs` implements the WASI interfaces by hand. wasmtime's own
 `wasi:http` implementation tracks a newer WASI version (`wasi:http@0.2.12`) than

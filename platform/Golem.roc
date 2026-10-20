@@ -32,6 +32,17 @@ module [
 	sleep!,
 	now!,
 	getConfig!,
+	newQuotaToken!,
+	quotaReserve!,
+	quotaCommit!,
+	quotaSplit!,
+	quotaMerge!,
+	getRetryPolicies!,
+	getRetryPolicy!,
+	resolveRetryPolicy!,
+	nextRetryDelay!,
+	setRetryPolicy!,
+	removeRetryPolicy!,
 ]
 
 import Effect
@@ -162,3 +173,88 @@ now! = |_|
 getConfig! : Str => Try(Str, Str)
 getConfig! = |key|
 	Effect.getConfig!(key)
+
+## Asks the host for a quota token on the resource `resourceName`, which the
+## manifest declares under `resourceDefaults.<environment>.<resourceName>`.
+## `expectedUse` is the amount this token's reservations are sized for: it tells
+## the host how much credit to schedule, and consumes nothing by itself. The
+## token lives host-side; the number returned is the handle the other quota
+## effects work with.
+newQuotaToken! : Str, U64 => U32
+newQuotaToken! = |resourceName, expectedUse|
+	Effect.newQuotaToken!(resourceName, expectedUse)
+
+## Reserves `amount` from the token's allocation. `Ok` is the handle of a
+## reservation for `quotaCommit!`; `Err` is the rejection a `reject`ing resource
+## answered with, including its estimate of the wait for capacity when it has
+## one. A `throttle`ing resource waits here instead, and a `terminate`ing one
+## fails the invocation.
+quotaReserve! : U32, U64 => Try(U32, Str)
+quotaReserve! = |token, amount|
+	Effect.quotaReserve!(token, amount)
+
+## Commits what the reserved work actually used: less than was reserved returns
+## the unused capacity, more charges the excess to the token as debt, and a
+## reservation that is never committed counts as zero. A handle is spent once.
+quotaCommit! : U32, U64 => Try({}, Str)
+quotaCommit! = |reservation, used|
+	Effect.quotaCommit!(reservation, used)
+
+## Splits `childExpectedUse` off the token into a second one. Both stay in this
+## agent instance — quota tokens cannot travel between agents in this platform.
+quotaSplit! : U32, U64 => Try(U32, Str)
+quotaSplit! = |token, childExpectedUse|
+	Effect.quotaSplit!(token, childExpectedUse)
+
+## Merges `other` back into the token, consuming it. The two tokens have to name
+## the same resource.
+quotaMerge! : U32, U32 => Try({}, Str)
+quotaMerge! = |token, other|
+	Effect.quotaMerge!(token, other)
+
+## Every retry policy active for this agent, as a JSON array of named policies
+## (`[{"name": …, "priority": …, "predicate": {"nodes": […]},
+## "policy": {"nodes": […]}}, …]`). The trees are the host's flattened form —
+## the root is `nodes[0]` and children are indices into the same list — with
+## durations as nanosecond counts; the README's "Quotas and retry" section spells
+## the shape out.
+getRetryPolicies! : {} => Str
+getRetryPolicies! = |_|
+	Effect.getRetryPolicies!({})
+
+## One policy by name, the same JSON as above — or `""` when no policy has that
+## name.
+getRetryPolicy! : Str => Try(Str, Str)
+getRetryPolicy! = |name|
+	Effect.getRetryPolicy!(name)
+
+## The first policy whose predicate matches `verb` / `nounUri` with the given
+## properties (a JSON object of strings, integers and booleans, `{}` for none),
+## as policy JSON — or `""` when none matches. A predicate the host cannot
+## evaluate comes back as `Err`, without failing the invocation.
+resolveRetryPolicy! : Str, Str, Str => Try(Str, Str)
+resolveRetryPolicy! = |verb, nounUri, propertiesJson|
+	Effect.resolveRetryPolicy!(verb, nounUri, propertiesJson)
+
+## Advances the host's retry evaluator once, after a failed attempt: `policyJson`
+## is a policy from above (`""` takes the agent's configured default),
+## `stateJson` the `state` the previous decision returned (`[]` starts a
+## sequence), `elapsedNanos` the time since the first attempt, and `contextJson`
+## `{"verb": …, "nounUri": …, "properties": {…}}`. The answer is
+## `{"state": […], "delayNanos": …}`, with `null` for a delay when the policy is
+## exhausted (a zero delay still allows another attempt).
+nextRetryDelay! : Str, Str, U64, Str => Try(Str, Str)
+nextRetryDelay! = |policyJson, stateJson, elapsedNanos, contextJson|
+	Effect.nextRetryDelay!(policyJson, stateJson, elapsedNanos, contextJson)
+
+## Adds or overwrites a named policy, taking the JSON `getRetryPolicies!`
+## prints. The host records it in the agent's oplog, so it outlives a restart.
+setRetryPolicy! : Str => Try({}, Str)
+setRetryPolicy! = |policyJson|
+	Effect.setRetryPolicy!(policyJson)
+
+## Removes a named policy (also recorded in the oplog). A policy the manifest
+## declared comes back on the next deployment; this removes the agent's own copy.
+removeRetryPolicy! : Str => {}
+removeRetryPolicy! = |name|
+	Effect.removeRetryPolicy!(name)

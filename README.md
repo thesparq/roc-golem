@@ -107,6 +107,7 @@ roc-golem/
 │   ├── Cargo.toml              # Rust host crate (wit-bindgen, serde)
 │   └── src/
 │       ├── lib.rs              # Universal WIT export/import & C-ABI translation layer
+│       ├── retry_json.rs       # JSON mirror of the retry policy/predicate trees
 │       ├── roc_std.rs          # Wasm32 Roc ABI types (RocStr, RocList, Allocators)
 │       └── guest_bridge.rs     # Test stubs for unit tests
 ├── platform/
@@ -483,6 +484,108 @@ the 204 and 404 answers.
 
 ---
 
+## 🎟️ Quotas and retry
+
+Two more host surfaces, both *synchronous* — they need no `block_on`, unlike the
+WebSocket receive or the p3 HTTP client — which is why the ABI harness can drive
+them with recording stubs as well as the e2e running them for real.
+
+### Quotas (`golem:quota/types`)
+
+A quota is an environment-level resource limit. The manifest declares the
+resource, and an agent *reserves* units before the work it wants accounted for
+and *commits* what that work actually used:
+
+```yaml
+resourceDefaults:
+  local:
+    example-requests:
+      limit:
+        type: Capacity        # or Rate { value, period, max }, or Concurrency
+        value: 10
+      enforcementAction: reject   # or throttle, terminate
+      unit: request
+      units: requests
+```
+
+| Effect | What it does |
+| --- | --- |
+| `newQuotaToken! : Str, U64 => U32` | asks the host for a token on the named resource; `expectedUse` sizes the token's credit (it consumes nothing by itself). The number returned is the handle the other quota effects take |
+| `quotaReserve! : U32, U64 => Try(U32, Str)` | reserves units; `Ok` is a reservation handle for `quotaCommit!`, `Err` is the `failed-reservation` a `reject`ing resource answered with — including the host's estimate of the wait for capacity when it has one (`quota reservation failed (retry after 250ms)`). A `throttle`ing resource waits here instead, and a `terminate`ing one fails the invocation |
+| `quotaCommit! : U32, U64 => Try({}, Str)` | commits what the work used: less than was reserved returns the difference to the pool, more is charged to the token as debt, and a reservation that is never committed counts as zero. A handle is spent once |
+| `quotaSplit! : U32, U64 => Try(U32, Str)` | splits part of a token's expected use off into a second token |
+| `quotaMerge! : U32, U32 => Try({}, Str)` | merges one token back into another (they have to name the same resource) |
+
+Tokens and reservations are host-side resources, so the app carries them as
+`U32` handles, the way WebSocket connections are carried; the table behind them
+lives for as long as the agent instance. `examples/counter/main.roc`'s `quota`
+command is the worked case — `quota 6` reserves and commits six of the ten
+requests, and a second call is answered with `quota reservation failed` — and the
+`quota:` checks in `tooling/e2e.sh` run it against a real server.
+
+### Retry policies (`golem:api/retry`)
+
+The manifest declares named policies, each a predicate that selects when it
+applies plus the delay schedule to use:
+
+```yaml
+retryPolicyDefaults:
+  local:
+    send-retries:
+      priority: 100
+      predicate:
+        propEq:
+          property: "verb"
+          value: "send"
+      policy:
+        countBox:
+          maxRetries: 2
+          inner:
+            periodic: "100ms"      # humantime, or {secs, nanos}
+```
+
+| Effect | What it does |
+| --- | --- |
+| `getRetryPolicies! : {} => Str` | every policy active for this agent, as a JSON array of named policies |
+| `getRetryPolicy! : Str => Try(Str, Str)` | one policy by name, or `""` when no policy has that name |
+| `resolveRetryPolicy! : Str, Str, Str => Try(Str, Str)` | `(verb, nounUri, properties JSON)` → the first policy whose predicate matches, as policy JSON, or `""` when none matches. A predicate the host cannot evaluate comes back as `Err` |
+| `nextRetryDelay! : Str, Str, U64, Str => Try(Str, Str)` | advances the host's evaluator once: `(policy JSON or "" for the agent's default, state JSON, elapsed nanos, {verb, nounUri, properties})` → `{"state": […], "delayNanos": … \| null}` |
+| `setRetryPolicy! : Str => Try({}, Str)` | adds or overwrites a named policy (the host records it in the oplog) |
+| `removeRetryPolicy! : Str => {}` | removes a named policy (also recorded) |
+
+Policies and predicates are flattened trees (`nodes`, with the root at
+`nodes[0]` and children named by index), and Roc has no resources or recursive
+variants to hand those to an app, so they travel as JSON text — the same
+convention `http!` uses for its response. The text is the WIT shape:
+
+- a node is `{"tag": payload}`, or a bare string for the variants that carry no
+  payload (`"immediate"`, `"predTrue"`), with the WIT variant and field names in
+  camelCase,
+- the root is `nodes[0]` and indices stay numbers,
+- a `duration` is its nanosecond count,
+- a `predicate-value` is a plain JSON string, integer or boolean.
+
+So the policy above renders as
+`{"nodes":[{"countBox":{"maxRetries":2,"inner":1}},{"periodic":100000000}]}`,
+and a decision as `{"delayNanos":100000000,"state":[…]}` (with `null` for a
+delay when the policy is exhausted — a zero delay still permits another
+attempt). Everything the read effects print can be handed straight back to
+`setRetryPolicy!` and `nextRetryDelay!`.
+
+`examples/counter/main.roc`'s `retry` command is the worked case: it reports the
+policies the environment declared, resolves the rule that matches `send`, and
+walks the resolved policy's schedule twice — threading the opaque `state` the
+first decision returned back into the second call. The `retry:` checks in
+`tooling/e2e.sh` cover it against a real server.
+
+Besides whatever a manifest declares, an environment carries a `default` rule
+(`predTrue`, the lowest priority), which is what `getRetryPolicies!` lists and
+what an operation no declared rule matches resolves to — so a `""` from
+`resolveRetryPolicy!` means the environment has no rules at all, and the
+`""`-for-`nextRetryDelay!` case means "use that configured default".
+
+---
+
 ## ✨ Effects
 
 Every effect is declared in `platform/Effect.roc` and wrapped by `platform/Golem.roc`;
@@ -503,6 +606,8 @@ apps call them through `pf.Golem`.
 | `parseAgentId!` / `makeAgentId!` | `golem:agent/host` | an agent id split into `{"agentType", "constructor", "phantomId"}` and back (`makeAgentId!` always builds ids without a phantom id) |
 | `createWebhook!` / `awaitWebhook!` | `golem:agent/host` + `golem:api/host` | creates a promise and the callback URL that completes it; a POST to the URL delivers its body to `awaitWebhook!` (see [Webhooks](#-webhooks)) |
 | `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
+| `newQuotaToken!` / `quotaReserve!` / `quotaCommit!` / `quotaSplit!` / `quotaMerge!` | `golem:quota/types` | reserve and commit units of a resource the manifest declares; tokens and reservations are `U32` handles (see [Quotas and retry](#-quotas-and-retry)) |
+| `getRetryPolicies!` / `getRetryPolicy!` / `resolveRetryPolicy!` / `nextRetryDelay!` / `setRetryPolicy!` / `removeRetryPolicy!` | `golem:api/retry` | retry policies and their predicate/policy trees, rendered as JSON text (see [Quotas and retry](#-quotas-and-retry)) |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
@@ -517,12 +622,15 @@ anything is published:
 | Layer | Command | What it proves |
 | --- | --- | --- |
 | Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, and the `httpMount` metadata mapping |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), and a webhook created from an agent and completed by a POST (204/404). No stubs |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota and retry calls included |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, and retry policies read, resolved and walked. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so
-their state starts fresh on every run. It needs a golem CLI whose local server
+their state starts fresh on every run. A quota resource's capacity is not per
+agent, though: it is environment-level and durable, so the section that reserves
+from `example-requests` reports a `SKIP` for the reservation that fits when the
+data directory has already spent it. It needs a golem CLI whose local server
 works — the all-in-one `golem-<target>` binary, not `golem-cli-<target>` — see
 the version matrix in the deploy section; CI and the release workflow install
 `v1.6.0` for it. It reports a `SKIP` line, and a count at the end, for checks

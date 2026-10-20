@@ -50,6 +50,42 @@ tools:
   stream-message:
     component: roc-golem:streaming-agent
 
+# The quota resource the counter's `quota` command reserves from, and the retry
+# policy its `retry` command resolves. Both are environment-level objects the CLI
+# creates during deployment, so the names here are the names the agent uses in
+# `newQuotaToken!` and sees in `getRetryPolicies!` (see the README's "Quotas and
+# retry" section).
+#
+# The resource holds ten requests and rejects rather than waits, so one `quota 6`
+# fits and the next one is answered with `quota reservation failed`; the capacity
+# is shared by the whole environment, which is why the e2e section that exercises
+# it expects a fresh data directory.
+resourceDefaults:
+  local:
+    example-requests:
+      limit:
+        type: Capacity
+        value: 10
+      enforcementAction: reject
+      unit: request
+      units: requests
+
+# The counter resolves a policy for `send` operations; this rule matches that
+# verb and retries twice with a fixed 100ms delay in between.
+retryPolicyDefaults:
+  local:
+    send-retries:
+      priority: 100
+      predicate:
+        propEq:
+          property: "verb"
+          value: "send"
+      policy:
+        countBox:
+          maxRetries: 2
+          inner:
+            periodic: "100ms"
+
 agents:
   # Bind each tool to the agent type that exposes it, so the tool protocol
   # (and `golem tool invoke`) can route calls.
