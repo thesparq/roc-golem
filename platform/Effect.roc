@@ -205,4 +205,59 @@ Effect := {}.{
 	resolveComponentId! = |componentReference| {
 		Host.rocFxResolveComponentId!(componentReference)
 	}
+
+	## The two shared stores (`wasi:keyvalue`, `wasi:blobstore`): one effect per
+	## operation. Values are bytes and travel as lossy-UTF-8 text, the convention
+	## `http!` uses for bodies; buckets, keys, containers and objects are named by
+	## strings, so no handle has to be carried between calls. A missing key is
+	## `"null"` (`kvExists!` is the direct check).
+	kvGet! : Str, Str => Try(Str, Str)
+	kvGet! = |bucket, key| {
+		Host.rocFxKvGet!(bucket, key)
+	}
+
+	kvSet! : Str, Str, Str => Try({}, Str)
+	kvSet! = |bucket, key, value| {
+		Host.rocFxKvSet!(bucket, key, value)
+	}
+
+	kvDelete! : Str, Str => Try({}, Str)
+	kvDelete! = |bucket, key| {
+		Host.rocFxKvDelete!(bucket, key)
+	}
+
+	kvExists! : Str, Str => Try(Bool, Str)
+	kvExists! = |bucket, key| {
+		Host.rocFxKvExists!(bucket, key)
+	}
+
+	blobCreateContainer! : Str => Try({}, Str)
+	blobCreateContainer! = |name| {
+		Host.rocFxBlobCreateContainer!(name)
+	}
+
+	blobPut! : Str, Str, Str => Try({}, Str)
+	blobPut! = |container, object, value| {
+		Host.rocFxBlobPut!(container, object, value)
+	}
+
+	blobGet! : Str, Str => Try(Str, Str)
+	blobGet! = |container, object| {
+		Host.rocFxBlobGet!(container, object)
+	}
+
+	blobHas! : Str, Str => Try(Bool, Str)
+	blobHas! = |container, object| {
+		Host.rocFxBlobHas!(container, object)
+	}
+
+	blobList! : Str => Try(Str, Str)
+	blobList! = |container| {
+		Host.rocFxBlobList!(container)
+	}
+
+	blobDelete! : Str, Str => Try({}, Str)
+	blobDelete! = |container, object| {
+		Host.rocFxBlobDelete!(container, object)
+	}
 }

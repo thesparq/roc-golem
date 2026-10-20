@@ -16,6 +16,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | webhooks | `golem:agent/host` + `golem:api/host` promises | `createWebhook!` / `awaitWebhook!`; the POST callback completes a durable promise |
 | user-defined snapshots | `golem:api/save-snapshot`/`load-snapshot` | state JSON; e2e-covered across an incompatible revision |
 | quotas + retry policies | `golem:quota/types`, `golem:api/retry` | `newQuotaToken!` / `quotaReserve!` / `quotaCommit!` / `quotaSplit!` / `quotaMerge!`, and `getRetryPolicies!` / `resolveRetryPolicy!` / `nextRetryDelay!` / … with the policy trees as JSON |
+| key-value + blobstore | `wasi:keyvalue/eventual`, `wasi:blobstore` | `kvGet!` / `kvSet!` / `kvDelete!` / `kvExists!` and `blobCreateContainer!` / `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!`; both stores are environment-scoped, and values travel as text |
 | oplog + execution control | `golem:api/host` | `trap!`, `idempotencyKey!`, `fork!`, `oplogCommit!`, `resolveComponentId!` / `resolveAgentId!` — the part of the 1.5 surface 1.6 kept (see item 10) |
 | tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance) |
 | read-only methods | agent metadata | declared for tools; until-write cache |
@@ -101,10 +102,32 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    the data directory's capacity already spent. Not exposed: passing a quota token
    to another agent. The SDKs send tokens through schema values, and
    `schema-value-tree` in this platform carries no resources.
-8. **Databases** (`golem:rdbms/{postgres,mysql,ignite2}`), **blobstore**
-   (`wasi:blobstore`), **key-value** (`wasi:keyvalue`), **durability**
-   (`golem:durability`). Cost: small each (a Roc effect per operation), but the
-   Roc-facing API design matters: the SDKs expose typed clients.
+8. ~~**Blobstore** (`wasi:blobstore`) and **key-value** (`wasi:keyvalue`)~~ —
+   **done**; **databases** (`golem:rdbms/{postgres,mysql,ignite2}`) and
+   **durability** (`golem:durability`) are still open. The two stores are
+   imports of `wit/world.wit` now, and the effects are the data plane per store:
+   four key-value effects (`kvGet!` / `kvSet!` / `kvDelete!` / `kvExists!` on
+   `wasi:keyvalue/eventual`) and six blobstore ones (`blobCreateContainer!` /
+   `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!`). Values
+   are bytes on the wire and travel as lossy-UTF-8 text, the convention `http!`
+   uses; buckets, keys, containers and objects are named by strings, so — unlike
+   the SDKs' typed clients — no handle travels through the app. A missing key is
+   the JSON literal `null` (`kvExists!` is the direct check), which is what tells
+   it from an empty value; the one value it cannot be told from is stored text
+   that is itself `null`, documented in `platform/Golem.roc` and the README.
+   Both interfaces are synchronous, so the ABI harness drives a full round trip
+   of each against recording stubs that keep their own small store (the counter
+   example carries `kv` and `blob` commands for it, and CI/release run them);
+   the blobstore's `list-objects` is the one call whose `stream<object-name>` the
+   host drains itself, into the JSON array `blobList!` returns. The e2e covers
+   both round trips against a real server. Not exposed: `wasi:keyvalue/cache`
+   (async results) and `eventual-batch`, and on the blobstore side
+   `delete-container`, `container-exists`, `copy-object`, `move-object`,
+   `delete-objects`, `clear` and the `info` readers. Cost of the remaining items:
+   the rdbms interfaces are a client-shaped surface (connection + query +
+   transaction handles), so they need a design pass rather than the mechanical
+   one the two stores took; `golem:durability` is cheaper (mostly
+   `persist-remote-write`-style markers).
 9. **The agent's own filesystem**: the SDKs read/write files in the agent's
    durable filesystem; we can only *serve* files through mounts. Needs
    `wasi:filesystem` in the world plus effects. Cost: medium.

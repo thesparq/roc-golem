@@ -296,12 +296,12 @@ Still open:
   and `tooling/glue/README.md`), which removed the known way this class of trap
   could fire; if one reappears, keep the failing `.wasm` and compare `roc build`
   with and without `--debug`.
-- **The ABI harness cannot drive async imports**: a component that imports an
-  async host function traps inside the harness's wasmtime (a fork-vs-wasmtime
-  async-ABI gap — see `tooling/abi_harness/README.md`). That is now the
-  streaming agent (`websocket/client.receive`) and the effects agent
-  (`wasi:http/client.send`), so both are covered by the e2e instead. The same
-  components run on a real Golem server.
+- **The ABI harness cannot instantiate the effects agent**: the harness world
+  implements no p3 `wasi:http` interface, and the effects example imports
+  `wasi:http/client@0.3.0`, so the e2e is its authoritative check. Async imports
+  themselves are not the obstacle — the streaming agent's
+  `websocket/client.receive` call passes in the harness (see
+  `tooling/abi_harness/README.md`).
 - **Local deploy** is verified with golem CLI 1.6.0 (GA), 1.6.0-rc2.1 and 1.5.9
   on the `v0.5.x` line; the version matrix is in the deploy section above.
 - `host/src/roc_std.rs` is still hand-written; generated glue (`roc glue`) would
@@ -640,6 +640,54 @@ update`, `golem agent revert`), so this platform does not expose them to apps.
 
 ---
 
+## 🗄️ Key-value and blobstore
+
+Golem gives every environment two shared stores an agent can use without any
+setup: a key-value store (`wasi:keyvalue`) and a blobstore (`wasi:blobstore`).
+Both belong to the *environment* rather than to one agent — every agent in it
+sees the same buckets, containers and objects — and both are
+permission-checked and recorded in the caller's oplog by the runtime, so a
+replayed invocation is answered from the recorded calls instead of reaching the
+store again.
+
+Values are bytes on the wire. The effects carry them as lossy-UTF-8 text, the
+convention `http!` and `awaitWebhook!` already use for bodies: text in, text
+out, binary data only on the way through. Buckets, keys, containers and objects
+are named by strings, so no handle reaches the app.
+
+| Effect | What it does |
+| --- | --- |
+| `kvGet! : Str, Str => Try(Str, Str)` | `(bucket, key)` → the value as text. A key the bucket does not hold reads as the JSON literal `null`, and an empty value reads as `""`; the one blind spot of that convention is a stored value that is itself the text `null` |
+| `kvSet! : Str, Str, Str => Try({}, Str)` | `(bucket, key, value)` → stores the value's UTF-8 bytes, replacing what was there. Buckets are implicit: the first write makes one, so there is nothing to open |
+| `kvDelete! : Str, Str => Try({}, Str)` | removes the key. Deleting one that is not there is not an error |
+| `kvExists! : Str, Str => Try(Bool, Str)` | whether the key is there, without reading the value — the direct answer when the value's own text could be ambiguous |
+| `blobCreateContainer! : Str => Try({}, Str)` | creates the container if it is not there yet. A container that already exists is left alone (and so are its objects), so an app can make sure of its container with this one call |
+| `blobPut! : Str, Str, Str => Try({}, Str)` | `(container, object, value)` → stores the value's bytes as that object, replacing an object with the same name. The container has to exist |
+| `blobGet! : Str, Str => Try(Str, Str)` | the whole object as text. The host reads the object's size first and asks for exactly that range, so a zero-length object comes back as `""` instead of as a range error |
+| `blobHas! : Str, Str => Try(Bool, Str)` | whether the container holds that object |
+| `blobList! : Str => Try(Str, Str)` | the object names as a JSON array of strings (`[]` for an empty container). The interface promises no order — sort the array if the app needs a stable one. `list-objects` answers with a `stream<object-name>`, which the host drains before returning |
+| `blobDelete! : Str, Str => Try({}, Str)` | deletes the object. Deleting one that is not there is not an error |
+
+A container that does not exist is an error (the host answers `Container not
+found`) rather than an empty one, so `blobPut!` into a missing container is
+reported instead of quietly making one — `blobCreateContainer!` is the call that
+ensures it. The two stores are shared, so an app that runs the same key or
+object name in different environments (or in parallel runs against one
+environment) sees them collide.
+
+The counter example carries both round trips as commands (`kv <bucket> <key>
+<value>` and `blob <container> <object> <value>`), each reporting every step's
+outcome in one reply; the `kv:` and `blob:` checks in `tooling/e2e.sh` run them
+against a real server.
+
+Not exposed: `wasi:keyvalue/cache` (every operation of it is async, and the
+`eventual` effects cover the same data) and `wasi:keyvalue/eventual-batch`, and
+on the blobstore side `delete-container`, `container-exists`, `copy-object`,
+`move-object`, `delete-objects`, `clear` and the container/object `info`
+readers. The effects above are the data plane this platform commits to.
+
+---
+
 ## ✨ Effects
 
 Every effect is declared in `platform/Effect.roc` and wrapped by `platform/Golem.roc`;
@@ -663,6 +711,8 @@ apps call them through `pf.Golem`.
 | `newQuotaToken!` / `quotaReserve!` / `quotaCommit!` / `quotaSplit!` / `quotaMerge!` | `golem:quota/types` | reserve and commit units of a resource the manifest declares; tokens and reservations are `U32` handles (see [Quotas and retry](#-quotas-and-retry)) |
 | `getRetryPolicies!` / `getRetryPolicy!` / `resolveRetryPolicy!` / `nextRetryDelay!` / `setRetryPolicy!` / `removeRetryPolicy!` | `golem:api/retry` | retry policies and their predicate/policy trees, rendered as JSON text (see [Quotas and retry](#-quotas-and-retry)) |
 | `trap!` / `idempotencyKey!` / `fork!` / `oplogCommit!` / `resolveComponentId!` / `resolveAgentId!` | `golem:api/host` | fail an invocation, name an external write durably, copy the agent, wait for the oplog to reach replicas, and resolve component and agent ids (see [Oplog and execution control](#-oplog-and-execution-control)) |
+| `kvGet!` / `kvSet!` / `kvDelete!` / `kvExists!` | `wasi:keyvalue` | the environment's key-value store; buckets are implicit and the value travels as text, with a missing key reading as `null` (see [Key-value and blobstore](#-key-value-and-blobstore)) |
+| `blobCreateContainer!` / `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!` | `wasi:blobstore` | the environment's blobstore: containers of named objects, bodies as text, and `blobList!`'s object names as a JSON array (see [Key-value and blobstore](#-key-value-and-blobstore)) |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
@@ -677,8 +727,8 @@ anything is published:
 | Layer | Command | What it proves |
 | --- | --- | --- |
 | Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, and the `httpMount` metadata mapping |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry and oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers) included |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers) and the key-value/blobstore round trips included |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so

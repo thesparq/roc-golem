@@ -27,8 +27,14 @@ Flags:
   matches a request line the HTTP stub received, `--expect-rpc` matches a
   remote call the agent made, and `--expect-quota` / `--expect-retry` /
   `--expect-host-call` match the quota, retry-policy and `golem:api/host` calls
-  the agent made (`trap`, `oplog-commit`, `resolve-component-id`, …). All of them
-  are recorded by the stubs, so effect wiring is verified, not just reply text.
+  the agent made (`trap`, `oplog-commit`, `resolve-component-id`, …).
+  `--expect-kv` and `--expect-blob` do the same for the key-value
+  (`wasi:keyvalue`: `open-bucket`, `set`, `get`, `delete`, `exists`) and
+  blobstore (`wasi:blobstore`: `create-container`, `write-data`, `list-objects`,
+  …) calls. All of them are recorded by the stubs, so effect wiring is verified,
+  not just reply text — and the two stores are stubbed with a small in-memory
+  store each, so a round trip the component drives has to come back out of it
+  changed.
 - `--expect-trap SUBSTRING` expects the first message to *fail the invocation*,
   with SUBSTRING in the trap's text, instead of returning a reply: `trap!` never
   returns, so the reply and tool checks are skipped and nothing else is asked of
@@ -57,15 +63,19 @@ It exits non-zero when any of these fail:
 - `invoke handle-message` traps, returns an error, or returns a reply that does
   not contain the expected text,
 - an expected log line, WebSocket send, HTTP request, RPC call, quota call,
-  retry-policy call or `golem:api/host` call was never recorded,
+  retry-policy call, `golem:api/host` call, key-value call or blobstore call was
+  never recorded,
 - a message expected to trap (`--expect-trap`) returned a reply or failed some
   other way instead.
 
 Current state of the components built from this tree: counter, ai_tool, site and
-effects pass every check, including the effects agent's HTTP and RPC calls, the
-counter's quota and retry-policy calls, and the counter's execution-control calls
-(a trapped invocation, `oplog-commit`, and both resolvers — the stubs resolve one
-known component reference, `roc-golem:counter`, and nothing else).
+static_site pass every check, including the effects the counter carries — the
+quota and retry-policy calls, the execution-control calls, and the key-value and
+blobstore round trips, which run against the stubs' own stores. The streaming
+agent passes here too, `websocket/client.receive` included. The effects agent
+cannot even be *instantiated* by the harness: its p3 `wasi:http` import is not
+in the harness world (see the toolchain notes below), so the e2e job stays its
+authoritative check.
 
 Toolchain notes found while porting to 1.6:
 
@@ -79,15 +89,14 @@ Toolchain notes found while porting to 1.6:
   deserializer used it defensively and now parses its compact JSON directly.
   If a component starts trapping in `initialize`, look for `Str.trim` (or
   similar slicing helpers) first.
-- **Components that import an async host function trap in the harness** (at the
-  first export call, `wasm unreachable` inside the guest runtime) under both
-  wasmtime 46 and 49. Today that is only the streaming agent, once its
-  `websocket/client.receive` import is linked in (it uses `wit_bindgen::block_on`
-  to call the async import from the synchronous C-ABI effect). The same
-  component initializes and serves requests on a real Golem 1.6 server, so this
-  is a fork-vs-wasmtime async-ABI gap in the harness environment, not a platform
-  bug. Until it is resolved, treat the e2e run as the authoritative check for
-  components with async imports.
+- **Async host imports work here.** The earlier note that components importing
+  an async host function trap in the harness is out of date: the streaming agent
+  passes a `--message connect --then-message receive` run, which calls
+  `websocket/client.receive` — a WIT `async func` — under wasmtime 46 with
+  `component-model-async` enabled. What keeps the *effects* agent out is a
+  missing interface rather than an ABI gap: the harness world does not implement
+  the p3 `wasi:http` interfaces, so instantiation fails with "a matching
+  implementation was not found in the linker" before any call runs.
 
 ## Why this exists
 
@@ -106,10 +115,17 @@ examples' components import, so the harness can supply the missing host
 interfaces with no Golem runtime present: agent types, the clocks, `wasi:io`,
 `wasi:http` (answered from a canned response while recording the request),
 `golem:agent/host` (RPC calls recorded), the WebSocket client (a recording
-connection), `wasi:logging` (recorded), and `golem:api/retry` /
-`golem:quota/types` / `golem:api/host` (recorded too). Those three are
-synchronous interfaces, which is why they can be driven here at all; a component
-that imports an *async* host function cannot be (see the toolchain notes above).
+connection), `wasi:logging` (recorded), `golem:api/retry` / `golem:quota/types`
+/ `golem:api/host` (recorded too), and the two shared stores `wasi:keyvalue` and
+`wasi:blobstore` (each with a small in-memory store behind it). Those interfaces
+are synchronous, which is why they can be driven here at all.
+
+Two functions of the blobstore move a component-model stream — the outgoing
+value's `write-body` and the container's `list-objects` — and attaching a host
+side producer or consumer to a stream needs the store, so the `bindgen!` call
+marks exactly those two `store | trappable` and the stubs implement the
+generated `WithStore` companion traits. That is the only configuration the
+harness needs; the guest still calls both synchronously, as the WIT declares.
 
 `golem:api/host`'s `trap` is the one stub that cannot fail the way the real host
 does: the WIT function has no result an error could travel in, and on the

@@ -7,10 +7,14 @@
 //! this at each component in `build/`.
 
 use anyhow::{bail, Context, Result};
+use std::collections::BTreeMap;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context as TaskContext, Poll};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use wasmtime::component::{bindgen, Component, Linker};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::component::{bindgen, Access, Component, Linker, Source, StreamConsumer, StreamReader, StreamResult};
+use wasmtime::{Config, Engine, Store, StoreContextMut};
 use wasmtime::component::ResourceTable;
 
 mod stubs;
@@ -19,6 +23,14 @@ bindgen!({
     path: "wit",
     world: "harness-world",
     debug: true,
+    imports: {
+        // Both of these move a component-model stream. Attaching a host-side
+        // producer or consumer to a stream needs the store, so the generated
+        // `WithStore` variants are what the stubs implement (`store`); the
+        // rest of the two interfaces is plain (`trappable` is the default).
+        "wasi:blobstore/types.[method]outgoing-value.outgoing-value-write-body": store | trappable,
+        "wasi:blobstore/container.[method]container.list-objects": store | trappable,
+    },
 });
 
 use exports::golem::agent::guest::Principal;
@@ -59,6 +71,30 @@ struct Ctx {
     /// Oplog and execution-control host calls (`golem:api/host`) the agent made:
     /// `trap`, `oplog-commit`, the resolvers, the idempotency key …
     host_api_calls: Vec<String>,
+    /// Key-value host calls (`wasi:keyvalue`) the agent made, for `--expect-kv`.
+    kv_calls: Vec<String>,
+    /// The harness's own key-value store: `(bucket, key)` → value. Buckets are
+    /// implicit here exactly as they are in the real store: a write makes one.
+    kv_store: std::collections::HashMap<(String, String), Vec<u8>>,
+    /// Bucket handles: rep → bucket name.
+    kv_buckets: Vec<String>,
+    /// Outgoing values the guest filled with `outgoing-value-write-body-sync`:
+    /// rep → body.
+    kv_outgoing: Vec<Vec<u8>>,
+    /// Incoming values a `get` answered with: rep → body (consumed once).
+    kv_incoming: Vec<Vec<u8>>,
+    /// Blobstore host calls (`wasi:blobstore`) the agent made, for
+    /// `--expect-blob`.
+    blob_calls: Vec<String>,
+    /// The harness's own containers: container name → object name → body.
+    blob_containers: BTreeMap<String, BTreeMap<String, Vec<u8>>>,
+    /// Container handles: rep → container name.
+    blob_container_reps: Vec<String>,
+    /// Outgoing values the guest streamed a body into: rep → body. The body is
+    /// shared with the stream consumer that fills it while the guest writes.
+    blob_outgoing: Vec<Arc<Mutex<Vec<u8>>>>,
+    /// Incoming values a `get-data` answered with: rep → body.
+    blob_incoming: Vec<Vec<u8>>,
     /// HTTP state used by the `wasi:http` stubs in `stubs.rs`.
     fields_table: Vec<std::collections::HashMap<String, Vec<Vec<u8>>>>,
     requests_table: Vec<StubRequest>,
@@ -486,6 +522,552 @@ impl golem::websocket::client::HostWebsocketConnectionWithStore<Ctx> for Ctx {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Key-value (`wasi:keyvalue`) and blobstore (`wasi:blobstore`) stubs
+// ---------------------------------------------------------------------------
+//
+// On a real server both stores are shared by the whole environment and durable;
+// here each one is a plain in-memory map, and every call is recorded so a check
+// can see what the component asked the host for. A round trip driven by the
+// component has to come back out of *this* store changed, which is what makes
+// the checks more than "the call was made".
+
+impl Ctx {
+    /// The bucket a handle names; the effects open the bucket first, so a rep
+    /// this stub never handed out is not reachable through them.
+    fn kv_bucket_name(&self, rep: u32) -> String {
+        self.kv_buckets
+            .get(rep as usize)
+            .cloned()
+            .unwrap_or_else(|| String::from("<unknown>"))
+    }
+
+    /// The container a handle names, and the same caveat as `kv_bucket_name`.
+    fn blob_container_name(&self, rep: u32) -> String {
+        self.blob_container_reps
+            .get(rep as usize)
+            .cloned()
+            .unwrap_or_else(|| String::from("<unknown>"))
+    }
+
+    /// What `blobPut!` streamed into this outgoing value (empty for a handle
+    /// that was never written to).
+    fn blob_outgoing_body(&self, rep: u32) -> Vec<u8> {
+        self.blob_outgoing
+            .get(rep as usize)
+            .map(|body| body.lock().unwrap().clone())
+            .unwrap_or_default()
+    }
+}
+
+/// `wasi:keyvalue/wasi-keyvalue-error`: the error resource, which the effects
+/// render with `trace`. Nothing in this harness raises one.
+impl wasi::keyvalue::wasi_keyvalue_error::HostError for Ctx {
+    fn trace(
+        &mut self,
+        _self_: wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>,
+    ) -> String {
+        String::from("stub key-value error")
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl wasi::keyvalue::wasi_keyvalue_error::Host for Ctx {}
+
+/// Buckets are implicit in the host, and here too: opening one only hands back
+/// a handle to the name.
+impl wasi::keyvalue::types::HostBucket for Ctx {
+    fn open_bucket(
+        &mut self,
+        name: String,
+    ) -> Result<
+        wasmtime::component::Resource<wasi::keyvalue::types::Bucket>,
+        wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>,
+    > {
+        self.kv_calls.push(format!("open-bucket(name={name})"));
+        let rep = self.kv_buckets.len() as u32;
+        self.kv_buckets.push(name);
+        Ok(unsafe { wasmtime::component::Resource::new_own(rep) })
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<wasi::keyvalue::types::Bucket>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl wasi::keyvalue::types::HostOutgoingValue for Ctx {
+    fn new_outgoing_value(&mut self) -> wasmtime::component::Resource<wasi::keyvalue::types::OutgoingValue> {
+        let rep = self.kv_outgoing.len() as u32;
+        self.kv_outgoing.push(Vec::new());
+        unsafe { wasmtime::component::Resource::new_own(rep) }
+    }
+
+    fn outgoing_value_write_body_async(
+        &mut self,
+        _self_: wasmtime::component::Resource<wasi::keyvalue::types::OutgoingValue>,
+        _data: StreamReader<u8>,
+    ) -> Result<(), wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>> {
+        unimplemented!("harness stub: wasi:keyvalue/types.outgoing-value-write-body-async")
+    }
+
+    fn outgoing_value_write_body_sync(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::keyvalue::types::OutgoingValue>,
+        value: Vec<u8>,
+    ) -> Result<(), wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>> {
+        if let Some(body) = self.kv_outgoing.get_mut(self_.rep() as usize) {
+            body.extend_from_slice(&value);
+        }
+        Ok(())
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<wasi::keyvalue::types::OutgoingValue>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl wasi::keyvalue::types::HostIncomingValue for Ctx {
+    fn incoming_value_consume_sync(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::keyvalue::types::IncomingValue>,
+    ) -> Result<Vec<u8>, wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>> {
+        let rep = self_.rep() as usize;
+        Ok(match self.kv_incoming.get_mut(rep) {
+            Some(body) => std::mem::take(body),
+            None => Vec::new(),
+        })
+    }
+
+    fn incoming_value_consume_async(
+        &mut self,
+        _self_: wasmtime::component::Resource<wasi::keyvalue::types::IncomingValue>,
+    ) -> Result<StreamReader<u8>, wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>> {
+        unimplemented!("harness stub: wasi:keyvalue/types.incoming-value-consume-async")
+    }
+
+    fn incoming_value_size(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::keyvalue::types::IncomingValue>,
+    ) -> Result<u64, wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>> {
+        Ok(self
+            .kv_incoming
+            .get(self_.rep() as usize)
+            .map(|body| body.len() as u64)
+            .unwrap_or(0))
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<wasi::keyvalue::types::IncomingValue>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl wasi::keyvalue::types::Host for Ctx {}
+
+/// The `eventual` CRUD surface, over the harness's own map.
+impl wasi::keyvalue::eventual::Host for Ctx {
+    fn get(
+        &mut self,
+        bucket: wasmtime::component::Resource<wasi::keyvalue::types::Bucket>,
+        key: String,
+    ) -> Result<
+        Option<wasmtime::component::Resource<wasi::keyvalue::types::IncomingValue>>,
+        wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>,
+    > {
+        let bucket = self.kv_bucket_name(bucket.rep());
+        self.kv_calls.push(format!("get(bucket={bucket}, key={key})"));
+        match self.kv_store.get(&(bucket, key)) {
+            Some(value) => {
+                let rep = self.kv_incoming.len() as u32;
+                self.kv_incoming.push(value.clone());
+                Ok(Some(unsafe { wasmtime::component::Resource::new_own(rep) }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn set(
+        &mut self,
+        bucket: wasmtime::component::Resource<wasi::keyvalue::types::Bucket>,
+        key: String,
+        outgoing_value: wasmtime::component::Resource<wasi::keyvalue::types::OutgoingValue>,
+    ) -> Result<(), wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>> {
+        let bucket = self.kv_bucket_name(bucket.rep());
+        let value = self
+            .kv_outgoing
+            .get(outgoing_value.rep() as usize)
+            .cloned()
+            .unwrap_or_default();
+        self.kv_calls
+            .push(format!("set(bucket={bucket}, key={key}, {} bytes)", value.len()));
+        self.kv_store.insert((bucket, key), value);
+        Ok(())
+    }
+
+    fn delete(
+        &mut self,
+        bucket: wasmtime::component::Resource<wasi::keyvalue::types::Bucket>,
+        key: String,
+    ) -> Result<(), wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>> {
+        let bucket = self.kv_bucket_name(bucket.rep());
+        self.kv_calls.push(format!("delete(bucket={bucket}, key={key})"));
+        self.kv_store.remove(&(bucket, key));
+        Ok(())
+    }
+
+    fn exists(
+        &mut self,
+        bucket: wasmtime::component::Resource<wasi::keyvalue::types::Bucket>,
+        key: String,
+    ) -> Result<bool, wasmtime::component::Resource<wasi::keyvalue::wasi_keyvalue_error::Error>> {
+        let bucket = self.kv_bucket_name(bucket.rep());
+        self.kv_calls.push(format!("exists(bucket={bucket}, key={key})"));
+        Ok(self.kv_store.contains_key(&(bucket, key)))
+    }
+}
+
+/// The container-level blobstore surface. A container that was never created is
+/// missing here exactly as it is on the host, `get-container` included: the
+/// real one answers `Container not found`.
+impl wasi::blobstore::blobstore::Host for Ctx {
+    fn create_container(
+        &mut self,
+        name: String,
+    ) -> Result<wasmtime::component::Resource<wasi::blobstore::container::Container>, String> {
+        self.blob_calls.push(format!("create-container(name={name})"));
+        self.blob_containers.entry(name.clone()).or_default();
+        let rep = self.blob_container_reps.len() as u32;
+        self.blob_container_reps.push(name);
+        Ok(unsafe { wasmtime::component::Resource::new_own(rep) })
+    }
+
+    fn get_container(
+        &mut self,
+        name: String,
+    ) -> Result<wasmtime::component::Resource<wasi::blobstore::container::Container>, String> {
+        self.blob_calls.push(format!("get-container(name={name})"));
+        if !self.blob_containers.contains_key(&name) {
+            return Err(String::from("Container not found"));
+        }
+        let rep = self.blob_container_reps.len() as u32;
+        self.blob_container_reps.push(name);
+        Ok(unsafe { wasmtime::component::Resource::new_own(rep) })
+    }
+
+    fn delete_container(&mut self, name: String) -> Result<(), String> {
+        self.blob_calls.push(format!("delete-container(name={name})"));
+        self.blob_containers.remove(&name);
+        Ok(())
+    }
+
+    fn container_exists(&mut self, name: String) -> Result<bool, String> {
+        self.blob_calls.push(format!("container-exists(name={name})"));
+        Ok(self.blob_containers.contains_key(&name))
+    }
+
+    fn copy_object(
+        &mut self,
+        _src: wasi::blobstore::types::ObjectId,
+        _dest: wasi::blobstore::types::ObjectId,
+    ) -> Result<(), String> {
+        unimplemented!("harness stub: wasi:blobstore/blobstore.copy-object")
+    }
+
+    fn move_object(
+        &mut self,
+        _src: wasi::blobstore::types::ObjectId,
+        _dest: wasi::blobstore::types::ObjectId,
+    ) -> Result<(), String> {
+        unimplemented!("harness stub: wasi:blobstore/blobstore.move-object")
+    }
+}
+
+impl wasi::blobstore::container::HostContainer for Ctx {
+    fn name(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+    ) -> Result<String, String> {
+        Ok(self.blob_container_name(self_.rep()))
+    }
+
+    fn info(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+    ) -> Result<wasi::blobstore::types::ContainerMetadata, String> {
+        Ok(wasi::blobstore::types::ContainerMetadata {
+            name: self.blob_container_name(self_.rep()),
+            created_at: 0,
+        })
+    }
+
+    fn get_data(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+        name: String,
+        start: u64,
+        end: u64,
+    ) -> Result<wasmtime::component::Resource<wasi::blobstore::types::IncomingValue>, String>
+    {
+        let container = self.blob_container_name(self_.rep());
+        self.blob_calls.push(format!(
+            "get-data(container={container}, object={name}, {start}..={end})"
+        ));
+        let object = self
+            .blob_containers
+            .get(&container)
+            .and_then(|objects| objects.get(&name))
+            .cloned()
+            .ok_or_else(|| String::from("Object does not exist"))?;
+        // The store's rule, inclusive on both ends: the range has to sit inside
+        // the object (an empty object has no range at all).
+        if end < start || end as usize >= object.len() {
+            return Err(format!(
+                "no bytes {start}..={end} in the {} bytes of {name:?}",
+                object.len()
+            ));
+        }
+        let rep = self.blob_incoming.len() as u32;
+        self.blob_incoming
+            .push(object[start as usize..=end as usize].to_vec());
+        Ok(unsafe { wasmtime::component::Resource::new_own(rep) })
+    }
+
+    fn write_data(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+        name: String,
+        data: wasmtime::component::Resource<wasi::blobstore::types::OutgoingValue>,
+    ) -> Result<(), String> {
+        let container = self.blob_container_name(self_.rep());
+        let body = self.blob_outgoing_body(data.rep());
+        self.blob_calls.push(format!(
+            "write-data(container={container}, object={name}, {} bytes)",
+            body.len()
+        ));
+        self.blob_containers
+            .entry(container)
+            .or_default()
+            .insert(name, body);
+        Ok(())
+    }
+
+    fn delete_object(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+        name: String,
+    ) -> Result<(), String> {
+        let container = self.blob_container_name(self_.rep());
+        self.blob_calls
+            .push(format!("delete-object(container={container}, object={name})"));
+        if let Some(objects) = self.blob_containers.get_mut(&container) {
+            objects.remove(&name);
+        }
+        Ok(())
+    }
+
+    fn delete_objects(
+        &mut self,
+        _self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+        _names: Vec<String>,
+    ) -> Result<(), String> {
+        unimplemented!("harness stub: wasi:blobstore/container.delete-objects")
+    }
+
+    fn has_object(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+        name: String,
+    ) -> Result<bool, String> {
+        let container = self.blob_container_name(self_.rep());
+        self.blob_calls
+            .push(format!("has-object(container={container}, object={name})"));
+        Ok(self
+            .blob_containers
+            .get(&container)
+            .map(|objects| objects.contains_key(&name))
+            .unwrap_or(false))
+    }
+
+    fn object_info(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+        name: String,
+    ) -> Result<wasi::blobstore::types::ObjectMetadata, String> {
+        let container = self.blob_container_name(self_.rep());
+        let size = self
+            .blob_containers
+            .get(&container)
+            .and_then(|objects| objects.get(&name))
+            .map(|body| body.len() as u64)
+            .ok_or_else(|| String::from("Object does not exist"))?;
+        self.blob_calls.push(format!(
+            "object-info(container={container}, object={name}, {size} bytes)"
+        ));
+        Ok(wasi::blobstore::types::ObjectMetadata {
+            name,
+            container,
+            created_at: 0,
+            size,
+        })
+    }
+
+    fn clear(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+    ) -> Result<(), String> {
+        let container = self.blob_container_name(self_.rep());
+        self.blob_calls.push(format!("clear(container={container})"));
+        if let Some(objects) = self.blob_containers.get_mut(&container) {
+            objects.clear();
+        }
+        Ok(())
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+/// Returning a stream needs the store, so `list-objects` is one of the two
+/// functions this harness marks `store`. The names are served from the harness's
+/// own container, and the whole stream is available immediately.
+impl wasi::blobstore::container::HostContainerWithStore<Ctx> for Ctx {
+    fn list_objects(
+        mut host: Access<Ctx, Self>,
+        self_: wasmtime::component::Resource<wasi::blobstore::container::Container>,
+    ) -> wasmtime::Result<Result<StreamReader<String>, String>> {
+        let container = host.get().blob_container_name(self_.rep());
+        let names: Vec<String> = host
+            .get()
+            .blob_containers
+            .get(&container)
+            .map(|objects| objects.keys().cloned().collect())
+            .unwrap_or_default();
+        host.get()
+            .blob_calls
+            .push(format!("list-objects(container={container}, {} names)", names.len()));
+        Ok(Ok(StreamReader::new(&mut host, names)?))
+    }
+}
+
+impl wasi::blobstore::container::Host for Ctx {}
+
+impl wasi::blobstore::types::HostOutgoingValue for Ctx {
+    fn new_outgoing_value(&mut self) -> wasmtime::component::Resource<wasi::blobstore::types::OutgoingValue> {
+        let rep = self.blob_outgoing.len() as u32;
+        self.blob_outgoing.push(Arc::new(Mutex::new(Vec::new())));
+        unsafe { wasmtime::component::Resource::new_own(rep) }
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<wasi::blobstore::types::OutgoingValue>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+/// The other stream-carrying function: the guest writes the object body into
+/// this stream, and the consumer appends it to the outgoing value's body, which
+/// `write-data` then copies into the harness's container.
+impl wasi::blobstore::types::HostOutgoingValueWithStore<Ctx> for Ctx {
+    fn outgoing_value_write_body(
+        mut host: Access<Ctx, Self>,
+        self_: wasmtime::component::Resource<wasi::blobstore::types::OutgoingValue>,
+        data: StreamReader<u8>,
+    ) -> wasmtime::Result<Result<(), ()>> {
+        let Some(body) = host.get().blob_outgoing.get(self_.rep() as usize).cloned() else {
+            return Ok(Err(()));
+        };
+        data.pipe(&mut host, ObjectBodyConsumer { body })?;
+        Ok(Ok(()))
+    }
+}
+
+/// Collects the bytes a guest streams into an outgoing value, the way the host
+/// appends them to the value's body buffer.
+struct ObjectBodyConsumer {
+    body: Arc<Mutex<Vec<u8>>>,
+}
+
+impl StreamConsumer<Ctx> for ObjectBodyConsumer {
+    type Item = u8;
+
+    fn poll_consume(
+        self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+        store: StoreContextMut<Ctx>,
+        source: Source<'_, u8>,
+        _finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        let mut source = source.as_direct(store);
+        let bytes = source.remaining();
+        if bytes.is_empty() {
+            return Poll::Ready(Ok(StreamResult::Completed));
+        }
+        let len = bytes.len();
+        self.body.lock().unwrap().extend_from_slice(bytes);
+        source.mark_read(len);
+        Poll::Ready(Ok(StreamResult::Completed))
+    }
+}
+
+impl wasi::blobstore::types::HostIncomingValue for Ctx {
+    fn incoming_value_consume_sync(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::types::IncomingValue>,
+    ) -> Result<Vec<u8>, String> {
+        let rep = self_.rep() as usize;
+        Ok(match self.blob_incoming.get_mut(rep) {
+            Some(body) => std::mem::take(body),
+            None => Vec::new(),
+        })
+    }
+
+    fn incoming_value_consume_async(
+        &mut self,
+        _self_: wasmtime::component::Resource<wasi::blobstore::types::IncomingValue>,
+    ) -> Result<StreamReader<u8>, String> {
+        unimplemented!("harness stub: wasi:blobstore/types.incoming-value-consume-async")
+    }
+
+    fn size(
+        &mut self,
+        self_: wasmtime::component::Resource<wasi::blobstore::types::IncomingValue>,
+    ) -> u64 {
+        self.blob_incoming
+            .get(self_.rep() as usize)
+            .map(|body| body.len() as u64)
+            .unwrap_or(0)
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<wasi::blobstore::types::IncomingValue>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl wasi::blobstore::types::Host for Ctx {}
 
 /// A stand-in for the host's RPC client, recording what the agent invoked.
 struct StubRpc {
@@ -1080,6 +1662,12 @@ struct Expectation {
     /// Substring expected in the oplog/execution-control calls the agent made
     /// through `golem:api/host` (`trap`, `oplog-commit`, `resolve-…`).
     expect_host_call: Option<String>,
+    /// Substring expected in the key-value calls the agent made through
+    /// `wasi:keyvalue` (`open-bucket`, `set`, `get`, …).
+    expect_kv: Option<String>,
+    /// Substring expected in the blobstore calls the agent made through
+    /// `wasi:blobstore` (`create-container`, `write-data`, …).
+    expect_blob: Option<String>,
     /// The first message is expected to trap, with the substring in the trap's
     /// text. The message/reply checks are skipped in that case: a trap is a
     /// failed invocation, not a reply, and the instance is not asked for
@@ -1104,7 +1692,8 @@ fn usage() -> String {
          [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING] \
          [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING] \
          [--expect-quota SUBSTRING] [--expect-retry SUBSTRING] \
-         [--expect-host-call SUBSTRING] [--expect-trap SUBSTRING] \
+         [--expect-host-call SUBSTRING] [--expect-kv SUBSTRING] \
+         [--expect-blob SUBSTRING] [--expect-trap SUBSTRING] \
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
          [--expect-kind regular|http-router]",
     )
@@ -1128,6 +1717,8 @@ fn parse_args() -> Result<Expectation> {
         expect_quota: None,
         expect_retry: None,
         expect_host_call: None,
+        expect_kv: None,
+        expect_blob: None,
         expect_trap: None,
         tool: None,
         tool_reply: None,
@@ -1153,6 +1744,8 @@ fn parse_args() -> Result<Expectation> {
             "--expect-quota" => expectation.expect_quota = args.next(),
             "--expect-retry" => expectation.expect_retry = args.next(),
             "--expect-host-call" => expectation.expect_host_call = args.next(),
+            "--expect-kv" => expectation.expect_kv = args.next(),
+            "--expect-blob" => expectation.expect_blob = args.next(),
             "--expect-trap" => expectation.expect_trap = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
@@ -1245,6 +1838,16 @@ async fn run() -> Result<ExitCode> {
             quota_calls: Vec::new(),
             retry_calls: Vec::new(),
             host_api_calls: Vec::new(),
+            kv_calls: Vec::new(),
+            kv_store: Default::default(),
+            kv_buckets: Vec::new(),
+            kv_outgoing: Vec::new(),
+            kv_incoming: Vec::new(),
+            blob_calls: Vec::new(),
+            blob_containers: Default::default(),
+            blob_container_reps: Vec::new(),
+            blob_outgoing: Vec::new(),
+            blob_incoming: Vec::new(),
             fields_table: Vec::new(),
             requests_table: Vec::new(),
             body_slots: Vec::new(),
@@ -1631,6 +2234,28 @@ async fn run() -> Result<ExitCode> {
                 failures.push(format!(
                     "no golem:api/host call contains {:?} (made: {:?})",
                     expected, ctx.host_api_calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_kv {
+            let calls = ctx.kv_calls.clone();
+            let hit = calls.iter().any(|call| call.contains(expected.as_str()));
+            println!("[key-value calls] {:?}", calls);
+            if !hit {
+                failures.push(format!(
+                    "no key-value call contains {:?} (made: {:?})",
+                    expected, calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_blob {
+            let calls = ctx.blob_calls.clone();
+            let hit = calls.iter().any(|call| call.contains(expected.as_str()));
+            println!("[blobstore calls] {:?}", calls);
+            if !hit {
+                failures.push(format!(
+                    "no blobstore call contains {:?} (made: {:?})",
+                    expected, calls
                 ));
             }
         }

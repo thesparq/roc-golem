@@ -36,4 +36,14 @@ Host :: [].{
 	rocFxOplogCommit! : U8 => {}
 	rocFxResolveAgentId! : Str, Str => Try(Str, Str)
 	rocFxResolveComponentId! : Str => Try(Str, Str)
+	rocFxKvGet! : Str, Str => Try(Str, Str)
+	rocFxKvSet! : Str, Str, Str => Try({}, Str)
+	rocFxKvDelete! : Str, Str => Try({}, Str)
+	rocFxKvExists! : Str, Str => Try(Bool, Str)
+	rocFxBlobCreateContainer! : Str => Try({}, Str)
+	rocFxBlobPut! : Str, Str, Str => Try({}, Str)
+	rocFxBlobGet! : Str, Str => Try(Str, Str)
+	rocFxBlobHas! : Str, Str => Try(Bool, Str)
+	rocFxBlobList! : Str => Try(Str, Str)
+	rocFxBlobDelete! : Str, Str => Try({}, Str)
 }

@@ -277,9 +277,13 @@ check "effects: the canceled invocation never reached the counter" "Current coun
 check "effects: make-agent-id builds an id" "counter-agent(\"$RUN_ID-calls\")" \
     "$(invoke "$effects_caller" handle-message \
         "$(message_arg "make-agent-id counter-agent $RUN_ID-calls")")"
+# The reply is one long line of JSON, and the CLI wraps such a line when it can
+# see a terminal width (a wrap only adds whitespace, see the retry section), so
+# this check compares a space-free copy against a space-free substring.
+parsed_id="$(invoke "$effects_caller" handle-message \
+    "$(message_arg "parse-agent-id $calls_counter")")"
 check "effects: parse-agent-id reads an id back" "\"constructor\":\"$RUN_ID-calls\"" \
-    "$(invoke "$effects_caller" handle-message \
-        "$(message_arg "parse-agent-id $calls_counter")")"
+    "${parsed_id// /}"
 
 say "==> Quotas (golem:quota/types against the manifest's resourceDefaults)"
 # The counter's `quota` command reserves and commits from `example-requests`,
@@ -321,6 +325,32 @@ check "retry: the first walk step returns the policy's delay" \
     'first={"delayNanos":100000000' "$retry_reply"
 check "retry: the second walk step returns the policy's delay" \
     'second={"delayNanos":100000000' "$retry_reply"
+
+say "==> Key-value and blobstore (wasi:keyvalue / wasi:blobstore)"
+# Both stores belong to the environment rather than to one agent, and both are
+# reached through synchronous host calls. The counter's round-trip commands
+# report every step's outcome in one line: the value goes in, comes back out,
+# the key or object is deleted and read again — and a missing key reads as the
+# JSON literal `null`, which is how the platform tells it from an empty value.
+stores_agent="counter-agent(\"$RUN_ID-stores\")"
+
+kv_reply="$(invoke "$stores_agent" handle-message \
+    "$(message_arg "kv e2e-bucket-$RUN_ID e2e-key-$RUN_ID hello kv")")"
+# A wrapped reply only ever gains whitespace (see the retry section), so the
+# checks compare a space-free copy against space-free substrings.
+kv_reply="${kv_reply// /}"
+check "kv: set, get and exists round trip" "kvset=okget=hellokvexists=true" "$kv_reply"
+check "kv: the deleted key is gone and reads as null" \
+    "delete=okexists-after=falsemissing=null" "$kv_reply"
+
+blob_reply="$(invoke "$stores_agent" handle-message \
+    "$(message_arg "blob e2e-container-$RUN_ID e2e-object-$RUN_ID.txt hello blob")")"
+blob_reply="${blob_reply// /}"
+check "blob: create, put, get and has round trip" \
+    "blobcreate=okput=okget=helloblobhas=true" "$blob_reply"
+check "blob: list names the object" \
+    "list=[\"e2e-object-$RUN_ID.txt\"]" "$blob_reply"
+check "blob: the deleted object is gone" "delete=okhas-after=false" "$blob_reply"
 
 say "==> Oplog and execution control (golem:api/host)"
 # What an app can reach on 1.6: fail an invocation (`trap!`), name an external
