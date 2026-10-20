@@ -30,7 +30,11 @@ use core::ptr;
 use std::boxed::Box;
 use std::collections::HashMap;
 use std::thread::LocalKey;
-use roc_std::{RocResult, RocStr};
+use roc_std::{RocResult, RocStr, RocU64Result};
+use wasi::filesystem0_2_6::preopens;
+use wasi::filesystem0_2_6::types::{
+    Descriptor, DescriptorFlags, DescriptorType, ErrorCode, OpenFlags, PathFlags,
+};
 
 #[cfg(not(any(feature = "stub-guest", test)))]
 extern "C" {
@@ -2238,6 +2242,367 @@ pub unsafe extern "C" fn rocFxBlobDelete(
     unit_result(blob_delete(container.as_str(), object.as_str()))
 }
 
+// The agent's own filesystem effects
+//
+// `wasi:filesystem@0.2.6` is the interface Golem 1.6 registers for the agent's
+// sandbox, next to the p3 revision (`wasi:filesystem@0.3.0`) whose descriptor
+// calls are `async func`s over component-model streams. The effects below use
+// the p2 shape because it is synchronous: its descriptor operations answer like
+// the POSIX calls they mirror, which is what makes a host call of this platform
+// a plain call rather than a stream setup, and what lets the ABI harness drive
+// the effects with an in-memory stub. A p3 (stream-shaped) effect family is a
+// follow-up for whoever needs the async shapes.
+//
+// The filesystem is the agent's own, not the environment's: the runtime
+// provisions it from the manifest's per-agent `files:` list before the agent
+// starts, records every write in the invocation's oplog, and replays those
+// calls, so what one invocation wrote the next one reads. (HTTP mounts *serve*
+// files out of the same filesystem; that is a separate, host-side surface.)
+//
+// Paths are named the way the sandbox reads: `/seed/a.txt` and `seed/a.txt` are
+// the same file — the root is the directory Golem preopens under `/` — `.` and
+// `..` normalize inside the root, and a path that would step above it is
+// refused before the host is asked (`resolve_agent_path`). Bytes travel as
+// lossy-UTF-8 text, the convention `http!` and the two stores use, and no
+// descriptor reaches the app: every effect names its file and the host opens it.
+
+/// One positioned `read`'s chunk size. The p2 call answers what the host
+/// chooses to hand over (Golem caps one read at 64 KiB), so a whole-file loop
+/// asks for this much at a time.
+const READ_CHUNK: u64 = 64 * 1024;
+
+/// The preopened root of the agent's own filesystem. Golem preopens the sandbox
+/// root twice — under `/` and under `.` — and the effects resolve against it; an
+/// agent the runtime started without a filesystem answers no preopen at all,
+/// which is reported like any other failure of the effect.
+fn filesystem_root() -> Result<Descriptor, String> {
+    let mut directories = preopens::get_directories();
+    if directories.is_empty() {
+        return Err(String::from(
+            "the agent has no filesystem (the runtime preopened no directory)",
+        ));
+    }
+    let index = directories
+        .iter()
+        .position(|(_, guest_path)| guest_path == "/")
+        .unwrap_or(0);
+    let (root, _) = directories.swap_remove(index);
+    Ok(root)
+}
+
+/// Resolves an app-facing path against the agent's filesystem root: a leading
+/// `/` names the root (the spelling the manifest's `files:` targets use), empty
+/// segments and `.` are dropped, and `..` steps back inside the root. A path
+/// that would step above the root is refused here, with the app's own path in
+/// the message, instead of reaching the host as a sandbox escape.
+///
+/// The result is relative to the root — the one spelling `open-at` and friends
+/// accept — so the empty string is the root itself (`.`, `/`).
+fn resolve_agent_path(path: &str) -> Result<String, String> {
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in path.trim_start_matches('/').split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if segments.pop().is_none() {
+                    return Err(format!("path {path} escapes the agent's filesystem root"));
+                }
+            }
+            segment => segments.push(segment),
+        }
+    }
+    Ok(segments.join("/"))
+}
+
+/// Reads a whole file through repeated `read(length, offset)` calls.
+///
+/// A p2 `read` is positioned: each call answers up to `length` bytes from
+/// `offset` plus whether *that* chunk reached the end of the file, and a host
+/// may cap a chunk (Golem at 64 KiB), so a file longer than one chunk takes the
+/// loop. A chunk that is empty without the end flag would spin the loop, so it
+/// is reported as the host failure it would be.
+fn read_all_chunks(
+    mut read: impl FnMut(u64, u64) -> Result<(Vec<u8>, bool), String>,
+) -> Result<Vec<u8>, String> {
+    let mut contents = Vec::new();
+    loop {
+        let (chunk, end_of_file) = read(READ_CHUNK, contents.len() as u64)?;
+        if chunk.is_empty() && !end_of_file {
+            return Err(String::from(
+                "the filesystem read answered no bytes without reaching the end of the file",
+            ));
+        }
+        contents.extend_from_slice(&chunk);
+        if end_of_file {
+            return Ok(contents);
+        }
+    }
+}
+
+/// Writes `bytes` at `offset` through repeated `write(buffer, offset)` calls,
+/// advancing by what each one reports (a host may accept fewer bytes than it was
+/// handed). A call that accepts nothing would spin the loop, so it is reported
+/// as the host failure it would be.
+fn write_all_chunks(
+    mut write: impl FnMut(&[u8], u64) -> Result<u64, String>,
+    bytes: &[u8],
+    offset: u64,
+) -> Result<(), String> {
+    let mut written = 0usize;
+    while written < bytes.len() {
+        let accepted = write(&bytes[written..], offset + written as u64)?;
+        if accepted == 0 {
+            return Err(String::from(
+                "the filesystem write accepted no bytes",
+            ));
+        }
+        written += accepted as usize;
+    }
+    Ok(())
+}
+
+/// The kind `listDir!` reports for one directory entry's `descriptor-type`: the
+/// file kinds the interface distinguishes collapse to `other`, the four names
+/// the effect promises.
+fn entry_kind_name(kind: DescriptorType) -> &'static str {
+    match kind {
+        DescriptorType::RegularFile => "file",
+        DescriptorType::Directory => "dir",
+        DescriptorType::SymbolicLink => "symlink",
+        _ => "other",
+    }
+}
+
+/// Renders a directory listing as the JSON array `listDir!` promises, sorted by
+/// name so two listings of an unchanged directory read the same. Names are
+/// arbitrary text, so the encoder builds the JSON rather than a hand-rolled
+/// join.
+fn directory_listing_json(entries: &[(String, DescriptorType)]) -> String {
+    let mut entries = entries.to_vec();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let rendered: Vec<serde_json::Value> = entries
+        .into_iter()
+        .map(|(name, kind)| serde_json::json!({ "name": name, "type": entry_kind_name(kind) }))
+        .collect();
+    serde_json::Value::Array(rendered).to_string()
+}
+
+/// The text a `wasi:filesystem` failure becomes in an effect's `Err` channel:
+/// the WIT name of the `error-code` it answered with (`no-entry`,
+/// `not-permitted`, …), the way the store effects report their host errors.
+fn filesystem_error_text(code: ErrorCode) -> String {
+    match code {
+        ErrorCode::Access => "access",
+        ErrorCode::WouldBlock => "would-block",
+        ErrorCode::Already => "already",
+        ErrorCode::BadDescriptor => "bad-descriptor",
+        ErrorCode::Busy => "busy",
+        ErrorCode::Deadlock => "deadlock",
+        ErrorCode::Quota => "quota",
+        ErrorCode::Exist => "exist",
+        ErrorCode::FileTooLarge => "file-too-large",
+        ErrorCode::IllegalByteSequence => "illegal-byte-sequence",
+        ErrorCode::InProgress => "in-progress",
+        ErrorCode::Interrupted => "interrupted",
+        ErrorCode::Invalid => "invalid",
+        ErrorCode::Io => "io",
+        ErrorCode::IsDirectory => "is-directory",
+        ErrorCode::Loop => "loop",
+        ErrorCode::TooManyLinks => "too-many-links",
+        ErrorCode::MessageSize => "message-size",
+        ErrorCode::NameTooLong => "name-too-long",
+        ErrorCode::NoDevice => "no-device",
+        ErrorCode::NoEntry => "no-entry",
+        ErrorCode::NoLock => "no-lock",
+        ErrorCode::InsufficientMemory => "insufficient-memory",
+        ErrorCode::InsufficientSpace => "insufficient-space",
+        ErrorCode::NotDirectory => "not-directory",
+        ErrorCode::NotEmpty => "not-empty",
+        ErrorCode::NotRecoverable => "not-recoverable",
+        ErrorCode::Unsupported => "unsupported",
+        ErrorCode::NoTty => "no-tty",
+        ErrorCode::NoSuchDevice => "no-such-device",
+        ErrorCode::Overflow => "overflow",
+        ErrorCode::NotPermitted => "not-permitted",
+        ErrorCode::Pipe => "pipe",
+        ErrorCode::ReadOnly => "read-only",
+        ErrorCode::InvalidSeek => "invalid-seek",
+        ErrorCode::TextFileBusy => "text-file-busy",
+        ErrorCode::CrossDevice => "cross-device",
+    }
+    .to_string()
+}
+
+/// Opens `path` inside the agent's root with the given open flags, following
+/// symlinks (the runtime refuses ones that would leave the sandbox).
+fn filesystem_open(
+    path: &str,
+    open_flags: OpenFlags,
+    descriptor_flags: DescriptorFlags,
+) -> Result<Descriptor, String> {
+    let root = filesystem_root()?;
+    let resolved = resolve_agent_path(path)?;
+    root.open_at(
+        PathFlags::SYMLINK_FOLLOW,
+        &resolved,
+        open_flags,
+        descriptor_flags,
+    )
+    .map_err(filesystem_error_text)
+}
+
+fn read_file(path: &str) -> Result<String, String> {
+    let file = filesystem_open(path, OpenFlags::empty(), DescriptorFlags::READ)?;
+    let bytes = read_all_chunks(|length, offset| {
+        file.read(length, offset).map_err(filesystem_error_text)
+    })?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Writes the whole file, creating it if it is not there and truncating what was
+/// (the `writeFile!` effect's contract).
+fn write_file(path: &str, value: &str) -> Result<(), String> {
+    let file = filesystem_open(
+        path,
+        OpenFlags::CREATE | OpenFlags::TRUNCATE,
+        DescriptorFlags::WRITE,
+    )?;
+    write_all_chunks(
+        |buffer, offset| file.write(buffer, offset).map_err(filesystem_error_text),
+        value.as_bytes(),
+        0,
+    )
+}
+
+/// Appends to the file, creating it if it is not there. `write` is positioned,
+/// so the append reads the size the file has now and writes at its end.
+fn append_file(path: &str, value: &str) -> Result<(), String> {
+    let file = filesystem_open(path, OpenFlags::CREATE, DescriptorFlags::WRITE)?;
+    let size = file.stat().map_err(filesystem_error_text)?.size;
+    write_all_chunks(
+        |buffer, offset| file.write(buffer, offset).map_err(filesystem_error_text),
+        value.as_bytes(),
+        size,
+    )
+}
+
+/// Whether anything is there under `path`. A path that cannot be stat'ed
+/// *because nothing is there* is the `false` answer; any other failure (a
+/// sandbox escape, an unreadable parent, …) is reported.
+fn file_exists(path: &str) -> Result<bool, String> {
+    let root = filesystem_root()?;
+    let resolved = resolve_agent_path(path)?;
+    match root.stat_at(PathFlags::SYMLINK_FOLLOW, &resolved) {
+        Ok(_) => Ok(true),
+        Err(ErrorCode::NoEntry) => Ok(false),
+        Err(code) => Err(filesystem_error_text(code)),
+    }
+}
+
+fn file_size(path: &str) -> Result<u64, String> {
+    let root = filesystem_root()?;
+    let resolved = resolve_agent_path(path)?;
+    root.stat_at(PathFlags::SYMLINK_FOLLOW, &resolved)
+        .map(|stat| stat.size)
+        .map_err(filesystem_error_text)
+}
+
+/// Removes the file at `path`; a directory is refused (`is-directory`), the way
+/// `unlink-file-at` refuses it.
+fn delete_file(path: &str) -> Result<(), String> {
+    let root = filesystem_root()?;
+    let resolved = resolve_agent_path(path)?;
+    root.unlink_file_at(&resolved)
+        .map_err(filesystem_error_text)
+}
+
+/// Creates the one directory `path` names; its parent has to exist, so the
+/// effect is `mkdir`, not `mkdir -p`.
+fn make_dir(path: &str) -> Result<(), String> {
+    let root = filesystem_root()?;
+    let resolved = resolve_agent_path(path)?;
+    root.create_directory_at(&resolved)
+        .map_err(filesystem_error_text)
+}
+
+/// The entries of the directory `path` names, as the JSON array `listDir!`
+/// promises. The p2 stream is a resource the host reads entry by entry until it
+/// answers `none`; each entry answers with its type, which is what the JSON
+/// reports (folded to the four names the effect promises).
+fn list_dir(path: &str) -> Result<String, String> {
+    let directory = filesystem_open(path, OpenFlags::DIRECTORY, DescriptorFlags::READ)?;
+    let stream = directory
+        .read_directory()
+        .map_err(filesystem_error_text)?;
+    let mut entries = Vec::new();
+    loop {
+        match stream
+            .read_directory_entry()
+            .map_err(filesystem_error_text)?
+        {
+            Some(entry) => entries.push((entry.name, entry.type_)),
+            None => break,
+        }
+    }
+    Ok(directory_listing_json(&entries))
+}
+
+/// `readFile!`: the whole file as lossy UTF-8 text.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxReadFile(path: RocStr) -> RocResult<RocStr, RocStr> {
+    text_result(read_file(path.as_str()))
+}
+
+/// `writeFile!`: creates the file (truncating what was there) and writes the
+/// text's UTF-8 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxWriteFile(path: RocStr, value: RocStr) -> RocResult<(), RocStr> {
+    unit_result(write_file(path.as_str(), value.as_str()))
+}
+
+/// `appendFile!`: writes the text's bytes at the end of the file, creating it
+/// when it is not there yet.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxAppendFile(path: RocStr, value: RocStr) -> RocResult<(), RocStr> {
+    unit_result(append_file(path.as_str(), value.as_str()))
+}
+
+/// `fileExists!`: whether anything is there under the path.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxFileExists(path: RocStr) -> RocResult<bool, RocStr> {
+    bool_result(file_exists(path.as_str()))
+}
+
+/// `fileSize!`: the size in bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxFileSize(path: RocStr) -> RocU64Result {
+    match file_size(path.as_str()) {
+        Ok(size) => RocU64Result::ok(size),
+        Err(err) => RocU64Result::err(RocStr::from_str(&err)),
+    }
+}
+
+/// `deleteFile!`: removes the file. Unlike the store effects' deletes this is
+/// not idempotent — `unlink-file-at` answers `no-entry` for a path that is not
+/// there, and the effect reports it — so an app that wants idempotence checks
+/// `fileExists!` first.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDeleteFile(path: RocStr) -> RocResult<(), RocStr> {
+    unit_result(delete_file(path.as_str()))
+}
+
+/// `makeDir!`: creates the directory; the parent has to exist.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxMakeDir(path: RocStr) -> RocResult<(), RocStr> {
+    unit_result(make_dir(path.as_str()))
+}
+
+/// `listDir!`: the directory's entries as a JSON array of `{name, type}`.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxListDir(path: RocStr) -> RocResult<RocStr, RocStr> {
+    text_result(list_dir(path.as_str()))
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
@@ -3240,5 +3605,160 @@ mod tests {
             // refused before either handle is looked up.
             assert!(crate::rocFxQuotaMerge(1, 1).is_err());
         }
+    }
+
+    /// The path rule the filesystem effects promise: a leading `/` names the
+    /// agent's root (the spelling the manifest's `files:` targets use), `.` and
+    /// empty segments are dropped, `..` steps back inside the root, and a path
+    /// that would step above it is refused with the app's own path in the
+    /// message.
+    #[test]
+    fn test_resolve_agent_path() {
+        assert_eq!(
+            crate::resolve_agent_path("seed/a.txt").unwrap(),
+            "seed/a.txt"
+        );
+        assert_eq!(
+            crate::resolve_agent_path("/seed/a.txt").unwrap(),
+            "seed/a.txt"
+        );
+        assert_eq!(
+            crate::resolve_agent_path("//seed//a.txt").unwrap(),
+            "seed/a.txt"
+        );
+        assert_eq!(
+            crate::resolve_agent_path("./seed/./a.txt").unwrap(),
+            "seed/a.txt"
+        );
+        assert_eq!(
+            crate::resolve_agent_path("seed/../seed/a.txt").unwrap(),
+            "seed/a.txt"
+        );
+        // `/` and `.` are the root, the empty relative path the descriptor
+        // calls read as "the base directory".
+        assert_eq!(crate::resolve_agent_path("/").unwrap(), "");
+        assert_eq!(crate::resolve_agent_path(".").unwrap(), "");
+
+        assert_eq!(
+            crate::resolve_agent_path("/.."),
+            Err(String::from("path /.. escapes the agent's filesystem root"))
+        );
+        assert_eq!(
+            crate::resolve_agent_path("seed/../../a.txt"),
+            Err(String::from(
+                "path seed/../../a.txt escapes the agent's filesystem root"
+            ))
+        );
+    }
+
+    /// The read loop assembles a file out of the chunks a p2 `read` answers: the
+    /// boolean is the end-of-file signal, not "the host sent less than asked
+    /// for", and the offset advances by what arrived.
+    #[test]
+    fn test_read_all_chunks() {
+        // One chunk that reaches the end of the file.
+        let mut chunks = vec![(b"hello".to_vec(), true)].into_iter();
+        let mut calls = Vec::new();
+        let contents = crate::read_all_chunks(|length, offset| {
+            calls.push((length, offset));
+            Ok(chunks.next().unwrap())
+        })
+        .unwrap();
+        assert_eq!(contents, b"hello");
+        assert_eq!(calls, vec![(crate::READ_CHUNK, 0)]);
+
+        // A chunk that is not the end, however short: the loop asks again from
+        // where the last one stopped.
+        let mut chunks = vec![(b"abc".to_vec(), false), (b"def".to_vec(), true)].into_iter();
+        let mut offsets = Vec::new();
+        let contents = crate::read_all_chunks(|_, offset| {
+            offsets.push(offset);
+            Ok(chunks.next().unwrap())
+        })
+        .unwrap();
+        assert_eq!(contents, b"abcdef");
+        assert_eq!(offsets, vec![0, 3]);
+
+        // An empty chunk without the end flag would spin the loop, so it is
+        // reported as the broken host it would be.
+        let error = crate::read_all_chunks(|_, _| Ok((Vec::new(), false))).unwrap_err();
+        assert!(
+            error.contains("without reaching the end of the file"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// The write loop advances by what each `write` reports, and a call that
+    /// accepts nothing is reported instead of retried forever.
+    #[test]
+    fn test_write_all_chunks() {
+        let mut accepted = vec![2u64, 3u64].into_iter();
+        let mut calls: Vec<(Vec<u8>, u64)> = Vec::new();
+        crate::write_all_chunks(
+            |buffer, offset| {
+                calls.push((buffer.to_vec(), offset));
+                Ok(accepted.next().unwrap())
+            },
+            b"hello",
+            10,
+        )
+        .unwrap();
+        assert_eq!(calls, vec![(b"hello".to_vec(), 10), (b"llo".to_vec(), 12)]);
+
+        let error = crate::write_all_chunks(|_, _| Ok(0), b"hello", 0).unwrap_err();
+        assert!(error.contains("accepted no bytes"), "unexpected error: {error}");
+
+        // Nothing to write takes no call at all.
+        let mut called = false;
+        crate::write_all_chunks(
+            |_, _| {
+                called = true;
+                Ok(0)
+            },
+            b"",
+            0,
+        )
+        .unwrap();
+        assert!(!called);
+    }
+
+    /// A listing renders one `{name, type}` per entry, sorted by name so two
+    /// listings of an unchanged directory read the same, with the interface's
+    /// file kinds folded to the four names the effect promises and the names
+    /// JSON-escaped (they are arbitrary text).
+    #[test]
+    fn test_directory_listing_json() {
+        use wasi::filesystem0_2_6::types::DescriptorType;
+
+        assert_eq!(crate::directory_listing_json(&[]), "[]");
+
+        let entries = vec![
+            (String::from("b.txt"), DescriptorType::RegularFile),
+            (String::from("a\"dir"), DescriptorType::Directory),
+            (String::from("link"), DescriptorType::SymbolicLink),
+            (String::from("pipe"), DescriptorType::Fifo),
+        ];
+        assert_eq!(
+            crate::directory_listing_json(&entries),
+            "[{\"name\":\"a\\\"dir\",\"type\":\"dir\"},{\"name\":\"b.txt\",\"type\":\"file\"},{\"name\":\"link\",\"type\":\"symlink\"},{\"name\":\"pipe\",\"type\":\"other\"}]"
+        );
+    }
+
+    /// A filesystem failure travels as the WIT name of its `error-code`, which is
+    /// the vocabulary the interface's own documentation uses.
+    #[test]
+    fn test_filesystem_error_text() {
+        use wasi::filesystem0_2_6::types::ErrorCode;
+
+        assert_eq!(crate::filesystem_error_text(ErrorCode::NoEntry), "no-entry");
+        assert_eq!(
+            crate::filesystem_error_text(ErrorCode::NotPermitted),
+            "not-permitted"
+        );
+        assert_eq!(crate::filesystem_error_text(ErrorCode::Exist), "exist");
+        assert_eq!(
+            crate::filesystem_error_text(ErrorCode::InsufficientSpace),
+            "insufficient-space"
+        );
     }
 }

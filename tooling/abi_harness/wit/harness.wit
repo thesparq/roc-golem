@@ -30,6 +30,11 @@ world harness-world {
     import wasi:clocks/types@0.3.0;
     import wasi:clocks/monotonic-clock@0.2.6;
     import wasi:clocks/wall-clock@0.2.6;
+    // The agent's own filesystem (`wasi:filesystem@0.2.6`, the p2 revision
+    // Golem 1.6 registers): synchronous descriptor operations, so the stubs
+    // here keep an in-memory directory tree of their own and record every call.
+    import wasi:filesystem/preopens@0.2.6;
+    import wasi:filesystem/types@0.2.6;
     import wasi:io/error@0.2.6;
     import wasi:io/streams@0.2.6;
     import wasi:io/poll@0.2.6;

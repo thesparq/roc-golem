@@ -46,4 +46,12 @@ Host :: [].{
 	rocFxBlobHas! : Str, Str => Try(Bool, Str)
 	rocFxBlobList! : Str => Try(Str, Str)
 	rocFxBlobDelete! : Str, Str => Try({}, Str)
+	rocFxReadFile! : Str => Try(Str, Str)
+	rocFxWriteFile! : Str, Str => Try({}, Str)
+	rocFxAppendFile! : Str, Str => Try({}, Str)
+	rocFxFileExists! : Str => Try(Bool, Str)
+	rocFxFileSize! : Str => Try(U64, Str)
+	rocFxDeleteFile! : Str => Try({}, Str)
+	rocFxMakeDir! : Str => Try({}, Str)
+	rocFxListDir! : Str => Try(Str, Str)
 }

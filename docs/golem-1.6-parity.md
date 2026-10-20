@@ -21,6 +21,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance) |
 | read-only methods | agent metadata | declared for tools; until-write cache |
 | HTTP mounts | agent metadata | filesystem bindings (regular agents), static bindings + OpenAPI provider (routers) |
+| the agent's own filesystem | `wasi:filesystem@0.2.6` (p2) | `readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` / `deleteFile!` / `makeDir!` / `listDir!`; per-agent and durable, provisioned from the manifest's `files:` list |
 | logging, clocks, random | `wasi:logging`, `wasi:clocks`, … | `logInfo!` … `sleep!`, `now!` |
 
 ## Gaps, in rough order of how much a real app misses them
@@ -128,9 +129,53 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    transaction handles), so they need a design pass rather than the mechanical
    one the two stores took; `golem:durability` is cheaper (mostly
    `persist-remote-write`-style markers).
-9. **The agent's own filesystem**: the SDKs read/write files in the agent's
-   durable filesystem; we can only *serve* files through mounts. Needs
-   `wasi:filesystem` in the world plus effects. Cost: medium.
+9. ~~**The agent's own filesystem**~~ — **done**: eight effects
+   (`readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` /
+   `deleteFile!` / `makeDir!` / `listDir!`) over `wasi:filesystem/types@0.2.6` +
+   `preopens@0.2.6`, which `wit/world.wit` now imports. **p2, deliberately**:
+   the p2 descriptor calls are synchronous — POSIX-shaped `read` / `write` /
+   `open-at` / `stat-at` / `create-directory-at` / `unlink-file-at`, plus a
+   `directory-entry-stream` resource read entry by entry — so the host makes
+   plain calls (no `block_on`, no streams) and the ABI harness can drive the
+   effects against an in-memory stub, the same reason quota/retry,
+   execution-control and the two stores landed with harness coverage. The p3
+   revision (`wasi:filesystem@0.3.0`, `async func`s over component-model
+   streams, the shape the MoonBit SDK uses) stays open for whoever needs the
+   async/stream shapes; the two revisions can coexist in the world, so nothing
+   here forecloses it. Details worth knowing:
+
+   - **Paths are resolved against the preopened root before the host is asked**:
+     a leading `/` names the root (the spelling the manifest's `targetPath`
+     uses), `.` and empty segments are dropped, `..` steps back inside the root,
+     and a path that would step above it fails with `escapes the agent's
+     filesystem root`. That is what makes `/seed/a.txt` and `seed/a.txt` the
+     same file — the p2 interface itself refuses a leading `/`.
+   - Writes are recorded in the invocation's oplog and replayed by the runtime,
+     so the filesystem is durable across invocations and participates in
+     snapshots; the manifest's per-agent `files:` list provisions the initial
+     files. HTTP mounts *serve* files out of the same filesystem — a different,
+     host-side surface, covered by the README's mount section.
+   - `listDir!` reports each entry as `{name, type}` (`file` / `dir` /
+     `symlink` / `other`), sorted by name; the host drains the p2 entry stream
+     itself. The path resolution, the listing JSON and the read loop (a p2
+     `read` answers one chunk plus an end-of-file flag, and Golem caps a chunk
+     at 64 KiB) are unit-tested in `host/src/lib.rs`.
+   - `fileSize!` returns `Try(U64, Str)`, the one result shape the platform did
+     not use before, and the hand-written ABI spells it out itself
+     (`RocU64Result`): the compiler puts a tag union's tag directly after the
+     payload region, which on a 32-bit target is 12 bytes for `Try(U64, Str)`
+     where Rust's own union would pad the payload to 16 and move the tag. The
+     harness and the e2e both check the number, which is how the first (wrong)
+     layout was caught.
+   - Covered by the ABI harness (against the counter: write in one invocation,
+     read it back in the next, `fs size`, `fs mkdir` + `fs list`, with the
+     recorded calls checked) and by the e2e (the manifest-provisioned file read
+     back, the cross-invocation write → read, append, exists/size, listings,
+     mkdir/delete and the path rule both ways).
+
+   Not exposed: `rename-at`, `symlink-at`, `readlink-at`, `remove-directory-at`,
+   the metadata-hash readers, timestamps, and the stream-shaped descriptor
+   operations (`read-via-stream` / `write-via-stream` / `append-via-stream`).
 10. ~~**Oplog/execution control**~~ — **done**: six effects on `golem:api/host`,
     which was already imported: `trap!` (`trap`, never returns — the invocation
     fails with the reason), `idempotencyKey!` (`generate-idempotency-key`, as a

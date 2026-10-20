@@ -688,6 +688,77 @@ readers. The effects above are the data plane this platform commits to.
 
 ---
 
+## 📂 The agent's own filesystem
+
+Every agent runs in its own sandboxed filesystem, and these effects are the guest
+side of it: `wasi:filesystem@0.2.6`, the synchronous revision Golem 1.6 registers
+alongside the p3 one (`wasi:filesystem@0.3.0`, whose descriptor calls are `async
+func`s over component-model streams — that shape is a follow-up, not covered
+here). The filesystem is *per agent* rather than shared the way the key-value
+and blobstore stores are, and it is durable: the runtime records every write in
+the invocation's oplog and replays it, so a file one invocation wrote is there
+for the next one, and the files survive restarts and snapshots. A manual agent
+update carries them across an incompatible revision with the snapshot.
+
+| Effect | What it does |
+| --- | --- |
+| `readFile! : Str => Try(Str, Str)` | the whole file as lossy-UTF-8 text, the convention `http!` uses for bytes |
+| `writeFile! : Str, Str => Try({}, Str)` | creates the file (truncating what was there) and writes the text's UTF-8 bytes |
+| `appendFile! : Str, Str => Try({}, Str)` | writes the text's bytes at the end of the file, creating it when it is not there yet |
+| `fileExists! : Str => Try(Bool, Str)` | whether anything is there. A path whose parent does not exist answers `False`, not `Err` |
+| `fileSize! : Str => Try(U64, Str)` | the size in bytes (for a directory, its own record; for a symlink, the length of the path it holds) |
+| `deleteFile! : Str => Try({}, Str)` | removes the file. A directory or a missing path is reported (`is-directory`, `no-entry`) rather than ignored |
+| `makeDir! : Str => Try({}, Str)` | creates one directory — `mkdir`, not `mkdir -p` — so its parent has to exist already |
+| `listDir! : Str => Try(Str, Str)` | the entries as a JSON array of `{name, type}`, sorted by name so the listing is stable. `type` is `"file"`, `"dir"`, `"symlink"`, or `"other"` for the kinds the interface leaves unclassified |
+
+### The path rule
+
+Paths resolve against the agent's root: a leading `/` names it — the spelling
+the manifest's `targetPath` uses — so `/seed/a.txt` and `seed/a.txt` are the
+same file; `.` and empty segments are dropped, and `..` steps back inside the
+root. A path that would step *above* the root fails with `escapes the agent's
+filesystem root` before the host is asked, and the runtime refuses a symlink
+that would leave the sandbox. Everything else a host call refuses travels as
+the WIT name of its `error-code` (`no-entry`, `not-permitted`, `is-directory`,
+…), which is the vocabulary the interface's own documentation uses.
+
+### Initial files, and how this differs from a mount
+
+The manifest's per-agent `files:` list provisions the files the agent starts
+with; `golem deploy` uploads them, so they are part of the component revision:
+
+```yaml
+agents:
+  counter-agent:
+    files:
+      - sourcePath: examples/counter/seed/hello.txt
+        targetPath: /seed/hello.txt
+```
+
+That is how files get into the sandbox *before* the agent runs — and it is a
+different thing from an [HTTP mount](#-http-mounts), which *serves* files out
+of the same filesystem to HTTP clients without invoking the agent. An app that
+wants a download route over files it writes at runtime wants a mount; an app
+that wants to read and write its own files wants these effects. Both surfaces
+can point at one filesystem: the site example's mount serves files that
+`files:` provisioned, while the counter's `fs` commands read a provisioned file
+and write their own files next to it.
+
+The counter example carries the effects as `fs <verb> <path> [text]` commands
+(`write`, `append`, `read`, `exists`, `size`, `mkdir`, `delete`, `list`), and
+the `fs:` checks in `tooling/e2e.sh` run them against a real server: the
+provisioned file is read, a file written in one invocation is read in a later
+one (that is what shows the durability), a listing carries both, and the path
+rule is exercised both ways.
+
+Not exposed: the rest of the interface — `rename-at`, `symlink-at`,
+`readlink-at`, `remove-directory-at`, the metadata-hash readers, timestamps,
+and the stream-shaped `read-via-stream` / `write-via-stream` / `append-via-
+stream`. The eight operations above are the file plane this platform commits
+to.
+
+---
+
 ## ✨ Effects
 
 Every effect is declared in `platform/Effect.roc` and wrapped by `platform/Golem.roc`;
@@ -713,6 +784,7 @@ apps call them through `pf.Golem`.
 | `trap!` / `idempotencyKey!` / `fork!` / `oplogCommit!` / `resolveComponentId!` / `resolveAgentId!` | `golem:api/host` | fail an invocation, name an external write durably, copy the agent, wait for the oplog to reach replicas, and resolve component and agent ids (see [Oplog and execution control](#-oplog-and-execution-control)) |
 | `kvGet!` / `kvSet!` / `kvDelete!` / `kvExists!` | `wasi:keyvalue` | the environment's key-value store; buckets are implicit and the value travels as text, with a missing key reading as `null` (see [Key-value and blobstore](#-key-value-and-blobstore)) |
 | `blobCreateContainer!` / `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!` | `wasi:blobstore` | the environment's blobstore: containers of named objects, bodies as text, and `blobList!`'s object names as a JSON array (see [Key-value and blobstore](#-key-value-and-blobstore)) |
+| `readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` / `deleteFile!` / `makeDir!` / `listDir!` | `wasi:filesystem` (p2) | the agent's *own* filesystem: per-agent and durable, provisioned from the manifest's `files:` list, with paths resolved against the agent's root (see [The agent's own filesystem](#-the-agents-own-filesystem)) |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
@@ -727,8 +799,8 @@ anything is published:
 | Layer | Command | What it proves |
 | --- | --- | --- |
 | Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, and the `httpMount` metadata mapping |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers) and the key-value/blobstore round trips included |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips and the agent-filesystem round trip (write in one invocation, read in the next) included |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so

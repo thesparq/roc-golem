@@ -352,6 +352,70 @@ check "blob: list names the object" \
     "list=[\"e2e-object-$RUN_ID.txt\"]" "$blob_reply"
 check "blob: the deleted object is gone" "delete=okhas-after=false" "$blob_reply"
 
+say "==> The agent's own filesystem (wasi:filesystem@0.2.6)"
+# One filesystem per agent, provisioned from the manifest's per-agent `files:`
+# list and durable with the agent: the runtime records every write in the
+# invocation's oplog and replays it, so a file one invocation wrote is there for
+# a later one. Paths resolve against the agent's root — a leading `/` names it,
+# the spelling the manifest's targetPath uses — and a path that would step above
+# the root is refused before the host is asked.
+files_agent="counter-agent(\"$RUN_ID-files\")"
+seed_path="/seed/hello.txt"
+notes_path="/seed/notes-$RUN_ID.txt"
+seed_size="$(wc -c <"$ROOT_DIR/examples/counter/seed/hello.txt" | tr -d '[:space:]')"
+
+check "fs: reading the manifest-provisioned file" "provisioned by golem.yaml" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs read $seed_path")")"
+check "fs: the provisioned file's size" "fs size: $seed_size" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs size $seed_path")")"
+check "fs: the provisioned file exists" "fs exists: true" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs exists $seed_path")")"
+check "fs: a path that is not there does not exist" "fs exists: false" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs exists /seed/missing-$RUN_ID.txt")")"
+
+# The write and the read are separate invocations: reading what the earlier one
+# wrote is what shows the filesystem is durable rather than per-invocation.
+check "fs: writing a file" "fs wrote $notes_path" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs write $notes_path hello durability")")"
+check "fs: a later invocation reads it back" "fs read: hello durability" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs read $notes_path")")"
+check "fs: appending in a later invocation" "fs appended $notes_path" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs append $notes_path , appended later")")"
+# `appendFile!` writes at the end with no separator of its own, so the appended
+# text is checked with the comma it carried.
+check "fs: the appended text is at the end of the file" "hello durability, appended later" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs read $notes_path")")"
+
+# The listing carries the provisioned file and the written one together, sorted
+# by name, one `{name, type}` per entry. A wrapped reply only ever gains
+# whitespace (see the retry section), so the checks compare a space-free copy
+# against space-free substrings.
+seed_listing="$(invoke "$files_agent" handle-message "$(message_arg "fs list /seed")")"
+seed_listing="${seed_listing// /}"
+check "fs: the listing shows the provisioned file" \
+    '{"name":"hello.txt","type":"file"}' "$seed_listing"
+check "fs: the listing shows the written file" \
+    "{\"name\":\"notes-$RUN_ID.txt\",\"type\":\"file\"}" "$seed_listing"
+
+check "fs: making a directory" "fs made dir /made-$RUN_ID" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs mkdir /made-$RUN_ID")")"
+root_listing="$(invoke "$files_agent" handle-message "$(message_arg "fs list /")")"
+root_listing="${root_listing// /}"
+check "fs: the made directory is a directory entry" \
+    "{\"name\":\"made-$RUN_ID\",\"type\":\"dir\"}" "$root_listing"
+
+# The path rule, both ways: a path above the root is refused with the app's own
+# path in the message, and `..` that stays inside normalizes back.
+check "fs: a path above the root is refused" "escapes the agent's filesystem root" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs read ../golem.yaml")")"
+check "fs: a path that normalizes inside the root works" "provisioned by golem.yaml" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs read /seed/../seed/hello.txt")")"
+
+check "fs: deleting a file" "fs deleted $notes_path" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs delete $notes_path")")"
+check "fs: the deleted file is gone" "fs exists: false" \
+    "$(invoke "$files_agent" handle-message "$(message_arg "fs exists $notes_path")")"
+
 say "==> Oplog and execution control (golem:api/host)"
 # What an app can reach on 1.6: fail an invocation (`trap!`), name an external
 # write durably (`idempotencyKey!`), fork the agent (`fork!`), wait for the oplog

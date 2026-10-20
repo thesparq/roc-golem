@@ -13,9 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use wasmtime::component::{bindgen, Access, Component, Linker, Source, StreamConsumer, StreamReader, StreamResult};
+use wasmtime::component::{bindgen, Access, Component, Linker, Resource, Source, StreamConsumer, StreamReader, StreamResult};
 use wasmtime::{Config, Engine, Store, StoreContextMut};
 use wasmtime::component::ResourceTable;
+
+use crate::wasi::filesystem0_2_6::types::{Descriptor, DescriptorStat, DescriptorType};
 
 mod stubs;
 
@@ -95,6 +97,20 @@ struct Ctx {
     blob_outgoing: Vec<Arc<Mutex<Vec<u8>>>>,
     /// Incoming values a `get-data` answered with: rep → body.
     blob_incoming: Vec<Vec<u8>>,
+    /// Filesystem host calls (`wasi:filesystem@0.2.6`) the agent made, for
+    /// `--expect-fs`.
+    fs_calls: Vec<String>,
+    /// The harness's own agent filesystem: a directory path to its entries. The
+    /// root is `""`, and paths are relative to it — the spelling the p2 calls
+    /// use once the component has resolved the app's path against the root.
+    fs_entries: BTreeMap<String, BTreeMap<String, StubKind>>,
+    /// Contents of the stub filesystem's regular files, by path.
+    fs_contents: BTreeMap<String, Vec<u8>>,
+    /// Its open descriptors: rep → what the descriptor names.
+    fs_descriptors: Vec<StubDescriptor>,
+    /// Directory listings a `read-directory` started: rep → the entries still
+    /// to hand out, in the order a `read-directory-entry` answers them.
+    fs_listings: Vec<std::collections::VecDeque<(String, StubKind)>>,
     /// HTTP state used by the `wasi:http` stubs in `stubs.rs`.
     fields_table: Vec<std::collections::HashMap<String, Vec<Vec<u8>>>>,
     requests_table: Vec<StubRequest>,
@@ -136,6 +152,100 @@ pub fn method_name(method: &wasi::http0_2_6::types::Method) -> String {
 struct StubConnection {
     sent: Vec<String>,
     closed: bool,
+}
+
+/// What the stub filesystem holds at a path. The effects never create a symlink,
+/// so the stub does not model one.
+#[derive(Clone, Copy, PartialEq)]
+pub enum StubKind {
+    File,
+    Directory,
+}
+
+/// An open descriptor of the stub filesystem. The root is `""` (the path Golem
+/// preopens the agent's sandbox under), and every other path is relative to it.
+#[derive(Clone)]
+pub struct StubDescriptor {
+    pub path: String,
+    pub directory: bool,
+}
+
+/// Splits a stub filesystem path into its parent directory and last segment. The
+/// root (`""`) has no parent.
+fn fs_split(path: &str) -> Option<(String, String)> {
+    if path.is_empty() {
+        return None;
+    }
+    match path.rsplit_once('/') {
+        Some((parent, name)) => Some((parent.to_string(), name.to_string())),
+        None => Some((String::new(), path.to_string())),
+    }
+}
+
+impl Ctx {
+    /// What the stub filesystem holds at `path`; the root is always there.
+    fn fs_kind(&self, path: &str) -> Option<StubKind> {
+        if path.is_empty() {
+            return Some(StubKind::Directory);
+        }
+        let (parent, name) = fs_split(path)?;
+        self.fs_entries.get(&parent)?.get(&name).copied()
+    }
+
+    fn fs_insert(&mut self, path: &str, kind: StubKind) {
+        if let Some((parent, name)) = fs_split(path) {
+            self.fs_entries.entry(parent).or_default().insert(name, kind);
+        }
+    }
+
+    fn fs_remove(&mut self, path: &str) -> Option<StubKind> {
+        let (parent, name) = fs_split(path)?;
+        self.fs_entries.get_mut(&parent)?.remove(&name)
+    }
+
+    /// A new descriptor of the stub filesystem at `path`.
+    fn fs_descriptor(&mut self, path: String, directory: bool) -> Resource<Descriptor> {
+        let rep = self.fs_descriptors.len() as u32;
+        self.fs_descriptors.push(StubDescriptor { path, directory });
+        unsafe { Resource::new_own(rep) }
+    }
+
+    fn fs_descriptor_at(&self, rep: Resource<Descriptor>) -> Option<&StubDescriptor> {
+        self.fs_descriptors.get(rep.rep() as usize)
+    }
+
+    /// The path a descriptor-relative call names, joined the way the p2
+    /// interface resolves a relative path (the component already applied `.`,
+    /// `..` and the leading `/`).
+    fn fs_join(&self, rep: Resource<Descriptor>, path: &str) -> Option<String> {
+        let descriptor = self.fs_descriptor_at(rep)?;
+        Some(if descriptor.path.is_empty() {
+            path.to_string()
+        } else {
+            format!("{}/{}", descriptor.path, path)
+        })
+    }
+}
+
+/// The `descriptor-type` the stub reports for one of its entries.
+pub fn fs_descriptor_type(kind: StubKind) -> DescriptorType {
+    match kind {
+        StubKind::File => DescriptorType::RegularFile,
+        StubKind::Directory => DescriptorType::Directory,
+    }
+}
+
+/// A `descriptor-stat` of an entry of that size; the timestamps the stub does not
+/// model are absent.
+fn fs_stat(kind: StubKind, size: u64) -> DescriptorStat {
+    DescriptorStat {
+        type_: fs_descriptor_type(kind),
+        link_count: 1,
+        size,
+        data_access_timestamp: None,
+        data_modification_timestamp: None,
+        status_change_timestamp: None,
+    }
 }
 
 impl wasmtime::component::HasData for Ctx {
@@ -1668,6 +1778,9 @@ struct Expectation {
     /// Substring expected in the blobstore calls the agent made through
     /// `wasi:blobstore` (`create-container`, `write-data`, …).
     expect_blob: Option<String>,
+    /// Substring expected in the filesystem calls the agent made through
+    /// `wasi:filesystem@0.2.6` (`open-at`, `write`, `read-directory`, …).
+    expect_fs: Option<String>,
     /// The first message is expected to trap, with the substring in the trap's
     /// text. The message/reply checks are skipped in that case: a trap is a
     /// failed invocation, not a reply, and the instance is not asked for
@@ -1693,7 +1806,8 @@ fn usage() -> String {
          [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING] \
          [--expect-quota SUBSTRING] [--expect-retry SUBSTRING] \
          [--expect-host-call SUBSTRING] [--expect-kv SUBSTRING] \
-         [--expect-blob SUBSTRING] [--expect-trap SUBSTRING] \
+         [--expect-blob SUBSTRING] [--expect-fs SUBSTRING] \
+         [--expect-trap SUBSTRING] \
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
          [--expect-kind regular|http-router]",
     )
@@ -1719,6 +1833,7 @@ fn parse_args() -> Result<Expectation> {
         expect_host_call: None,
         expect_kv: None,
         expect_blob: None,
+        expect_fs: None,
         expect_trap: None,
         tool: None,
         tool_reply: None,
@@ -1746,6 +1861,7 @@ fn parse_args() -> Result<Expectation> {
             "--expect-host-call" => expectation.expect_host_call = args.next(),
             "--expect-kv" => expectation.expect_kv = args.next(),
             "--expect-blob" => expectation.expect_blob = args.next(),
+            "--expect-fs" => expectation.expect_fs = args.next(),
             "--expect-trap" => expectation.expect_trap = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
@@ -1848,6 +1964,11 @@ async fn run() -> Result<ExitCode> {
             blob_container_reps: Vec::new(),
             blob_outgoing: Vec::new(),
             blob_incoming: Vec::new(),
+            fs_calls: Vec::new(),
+            fs_entries: Default::default(),
+            fs_contents: Default::default(),
+            fs_descriptors: Vec::new(),
+            fs_listings: Vec::new(),
             fields_table: Vec::new(),
             requests_table: Vec::new(),
             body_slots: Vec::new(),
@@ -2255,6 +2376,17 @@ async fn run() -> Result<ExitCode> {
             if !hit {
                 failures.push(format!(
                     "no blobstore call contains {:?} (made: {:?})",
+                    expected, calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_fs {
+            let calls = ctx.fs_calls.clone();
+            let hit = calls.iter().any(|call| call.contains(expected.as_str()));
+            println!("[filesystem calls] {:?}", calls);
+            if !hit {
+                failures.push(format!(
+                    "no filesystem call contains {:?} (made: {:?})",
                     expected, calls
                 ));
             }

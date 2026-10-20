@@ -130,6 +130,34 @@ jobs:
             --then-reply 'blob create=ok put=ok get=hello blob has=true list=["obj.txt"] delete=ok has-after=false' \
             --expect-blob "write-data(container=harness-blob, object=obj.txt, 10 bytes)"
 
+          # The agent's own filesystem (`wasi:filesystem@0.2.6`) is synchronous
+          # too, and the harness keeps an in-memory tree of its own: the file the
+          # first message writes has to come back out of that tree in the second
+          # — the later invocation reads what the earlier one wrote — and the
+          # listing is the JSON array the effect promises.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "fs write notes.txt hello fs" --reply "fs wrote notes.txt" \
+            --then-message "fs read notes.txt" --then-reply "fs read: hello fs" \
+            --expect-fs "write(path=notes.txt, 8 bytes)"
+
+          # `fileSize!` is the one effect whose result is `Try(U64, Str)`, the
+          # tag-union shape the hand-written ABI spells out itself
+          # (`RocU64Result`): a wrong layout would surface here as a size that
+          # is not the one the write put in.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "fs write notes.txt hello fs" --reply "fs wrote notes.txt" \
+            --then-message "fs size notes.txt" --then-reply "fs size: 8" \
+            --expect-fs "stat-at(path=notes.txt)"
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "fs mkdir notes" --reply "fs made dir notes" \
+            --then-message "fs list /" \
+            --then-reply 'fs list: [{"name":"notes","type":"dir"}]' \
+            --expect-fs "create-directory-at(path=notes)"
+
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
             --message hello --reply "AI assistant" \

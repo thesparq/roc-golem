@@ -23,6 +23,13 @@ world golem-agent {
     import wasi:blobstore/blobstore;
     import wasi:blobstore/container;
     import wasi:blobstore/types;
+    // The agent's own filesystem, as Golem 1.6 registers it: the p2 revision
+    // (`wasi:filesystem@0.2.6`), whose descriptor operations are synchronous,
+    // next to the p3 one (`wasi:filesystem@0.3.0`, the MoonBit SDK's) whose
+    // streams this platform does not carry yet. The `readFile!`-family effects
+    // call the p2 shape directly.
+    import wasi:filesystem/preopens@0.2.6;
+    import wasi:filesystem/types@0.2.6;
     import wasi:clocks/monotonic-clock@0.2.6;
     // Scheduling a call for a later time takes an absolute `instant`, so the
     // host reads the wall clock to turn a delay into one. `golem:agent/host`
