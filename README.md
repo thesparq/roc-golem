@@ -140,12 +140,14 @@ roc-golem/
 > [!IMPORTANT]
 > The platform is pinned to one Roc nightly — **`nightly-2026-09-19-d025939`**,
 > the version CI and the release workflow install. The hand-written Roc ABI
-> (`host/src/roc_std.rs`) encodes that compiler's `Str`/`List`/`Try` layout and
-> allocator contract, so another nightly can produce components that *build*
-> and then trap at runtime (a `Str` dropped through the wrong deallocator).
-> `tooling/build.sh` refuses to build with a different `roc` on `PATH`
-> (`ROC_ALLOW_VERSION_MISMATCH=1` overrides it for experiments). Moving the pin
-> means re-deriving the layout facts with `tooling/glue/abi_facts.roc` first.
+> (`host/src/roc_std.rs`) encodes that compiler's `Str`/`List`/`Try` layout
+> facts, so another nightly can produce components that *build* and then trap at
+> runtime. `tooling/build.sh` refuses to build with a different `roc` on `PATH`
+> (`ROC_ALLOW_VERSION_MISMATCH=1` overrides it for experiments); moving the pin
+> means re-deriving the layout facts with `tooling/glue/abi_facts.roc` first. The
+> runtime's *memory protocol* (refcount and slice conventions) is not part of
+> those facts — it is taken from the compiler's builtins and mirrored in
+> `roc_std.rs`, see `tooling/glue/README.md`.
 
 ### 1. Pre-compile Platform Host
 ```bash
@@ -284,9 +286,10 @@ Still open:
 - **A layout-sensitive trap** has been seen once in a release build of the
   effects example: `initialize` trapped while slicing a host-provided heap string
   (`Str.split_first` on the agent config). The same source passes when rebuilt,
-  and a smaller reproduction did not trigger it, so it looks like a Roc
-  code-generation issue rather than a platform one. CI's ABI smoke test is the
-  safety net; if it reappears, keep the failing `.wasm` and compare `roc build`
+  and a smaller re[REDACTED] did not trigger it. The `RocStr` release path has
+  since been rewritten against the compiler's own protocol (see the build section
+  and `tooling/glue/README.md`), which removed the known way this class of trap
+  could fire; if one reappears, keep the failing `.wasm` and compare `roc build`
   with and without `--debug`.
 - **The ABI harness cannot drive async imports**: a component that imports an
   async host function traps inside the harness's wasmtime (a fork-vs-wasmtime

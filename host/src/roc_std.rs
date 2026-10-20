@@ -10,8 +10,15 @@ use std::alloc::{alloc, dealloc, realloc};
 const ALLOC_HEADER_SIZE: usize = 4 * mem::size_of::<usize>();
 
 /// Standard Roc Memory Allocator exported symbols for Roc ABI.
-/// A 16-byte allocation header (4 words) ensures Rust's total_size metadata stored at (data_ptr - ALLOC_HEADER_SIZE)
-/// is completely isolated from Roc 2026's refcount/capacity metadata at (data_ptr - 2*word) and (data_ptr - 1*word).
+///
+/// A 16-byte allocation header (4 words) keeps the Rust allocator's `total_size`
+/// word, stored at `ptr - ALLOC_HEADER_SIZE`, clear of everything the runtime
+/// writes into the space it asked for. The runtime's own words live *after* the
+/// returned pointer: a refcount one word before the bytes
+/// (`RocStr.decref` in `src/builtins/str.zig` → `utils.decref_ptr_to_refcount`)
+/// and the seamless-slice tag in the string's capacity word. `roc_dealloc` is
+/// called with the same pointer `roc_alloc` returned, which for a string is the
+/// refcount word rather than the bytes.
 #[no_mangle]
 pub unsafe extern "C" fn roc_alloc(size: usize, alignment: u32) -> *mut u8 {
     let align = (alignment as usize).max(mem::align_of::<usize>()).max(ALLOC_HEADER_SIZE);
@@ -159,6 +166,18 @@ pub struct RocStr {
 impl RocStr {
     pub const SIZE: usize = mem::size_of::<usize>() * 3;
     const MASK: u8 = 0x80;
+    /// `RocStr.alignment` in the compiler's builtins: the refcount and capacity
+    /// words are pointer-sized, so the allocation is pointer-aligned.
+    const ALIGNMENT: usize = mem::size_of::<usize>();
+    /// `SEAMLESS_SLICE_TAG`: a slice keeps the *original* allocation's pointer in
+    /// the capacity word, tagged with this bit.
+    const SEAMLESS_SLICE_TAG: usize = 1;
+    /// `capacity_shift`: capacities are stored shifted left by one so that bit 0
+    /// stays free for the slice tag.
+    const CAPACITY_SHIFT: usize = 1;
+    /// `REFCOUNT_STATIC_DATA`: a string whose data lives for the whole program
+    /// (a constant) carries this refcount and must never be freed.
+    const REFCOUNT_STATIC_DATA: isize = 0;
 
     pub fn empty() -> Self {
         Self { words: [0; 3] }
@@ -172,6 +191,43 @@ impl RocStr {
         unsafe { slice::from_raw_parts_mut(self.words.as_mut_ptr() as *mut u8, Self::SIZE) }
     }
 
+    /// The bytes of the string, following Roc's `RocStr.getAllocationPtr`: the
+    /// bytes pointer for a plain heap string, and the original string's bytes
+    /// for a seamless slice. `None` for small strings and for the empty string.
+    fn data_ptr(&self) -> Option<*mut u8> {
+        if self.is_small() {
+            return None;
+        }
+        let capacity_or_alloc_ptr = self.words[1];
+        let ptr = if capacity_or_alloc_ptr & Self::SEAMLESS_SLICE_TAG == Self::SEAMLESS_SLICE_TAG
+        {
+            capacity_or_alloc_ptr & !Self::SEAMLESS_SLICE_TAG
+        } else {
+            self.words[0]
+        };
+        if ptr == 0 {
+            None
+        } else {
+            Some(ptr as *mut u8)
+        }
+    }
+
+    /// Where the runtime keeps a heap string's refcount: the word immediately
+    /// before the bytes (`utils.decref_ptr_to_refcount`).
+    fn refcount_ptr(&self) -> Option<*mut isize> {
+        self.data_ptr()
+            .map(|data_ptr| unsafe { (data_ptr as *mut isize).sub(1) })
+    }
+
+    /// The pointer the runtime hands back to the host's `roc_dealloc` for a heap
+    /// string: `utils.free_ptr_to_refcount` walks back from the refcount by
+    /// `max(required_space, alignment) - word`, which for a string is the
+    /// pointer-sized gap that holds the refcount itself.
+    fn allocation_ptr(&self) -> Option<*mut u8> {
+        self.data_ptr()
+            .map(|data_ptr| unsafe { data_ptr.sub(Self::ALIGNMENT) })
+    }
+
     pub fn from_str(s: &str) -> Self {
         let len = s.len();
         if len < Self::SIZE {
@@ -181,19 +237,21 @@ impl RocStr {
             bytes[Self::SIZE - 1] = (len as u8) | Self::MASK;
             roc_str
         } else {
-            let align = 8;
             unsafe {
-                let data_ptr = roc_alloc(len, align);
-                let refcount_ptr = (data_ptr as *mut isize).sub(2);
-                let capacity_ptr = (data_ptr as *mut usize).sub(1);
-                *refcount_ptr = 1;
-                *capacity_ptr = len;
+                // Mirror the compiler's `RocStr.allocate`: it asks for the data
+                // plus one word for the refcount and keeps the refcount in that
+                // word, immediately before the bytes. Our `roc_alloc` reserves
+                // its own size header before all of it.
+                let extra_bytes = Self::ALIGNMENT;
+                let new_bytes = roc_alloc(extra_bytes + len, Self::ALIGNMENT as u32);
+                let data_ptr = new_bytes.add(extra_bytes);
+                *((data_ptr as *mut isize).sub(1)) = 1;
 
                 ptr::copy_nonoverlapping(s.as_ptr(), data_ptr, len);
 
                 let mut roc_str = Self::empty();
                 roc_str.words[0] = data_ptr as usize;
-                roc_str.words[1] = len; // capacity
+                roc_str.words[1] = len << Self::CAPACITY_SHIFT; // capacity
                 roc_str.words[2] = len;
                 roc_str
             }
@@ -235,13 +293,12 @@ impl Clone for RocStr {
         if self.is_small() {
             Self { words: self.words }
         } else {
-            let data_ptr = self.words[0] as *mut u8;
-            let capacity = self.words[2];
-            if !data_ptr.is_null() && capacity > 0 {
+            // Shares the allocation, the way the runtime's `incref` does: the
+            // refcount is the word before the allocation, and a slice counts
+            // against the allocation it points into.
+            if let Some(refcount_ptr) = self.refcount_ptr() {
                 unsafe {
-                    let refcount_ptr = (data_ptr as *mut isize).sub(2);
-                    let ref_count = *refcount_ptr;
-                    if ref_count > 0 {
+                    if *refcount_ptr > 0 {
                         *refcount_ptr += 1;
                         return Self { words: self.words };
                     }
@@ -253,22 +310,28 @@ impl Clone for RocStr {
 }
 
 impl Drop for RocStr {
+    /// Releases the string the way the compiler's runtime does
+    /// (`RocStr.decref` → `utils.decref`): the refcount is the word immediately
+    /// before the bytes, a seamless slice counts against the allocation its
+    /// bytes point into, the host's `roc_dealloc` gets the allocation pointer
+    /// (not the bytes), and a refcount of zero means the data has whole-program
+    /// lifetime.
     fn drop(&mut self) {
-        if !self.is_small() {
-            let data_ptr = self.words[0] as *mut u8;
-            let capacity = self.words[2];
-            if !data_ptr.is_null() && capacity > 0 {
-                unsafe {
-                    let refcount_ptr = (data_ptr as *mut isize).sub(2);
-                    let ref_count = *refcount_ptr;
-                    if ref_count > 0 {
-                        *refcount_ptr -= 1;
-                        if *refcount_ptr == 0 {
-                            roc_dealloc(data_ptr, 8);
-                        }
-                    }
+        let Some(refcount_ptr) = self.refcount_ptr() else {
+            return;
+        };
+        unsafe {
+            let refcount = *refcount_ptr;
+            if refcount > 1 {
+                *refcount_ptr = refcount - 1;
+            } else if refcount == 1 {
+                *refcount_ptr = Self::REFCOUNT_STATIC_DATA;
+                if let Some(alloc_ptr) = self.allocation_ptr() {
+                    roc_dealloc(alloc_ptr, Self::ALIGNMENT as u32);
                 }
             }
+            // Anything else (zero for a constant, or a poisoned debug value)
+            // is not ours to free.
         }
     }
 }
@@ -403,17 +466,19 @@ mod tests {
         assert_eq!(roc_str.as_str(), s);
         assert_eq!(roc_str.to_string(), s);
 
-        // Verify Roc 2026 header layout:
-        // - Rust allocator total_size is at (data_ptr - 16)
-        // - Roc refcount is at (data_ptr - 8) / (data_ptr - 2*word)
-        // - Roc capacity is at (data_ptr - 4) / (data_ptr - 1*word)
+        // Verify the compiler's header layout (RocStr in src/builtins/str.zig):
+        // - Rust allocator total_size is at (data_ptr - 4*word), our own header
+        // - Roc's refcount is the word immediately before the data pointer
+        // - Roc's capacity lives in the string's second word, shifted left by
+        //   one so bit 0 stays free for the seamless-slice tag
         unsafe {
             let data_ptr = roc_str.words[0] as *const u8;
-            let refcount = *((data_ptr as *const isize).sub(2));
-            let capacity = *((data_ptr as *const usize).sub(1));
-            let total_size = *(data_ptr.sub(ALLOC_HEADER_SIZE) as *const usize);
+            let refcount = *((data_ptr as *const isize).sub(1));
+            let alloc_ptr = roc_str.allocation_ptr().expect("heap string has an allocation");
+            let total_size = *(alloc_ptr.sub(ALLOC_HEADER_SIZE) as *const usize);
             assert_eq!(refcount, 1);
-            assert_eq!(capacity, s.len());
+            assert_eq!(roc_str.words[1], s.len() << 1);
+            assert_eq!(roc_str.words[2], s.len());
             assert!(total_size >= ALLOC_HEADER_SIZE + s.len());
         }
 
@@ -421,8 +486,53 @@ mod tests {
         assert_eq!(cloned.as_str(), s);
         unsafe {
             let data_ptr = roc_str.words[0] as *const u8;
-            let refcount = *((data_ptr as *const isize).sub(2));
+            let refcount = *((data_ptr as *const isize).sub(1));
             assert_eq!(refcount, 2);
+        }
+    }
+
+    /// A seamless slice keeps the original allocation's pointer (tagged) in its
+    /// capacity word; dropping one must release that allocation, not the
+    /// interior pointer.
+    #[test]
+    fn test_seamless_slice_drop() {
+        let text = "a string long enough to live on the heap, so slicing it stays off the stack";
+        let original = RocStr::from_str(text);
+        let alloc_ptr = original.words[0];
+
+        // `capacity_or_alloc_ptr` = original pointer | SEAMLESS_SLICE_TAG.
+        let slice = RocStr {
+            words: [alloc_ptr + 8, alloc_ptr | 1, text.len() - 8],
+        };
+        assert!(!slice.is_small());
+        assert_eq!(slice.as_str(), &text[8..]);
+        drop(slice);
+
+        unsafe {
+            // The slice's drop decremented the shared refcount...
+            let refcount = *((alloc_ptr as *const isize).sub(1));
+            assert_eq!(refcount, 0);
+        }
+        // ...and the original's drop freed the allocation it owned, without
+        // trapping: a double free would panic inside the allocator.
+        drop(original);
+    }
+
+    /// A constant's data has whole-program lifetime: refcount zero means the
+    /// string must not be freed at all.
+    #[test]
+    fn test_static_data_is_not_freed() {
+        unsafe {
+            let data_ptr = roc_alloc(64, 4);
+            // A constant carries refcount zero; the allocation stays ours.
+            *((data_ptr as *mut isize).sub(1)) = 0;
+            let constant = RocStr {
+                words: [data_ptr as usize, 64 << 1, 64],
+            };
+            drop(constant);
+            // Freeing here is the only free: had the drop released it, this
+            // dealloc would trap inside the allocator.
+            roc_dealloc(data_ptr, 4);
         }
     }
 

@@ -46,12 +46,24 @@ had it inverted, so successful calls surfaced as errors).
 (`env::roc_alloc(size, align) -> ptr`, `env::roc_dealloc(ptr, align)`,
 `env::roc_realloc(ptr, new_size, align) -> ptr`) but their *memory protocol* —
 how much space the host must leave before the data pointer, and what the runtime
-stores there — is not part of the emitted facts. Those three functions only serve
-the Roc runtime; the component-model boundary uses `cabi_realloc`, which
-wit-bindgen's glue frees through Rust's global allocator and which therefore must
-be a plain allocation with no Roc header. Mixing the two is what produced the
-long-lived `initialize` trap (see the Development status section of the root
-README).
+stores there — is not part of the emitted facts. It lives in the compiler's
+builtins instead (`src/builtins/str.zig`, `src/builtins/utils.zig`,
+`src/host_alloc/`), and `host/src/roc_std.rs` now mirrors it exactly:
+
+- `roc_alloc` returns a pointer the runtime treats as the *allocation*; it
+  writes a refcount one word before the bytes it hands out, and `roc_dealloc`
+  is called with that same pointer (for a string, the refcount word, not the
+  bytes). Our own size header sits entirely before it.
+- A `Str`'s words are `{ bytes, capacity << 1, length }`; bit 0 of the capacity
+  word is `SEAMLESS_SLICE_TAG`, and a slice stores the *original* string's bytes
+  pointer there, so releasing a slice must release that allocation.
+- Refcount `0` means the data has whole-program lifetime (a constant) and must
+  never be freed; a slice shares the refcount of the allocation it points into.
+
+The component-model boundary uses `cabi_realloc`, which wit-bindgen's glue frees
+through Rust's global allocator and which therefore must be a plain allocation
+with no Roc header. Mixing the two is what produced the long-lived `initialize`
+trap (see the Development status section of the root README).
 
 ## What is still missing
 

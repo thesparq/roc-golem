@@ -57,28 +57,30 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
   1.6.0. Still open: the ABI harness cannot drive the effects component at all
   now (its p3 import is async, and the harness's wasmtime traps on async imports
   — same gap as the streaming agent), so p3 HTTP is covered by the e2e only.
-- **A latent `RocStr` drop bug, visible only on some toolchains**: with rustc
-  1.98.0 locally, the harness traps on the counter's and ai_tool's *second*
-  `handle-message` — `<RocStr as Drop>::drop` → `roc_dealloc` → `__rust_dealloc`
-  → panic — while the same commit is green in CI (stable rustc) and on a real
-  server. It reproduces on the tree *without* this p3 change, and also when the
-  unmodified tree is built with a newer Roc nightly, so it is a pre-existing
-  fragility rather than a regression: `RocStr::drop` assumes every heap `Str`
-  handed back by Roc came from our `roc_alloc` with the 16-byte header, which
-  Roc's own runtime does not guarantee (slices point into another allocation,
-  interned literals into static data) — the dealloc then reads a bogus total
-  size and dlmalloc panics. Fixing the drop protocol against Roc's real `Str`
-  metadata (its refcount/capacity words and slice convention, e.g. from Roc's
-  `str.zig` or the `roc glue` generator) is the prerequisite for trusting the
-  harness on every toolchain; `tooling/glue/README.md` already flags the
-  allocator protocol as unverified.
-- **Toolchain pin, re-confirmed the hard way**: building with a Roc nightly other
-  than `nightly-2026-09-19-d025939` produces components that *build* and then
-  trap at runtime — the counter's second `handle-message` died in
-  `RocStr::drop` → `__rust_dealloc` → `core::panicking::panic` (a `Str` freed
-  through the wrong deallocator), while the same source built with the pinned
-  nightly passes. `tooling/build.sh` now refuses to build with a mismatched
-  `roc` instead of leaving that to be discovered by the harness.
+- **`RocStr`'s drop protocol is now the compiler's, not a guess** (fixed, with
+  the bug and the evidence worth keeping): the host used to release strings by
+  decrementing a refcount two words before the bytes and handing the *bytes*
+  pointer to `roc_dealloc`. The compiler's runtime (`src/builtins/str.zig` →
+  `utils.decref` → `utils.free_ptr_to_refcount`) puts the refcount **one** word
+  before the bytes, passes the **allocation** pointer to `roc_dealloc`, stores
+  `capacity << 1` in the second word with bit 0 as the seamless-slice tag, and
+  treats refcount `0` as whole-program lifetime. Every one of those was wrong
+  here, so any string the runtime produced and the host released could dealloc a
+  bogus pointer or layout. It surfaced as
+  `<RocStr as Drop>::drop` → `roc_dealloc` → `__rust_dealloc` → panic, and its
+  visibility depended on the toolchain and heap state: a newer Roc nightly
+  (`nightly-2026-09-29`) trapped on the counter's second `handle-message`,
+  rustc 1.98.0 trapped locally on a commit CI ran green, and the p3 HTTP change
+  perturbed it too. Fixed in `host/src/roc_std.rs` — `from_str` lays the string
+  out the way `RocStr.allocate` does, `Drop`/`Clone` follow
+  `decref`/`incref` including slices and constants — with unit tests for the
+  layout, a seamless slice's release and constant strings. The counter now also
+  passes the harness built with the newer nightly.
+- **Toolchain pin**: `tooling/build.sh` still refuses a `roc` other than
+  `nightly-2026-09-19-d025939` (`ROC_ALLOW_VERSION_MISMATCH=1` overrides). The
+  allocator contract is compiler-independent now, but the emitted *layout facts*
+  (sizes, offsets, `Try` discriminants) are still verified against that one
+  nightly by `tooling/glue/abi_facts.roc`.
 
 ---
 
