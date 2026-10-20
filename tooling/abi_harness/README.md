@@ -31,12 +31,16 @@ Flags:
   `--expect-kv` and `--expect-blob` do the same for the key-value
   (`wasi:keyvalue`: `open-bucket`, `set`, `get`, `delete`, `exists`) and
   blobstore (`wasi:blobstore`: `create-container`, `write-data`, `list-objects`,
-  …) calls, and `--expect-fs` for the agent's filesystem
-  (`wasi:filesystem@0.2.6`: `open-at`, `write`, `read-directory`, …). All of
+  …) calls, `--expect-fs` for the agent's filesystem
+  (`wasi:filesystem@0.2.6`: `open-at`, `write`, `read-directory`, …), and
+  `--expect-db` for the databases (`golem:rdbms`: `postgres open`,
+  `postgres execute(statement=…, params=…)`, `mysql query`, …). All of
   them are recorded by the stubs, so effect wiring is verified, not just reply
-  text — and the two stores and the filesystem are stubbed with a small
-  in-memory store of their own, so a round trip the component drives has to come
-  back out of it changed (for the filesystem that includes *across* the two
+  text — and the two stores, the filesystem and the database are stubbed with a
+  small store of their own (a relational one for the database: the statements
+  the counter's `db` command sends against a tiny store of committed rows and
+  one copy per open transaction), so a round trip the component drives has to
+  come back out of it changed (for the filesystem that includes *across* the two
   messages, which is what makes the read a real read).
 - `--expect-trap SUBSTRING` expects the first message to *fail the invocation*,
   with SUBSTRING in the trap's text, instead of returning a reply: `trap!` never
@@ -66,16 +70,18 @@ It exits non-zero when any of these fail:
 - `invoke handle-message` traps, returns an error, or returns a reply that does
   not contain the expected text,
 - an expected log line, WebSocket send, HTTP request, RPC call, quota call,
-  retry-policy call, `golem:api/host` call, key-value call, blobstore call or
-  filesystem call was never recorded,
+  retry-policy call, `golem:api/host` call, key-value call, blobstore call,
+  filesystem call or database call was never recorded,
 - a message expected to trap (`--expect-trap`) returned a reply or failed some
   other way instead.
 
 Current state of the components built from this tree: counter, ai_tool, site and
 static_site pass every check, including the effects the counter carries — the
 quota and retry-policy calls, the execution-control calls, the key-value and
-blobstore round trips, which run against the stubs' own stores, and the agent
-filesystem round trip, which runs against the stubs' own directory tree. The
+blobstore round trips, which run against the stubs' own stores, the agent
+filesystem round trip, which runs against the stubs' own directory tree, and the
+database round trip, which runs against the stubs' own relational store (a
+rolled-back and a committed transaction included). The
 streaming agent passes here too, `websocket/client.receive` included. The effects
 agent cannot even be *instantiated* by the harness: its p3 `wasi:http` import is
 not in the harness world (see the toolchain notes below), so the e2e job stays its
@@ -121,9 +127,11 @@ interfaces with no Golem runtime present: agent types, the clocks, `wasi:io`,
 `golem:agent/host` (RPC calls recorded), the WebSocket client (a recording
 connection), `wasi:logging` (recorded), `golem:api/retry` / `golem:quota/types`
 / `golem:api/host` (recorded too), the two shared stores `wasi:keyvalue` and
-`wasi:blobstore` (each with a small in-memory store behind it), and the agent's
+`wasi:blobstore` (each with a small in-memory store behind it), the agent's
 filesystem `wasi:filesystem@0.2.6` (an in-memory directory tree; the preopens
-answer the sandbox root under both `/` and `.` the way Golem does). Those
+answer the sandbox root under both `/` and `.` the way Golem does), and the
+three `golem:rdbms` database interfaces (a tiny relational store; see
+`src/main.rs` for the statement shapes it understands). Those
 interfaces are synchronous, which is why they can be driven here at all.
 
 Two functions of the blobstore move a component-model stream — the outgoing

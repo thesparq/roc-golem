@@ -17,6 +17,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | user-defined snapshots | `golem:api/save-snapshot`/`load-snapshot` | state JSON; e2e-covered across an incompatible revision |
 | quotas + retry policies | `golem:quota/types`, `golem:api/retry` | `newQuotaToken!` / `quotaReserve!` / `quotaCommit!` / `quotaSplit!` / `quotaMerge!`, and `getRetryPolicies!` / `resolveRetryPolicy!` / `nextRetryDelay!` / … with the policy trees as JSON |
 | key-value + blobstore | `wasi:keyvalue/eventual`, `wasi:blobstore` | `kvGet!` / `kvSet!` / `kvDelete!` / `kvExists!` and `blobCreateContainer!` / `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!`; both stores are environment-scoped, and values travel as text |
+| databases | `golem:rdbms/{postgres,mysql,ignite2}` | `dbOpen!` / `dbOpenMysql!` / `dbOpenIgnite!` / `dbQuery!` / `dbExecute!` / `dbBegin!` / `dbCommit!` / `dbRollback!`; connections and transactions are `U32` handles, statements' values travel as the JSON `db-value` encoding |
 | oplog + execution control | `golem:api/host` | `trap!`, `idempotencyKey!`, `fork!`, `oplogCommit!`, `resolveComponentId!` / `resolveAgentId!` — the part of the 1.5 surface 1.6 kept (see item 10) |
 | tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance) |
 | read-only methods | agent metadata | declared for tools; until-write cache |
@@ -103,32 +104,76 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    the data directory's capacity already spent. Not exposed: passing a quota token
    to another agent. The SDKs send tokens through schema values, and
    `schema-value-tree` in this platform carries no resources.
-8. ~~**Blobstore** (`wasi:blobstore`) and **key-value** (`wasi:keyvalue`)~~ —
-   **done**; **databases** (`golem:rdbms/{postgres,mysql,ignite2}`) and
-   **durability** (`golem:durability`) are still open. The two stores are
-   imports of `wit/world.wit` now, and the effects are the data plane per store:
-   four key-value effects (`kvGet!` / `kvSet!` / `kvDelete!` / `kvExists!` on
-   `wasi:keyvalue/eventual`) and six blobstore ones (`blobCreateContainer!` /
-   `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!`). Values
-   are bytes on the wire and travel as lossy-UTF-8 text, the convention `http!`
-   uses; buckets, keys, containers and objects are named by strings, so — unlike
-   the SDKs' typed clients — no handle travels through the app. A missing key is
-   the JSON literal `null` (`kvExists!` is the direct check), which is what tells
-   it from an empty value; the one value it cannot be told from is stored text
-   that is itself `null`, documented in `platform/Golem.roc` and the README.
-   Both interfaces are synchronous, so the ABI harness drives a full round trip
-   of each against recording stubs that keep their own small store (the counter
-   example carries `kv` and `blob` commands for it, and CI/release run them);
-   the blobstore's `list-objects` is the one call whose `stream<object-name>` the
-   host drains itself, into the JSON array `blobList!` returns. The e2e covers
-   both round trips against a real server. Not exposed: `wasi:keyvalue/cache`
-   (async results) and `eventual-batch`, and on the blobstore side
-   `delete-container`, `container-exists`, `copy-object`, `move-object`,
-   `delete-objects`, `clear` and the `info` readers. Cost of the remaining items:
-   the rdbms interfaces are a client-shaped surface (connection + query +
-   transaction handles), so they need a design pass rather than the mechanical
-   one the two stores took; `golem:durability` is cheaper (mostly
-   `persist-remote-write`-style markers).
+8. ~~**Blobstore** (`wasi:blobstore`), **key-value** (`wasi:keyvalue`) and
+   **databases** (`golem:rdbms/{postgres,mysql,ignite2}`)~~ — **done**: the two
+   stores are imports of `wit/world.wit` now, and the effects are the data plane
+   per store: four key-value effects (`kvGet!` / `kvSet!` / `kvDelete!` /
+   `kvExists!` on `wasi:keyvalue/eventual`) and six blobstore ones
+   (`blobCreateContainer!` / `blobPut!` / `blobGet!` / `blobHas!` / `blobList!`
+   / `blobDelete!`), with values as bytes on the wire travelling as lossy-UTF-8
+   text, the convention `http!` uses; buckets, keys, containers and objects are
+   named by strings, so — unlike the SDKs' typed clients — no handle travels
+   through the app. A missing key is the JSON literal `null` (`kvExists!` is
+   the direct check), which is what tells it from an empty value; the one value
+   it cannot be told from is stored text that is itself `null`, documented in
+   `platform/Golem.roc` and the README. Both interfaces are synchronous, so the
+   ABI harness drives a full round trip of each against recording stubs that
+   keep their own small store (the counter example carries `kv` and `blob`
+   commands for it, and CI/release run them); the blobstore's `list-objects` is
+   the one call whose `stream<object-name>` the host drains itself, into the
+   JSON array `blobList!` returns. The e2e covers both round trips against a
+   real server. Not exposed: `wasi:keyvalue/cache` (async results) and
+   `eventual-batch`, and on the blobstore side `delete-container`,
+   `container-exists`, `copy-object`, `move-object`, `delete-objects`, `clear`
+   and the `info` readers.
+
+   The **databases** half landed with eight effects on the three interfaces:
+   `dbOpen!` (postgres), `dbOpenMysql!`, `dbOpenIgnite!`, `dbQuery!`,
+   `dbExecute!`, `dbBegin!`, `dbCommit!`, `dbRollback!`. Details worth knowing:
+
+   - **One `open` per engine, one shared statement surface.** Each interface has
+     its own `open` and its own `db-value` / `db-column-type` vocabulary, so the
+     platform names the three opens after the interface each calls and shares
+     one query/execute/transaction family across them. A single `dbOpen!`
+     taking a kind plus an address would have invented a discriminator the WIT
+     does not have (and a new Roc type to carry it); the three effects mirror
+     the WIT one-to-one, the way every other effect on this platform does.
+   - **Connections and transactions are `U32` handles in one table**, tagged by
+     engine and kind: `dbQuery!` / `dbExecute!` take either, a handle of the
+     wrong kind is reported rather than misread, and `dbCommit!` /
+     `dbRollback!` consume the transaction's handle, so using one twice is
+     `unknown database handle N` (the shape `wsClose!` and `quotaCommit!` use).
+   - **Values travel as the WIT structure in JSON** (`host/src/rdbms_json.rs`
+     mirrors all three vocabularies in both directions, the way `retry_json`
+     mirrors the retry trees): a value is `{"tag": …, "value": …}` with the WIT
+     case names in camelCase, a record is an object with camelCase fields, a
+     nested variant (`ip-address`, a range bound) is a tagged object, a
+     `lazy-db-value` is what it wraps; a `uuid` (and Ignite's `db-uuid`) is the
+     canonical UUID string and a non-finite float is `"NaN"` / `"Infinity"` /
+     `"-Infinity"`, the two hand-mapped cases. `dbQuery!` answers
+     `{"columns": …, "rows": …}` — a row is the JSON array of its values in
+     column order — with each column's ordinal, name, WIT type and the
+     database's own type name (Ignite's columns carry no type: its `db-column`
+     has none). The README spells the encoding out with examples.
+   - **Opening is parse-only and the pool is lazy**, which is what makes the
+     honest no-database checks possible: a well-formed address opens with no
+     server behind it, a malformed one is the `connection-failure` variant of
+     the effect's `Err` (not a trap), and the first statement is where the pool
+     is created — the e2e asserts all three, and the real round trip
+     (create/insert/select/count, then a rolled-back and a committed
+     transaction) is opt-in through `E2E_DATABASE_URL` because it writes to the
+     database it names. One ABI detail the round trip caught: `dbBegin!` has to
+     look a handle up *and* store another under one borrow of the handle table,
+     or the second `borrow_mut` panics inside wasm.
+   - Both the harness and the e2e cover it: the harness drives the whole round
+     trip on the counter against a stub that keeps its own little relational
+     store — the params and the rows really go in and out of it, and the
+     recorded calls show which host functions ran — plus the three `open`s and
+     the bad-address path, and CI/release run those; the e2e runs the three
+     opens and the no-server failure path against a real deployment.
+   - Not exposed: `query-stream` (a result stream is a resource an app reads
+     chunk by chunk, and the effects hand an app text). The old item also named
+     `golem:durability`, which is now its own item below.
 9. ~~**The agent's own filesystem**~~ — **done**: eight effects
    (`readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` /
    `deleteFile!` / `makeDir!` / `listDir!`) over `wasi:filesystem/types@0.2.6` +
@@ -222,6 +267,10 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
     component's own agent types, so cross-component calls fail with
     `Agent type not found` (documented in the README). Cost: unknown — needs
     server-side support or a different mechanism.
+13. **Durability** (`golem:durability`): the interface that carries
+    `persist-remote-write`-style markers — the other half of the old item 8,
+    which is now its own gap. Cheap compared to the rest (a handful of
+    synchronous calls), but no example reaches for it yet.
 
 ## How to close them
 

@@ -304,4 +304,44 @@ Effect := {}.{
 	listDir! = |path| {
 		Host.rocFxListDir!(path)
 	}
+
+	## Databases (`golem:rdbms`): three engines, one `open` per interface, and a
+	## shared query/execute/transaction surface. Connections and transactions are
+	## `U32` handles in the host's handle table; a statement's params are a JSON
+	## array of `db-value` encodings and a result is `{"columns": …, "rows": …}`
+	## (the encoding is spelled out in the README's database section).
+	dbOpen! : Str => Try(U32, Str)
+	dbOpen! = |address| {
+		Host.rocFxDbOpen!(address)
+	}
+
+	dbOpenMysql! : Str => Try(U32, Str)
+	dbOpenMysql! = |address| {
+		Host.rocFxDbOpenMysql!(address)
+	}
+
+	dbOpenIgnite! : Str => Try(U32, Str)
+	dbOpenIgnite! = |address| {
+		Host.rocFxDbOpenIgnite!(address)
+	}
+
+	dbQuery! : U32, Str, Str => Try(Str, Str)
+	dbQuery! = |handle, statement, params|
+		Host.rocFxDbQuery!(handle, statement, params)
+
+	dbExecute! : U32, Str, Str => Try(U64, Str)
+	dbExecute! = |handle, statement, params|
+		Host.rocFxDbExecute!(handle, statement, params)
+
+	dbBegin! : U32 => Try(U32, Str)
+	dbBegin! = |handle|
+		Host.rocFxDbBegin!(handle)
+
+	dbCommit! : U32 => Try({}, Str)
+	dbCommit! = |handle|
+		Host.rocFxDbCommit!(handle)
+
+	dbRollback! : U32 => Try({}, Str)
+	dbRollback! = |handle|
+		Host.rocFxDbRollback!(handle)
 }

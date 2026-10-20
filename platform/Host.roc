@@ -54,4 +54,12 @@ Host :: [].{
 	rocFxDeleteFile! : Str => Try({}, Str)
 	rocFxMakeDir! : Str => Try({}, Str)
 	rocFxListDir! : Str => Try(Str, Str)
+	rocFxDbOpen! : Str => Try(U32, Str)
+	rocFxDbOpenMysql! : Str => Try(U32, Str)
+	rocFxDbOpenIgnite! : Str => Try(U32, Str)
+	rocFxDbQuery! : U32, Str, Str => Try(Str, Str)
+	rocFxDbExecute! : U32, Str, Str => Try(U64, Str)
+	rocFxDbBegin! : U32 => Try(U32, Str)
+	rocFxDbCommit! : U32 => Try({}, Str)
+	rocFxDbRollback! : U32 => Try({}, Str)
 }

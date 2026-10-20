@@ -67,6 +67,14 @@ module [
 	deleteFile!,
 	makeDir!,
 	listDir!,
+	dbOpen!,
+	dbOpenMysql!,
+	dbOpenIgnite!,
+	dbQuery!,
+	dbExecute!,
+	dbBegin!,
+	dbCommit!,
+	dbRollback!,
 ]
 
 import Effect
@@ -477,3 +485,81 @@ makeDir! = |path|
 listDir! : Str => Try(Str, Str)
 listDir! = |path|
 	Effect.listDir!(path)
+
+## Databases (`golem:rdbms`): three engines — postgres, MySQL and Apache Ignite
+## 2.x — with one `open` per engine and a shared statement surface. A connection
+## and a transaction are host-side resources the app carries as `U32` handles:
+## `dbQuery!` and `dbExecute!` take either a connection's or a transaction's
+## handle, and `dbCommit!` / `dbRollback!` consume the transaction's.
+##
+## Statements and values travel as JSON. The params are a JSON array of
+## `db-value` encodings in the opened engine's own vocabulary, and `dbQuery!`
+## answers `{"columns": […], "rows": […]}` with each column's ordinal, name,
+## WIT type and the database's own type name. The README's database section
+## spells the encoding out, hand-mapped cases included (a UUID is its canonical
+## text; a case that carries no payload has just its tag, `{"tag": "null"}`).
+##
+## The three interfaces are synchronous host calls, and Golem records them in
+## the agent's oplog like every other host call, so a replay is answered from
+## the recorded calls rather than reaching the database again. `query-stream` is
+## not exposed: the effects hand an app text.
+
+dbOpen! : Str => Try(U32, Str)
+dbOpen! = |address|
+	Effect.dbOpen!(address)
+
+## The same for MySQL. The address is `mysql://user[:password]@host[:port]/db`.
+dbOpenMysql! : Str => Try(U32, Str)
+dbOpenMysql! = |address|
+	Effect.dbOpenMysql!(address)
+
+## The same for Apache Ignite 2.x. The address is
+## `ignite://[user:password@]host[:port][?pool_size=N&tls=true]`; the default
+## port is 10800.
+dbOpenIgnite! : Str => Try(U32, Str)
+dbOpenIgnite! = |address|
+	Effect.dbOpenIgnite!(address)
+
+## Runs `statement` and returns its result as JSON:
+## `{"columns": [{"ordinal": 0, "name": "id", "dbType": {"tag": "int4"},
+## "dbTypeName": "INT4"}, …], "rows": [[{"tag": "int4", "value": 1}, …], …]}`.
+## A row is the JSON array of its values in column order (the WIT `db-row`'s
+## single `values` field is that array), and Ignite's columns carry no type
+## because its `db-column` does not.
+##
+## `params` is a JSON array of `db-value` encodings — `[]` for a statement
+## without parameters — in the vocabulary of the engine the handle was opened
+## on: `[{"tag": "int4", "value": 1}, {"tag": "text", "value": "a"}]` for
+## postgres, `[{"tag": "int", "value": 1}]` for MySQL,
+## `[{"tag": "dbInt", "value": 1}]` for Ignite. A params text the encoding
+## cannot read is reported in the `Err` channel, like a host error.
+##
+## A statement that is not a query (a `CREATE`, an `INSERT`, …) belongs in
+## `dbExecute!`; a `query` runs whatever the database accepts and hands back
+## whatever columns it answered with.
+dbQuery! : U32, Str, Str => Try(Str, Str)
+dbQuery! = |handle, statement, params|
+	Effect.dbQuery!(handle, statement, params)
+
+## Runs `statement` and returns the number of affected rows. The params are the
+## same JSON array `dbQuery!` takes.
+dbExecute! : U32, Str, Str => Try(U64, Str)
+dbExecute! = |handle, statement, params|
+	Effect.dbExecute!(handle, statement, params)
+
+## Starts a transaction on the connection and returns its handle: statements
+## run through that handle until `dbCommit!` or `dbRollback!` consumes it. A
+## handle is spent once — using it again is reported, not replayed.
+dbBegin! : U32 => Try(U32, Str)
+dbBegin! = |handle|
+	Effect.dbBegin!(handle)
+
+## Commits the transaction and consumes its handle.
+dbCommit! : U32 => Try({}, Str)
+dbCommit! = |handle|
+	Effect.dbCommit!(handle)
+
+## Rolls the transaction back and consumes its handle.
+dbRollback! : U32 => Try({}, Str)
+dbRollback! = |handle|
+	Effect.dbRollback!(handle)

@@ -16,6 +16,13 @@ world harness-world {
     import golem:api/host@1.5.0;
     import golem:api/retry@1.5.0;
     import golem:quota/types@1.5.0;
+    // The three `golem:rdbms` database interfaces are synchronous too, so the
+    // stubs here keep a small relational store of their own (the statement
+    // shapes the counter's `db` commands send) and record every call.
+    import golem:rdbms/ignite2@1.5.0;
+    import golem:rdbms/mysql@1.5.0;
+    import golem:rdbms/postgres@1.5.0;
+    import golem:rdbms/types@1.5.0;
     import golem:agent/common@2.0.0;
     import golem:agent/host@2.0.0;
     import golem:tool/common@0.1.0;

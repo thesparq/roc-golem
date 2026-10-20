@@ -416,6 +416,69 @@ check "fs: deleting a file" "fs deleted $notes_path" \
 check "fs: the deleted file is gone" "fs exists: false" \
     "$(invoke "$files_agent" handle-message "$(message_arg "fs exists $notes_path")")"
 
+say "==> Databases (golem:rdbms)"
+# The counter's `db` commands. Golem parses a connection address when `open`
+# is called and creates the pool on the first statement, so a well-formed
+# address opens without a database running — and an address that does not parse
+# comes back as the effect's `Err` (the interface's `connection-failure`
+# variant), not as a trap. Those two are the honest checks on a machine with no
+# database; the full round trip against a real one is opt-in further down.
+db_agent="counter-agent(\"$RUN_ID-db\")"
+
+check "db: a well-formed address opens a connection" "db opened handle " \
+    "$(invoke "$db_agent" handle-message "$(message_arg "db open postgresql://roc@127.0.0.1:5432/roc")")"
+check "db: an address Golem cannot parse is a connection failure" \
+    "db open failed: connection-failure" \
+    "$(invoke "$db_agent" handle-message "$(message_arg "db open not-a-database-url")")"
+# MySQL and Ignite are separate interfaces with their own `open`s; their
+# addresses are parsed the same way, so neither needs a server here either.
+check "db: the MySQL interface opens" "db mysql opened handle " \
+    "$(invoke "$db_agent" handle-message "$(message_arg "db open-mysql mysql://root@127.0.0.1:3306/roc")")"
+check "db: the Ignite interface opens" "db ignite opened handle " \
+    "$(invoke "$db_agent" handle-message "$(message_arg "db open-ignite ignite://127.0.0.1:10800")")"
+# The first statement is where the pool is created, so a round trip against an
+# address with no server behind it reports the host's failure in the effect's
+# `Err` channel on every step — the invocation itself survives.
+db_no_server="$(invoke "$db_agent" handle-message \
+    "$(message_arg "db roundtrip roc_e2e_${RUN_ID//-/_} postgresql://roc@127.0.0.1:5432/roc")")"
+check "db: a statement without a reachable server fails as an Err" \
+    "db create=error(connection-failure" "$db_no_server"
+
+say "==> Databases: a real round trip (E2E_DATABASE_URL)"
+# The data plane against a real postgres: a create, an insert, a select and a
+# count with the values travelling as the `db-value` JSON; then a rolled-back
+# and a committed transaction, which is what makes the count checks meaningful.
+# The table is named after the run and dropped at the end of the round trip.
+db_table="roc_e2e_${RUN_ID//-/_}"
+if [[ -z "${E2E_DATABASE_URL:-}" ]]; then
+    say "SKIP  db: a real round trip (set E2E_DATABASE_URL to a postgresql:// address)"
+    skipped=$((skipped + 1))
+elif [[ "${E2E_DATABASE_URL}" != postgresql://* ]]; then
+    say "SKIP  db: a real round trip (E2E_DATABASE_URL is not a postgresql:// address)"
+    skipped=$((skipped + 1))
+else
+    db_roundtrip="$(invoke "$db_agent" handle-message \
+        "$(message_arg "db roundtrip $db_table $E2E_DATABASE_URL")")"
+    # A wrapped reply only ever gains whitespace (see the retry section), so the
+    # checks compare a space-free copy against space-free substrings; the
+    # database's own type names are not asserted (the harness pins the shape),
+    # only the values, the column names and the WIT types the result carries.
+    db_roundtrip="${db_roundtrip// /}"
+    check "db: the create and the insert report their row counts" \
+        "dbcreate=0insert=1" "$db_roundtrip"
+    check "db: the inserted row comes back with its columns" \
+        '"rows":[[{"tag":"int4","value":1},{"tag":"text","value":"hello db"}]]' "$db_roundtrip"
+    check "db: the result names the selected columns" \
+        '"name":"note"' "$db_roundtrip"
+    check "db: the rolled-back transaction leaves the count alone" \
+        'count2={"columns":[{"dbType":{"tag":"int8"}' "$db_roundtrip"
+    check "db: and its row is not there" '"rows":[[{"tag":"int8","value":1}]]}begin=ok' "$db_roundtrip"
+    check "db: the committed transaction moves the count" \
+        '"rows":[[{"tag":"int8","value":2}]]}' "$db_roundtrip"
+    check "db: the rolled-back row is not selectable" 'select2={"columns":[{"dbType":{"tag":"int4"}' "$db_roundtrip"
+    check "db: the round trip dropped its table" 'drop=0' "$db_roundtrip"
+fi
+
 say "==> Oplog and execution control (golem:api/host)"
 # What an app can reach on 1.6: fail an invocation (`trap!`), name an external
 # write durably (`idempotencyKey!`), fork the agent (`fork!`), wait for the oplog

@@ -108,6 +108,7 @@ roc-golem/
 │   └── src/
 │       ├── lib.rs              # Universal WIT export/import & C-ABI translation layer
 │       ├── retry_json.rs       # JSON mirror of the retry policy/predicate trees
+│       ├── rdbms_json.rs       # JSON mirror of the three rdbms `db-value` vocabularies
 │       ├── roc_std.rs          # Wasm32 Roc ABI types (RocStr, RocList, Allocators)
 │       └── guest_bridge.rs     # Test stubs for unit tests
 ├── platform/
@@ -759,6 +760,103 @@ to.
 
 ---
 
+## 🗃️ Databases
+
+Golem gives an agent three database interfaces, one per engine — postgres,
+MySQL and Apache Ignite 2.x (`golem:rdbms/{postgres,mysql,ignite2}`) — and all
+three are synchronous host calls: a connection opens, a statement runs and a
+transaction commits with plain calls that the runtime records in the agent's
+oplog, so a replay of an invocation is answered from the recorded calls rather
+than reaching the database again. Golem parses a connection address when
+`dbOpen!` is called and creates the pool when the first statement runs, which
+is why an address that parses opens even with no server behind it, and why one
+that does not parse is the `connection-failure` variant of the effect's `Err`
+rather than a trap.
+
+| Effect | What it does |
+| --- | --- |
+| `dbOpen! : Str => Try(U32, Str)` | opens a postgres connection; the address is `postgresql://user[:password]@host[:port]/database`, and `Ok` is the handle the other effects take |
+| `dbOpenMysql! : Str => Try(U32, Str)` | the same for MySQL: `mysql://user[:password]@host[:port]/database` |
+| `dbOpenIgnite! : Str => Try(U32, Str)` | the same for Apache Ignite 2.x: `ignite://[user:password@]host[:port][?pool_size=N&tls=true]`, default port 10800 |
+| `dbQuery! : U32, Str, Str => Try(Str, Str)` | `(handle, statement, params JSON)` → the rows as JSON, with the columns and their types (below) |
+| `dbExecute! : U32, Str, Str => Try(U64, Str)` | the same for a statement that reports an affected-row count |
+| `dbBegin! : U32 => Try(U32, Str)` | starts a transaction on the connection and returns its handle |
+| `dbCommit! : U32 => Try({}, Str)` | commits the transaction, consuming its handle |
+| `dbRollback! : U32 => Try({}, Str)` | rolls the transaction back, consuming its handle |
+
+A handle names a connection or a transaction, and `dbQuery!` / `dbExecute!`
+take either — a statement inside a transaction goes through the transaction's
+handle. The handles are host-side and positional (the first connection is 1),
+and they stay valid between invocations of one agent instance the way the
+recorded calls do. The `Err` channel carries the interface's `error` variant as
+its WIT case name plus the host's message: `connection-failure: …`,
+`query-execution-failure: relation "t" does not exist`, `other: …`, …
+
+### The `db-value` JSON
+
+A value is `{"tag": …, "value": …}`, mirroring the interface's `db-value`
+variant: the tag is the WIT case name in camelCase (the convention the retry
+trees use), and a case that carries no payload has just its tag. Each engine
+has its own vocabulary — the same value is `int4` in postgres, `int` in MySQL
+and `dbInt` in Ignite — and the params of `dbQuery!` / `dbExecute!` are a JSON
+array of them, in the vocabulary of the engine the handle was opened on:
+
+```json
+[{"tag":"int4","value":1},{"tag":"text","value":"hello"},{"tag":"null"}]
+```
+
+The payloads follow the WIT structure: numbers, strings and booleans are
+themselves, a `bytea` / `binary` / `blob`-family value is an array of bytes, a
+record is a JSON object with its fields camelCase'd (a postgres `timestamp` is
+`{"date":{"year":2024,"month":1,"day":31},"time":{"hour":12,"minute":0,"second":5,"nanosecond":7}}`),
+a nested variant such as `inet`'s `ip-address` or a range bound is a tagged
+object like a value, and a `lazy-db-value` is what it wraps. Two cases are
+hand-mapped: a `uuid` (and Ignite's `db-uuid`) is the canonical UUID string,
+and a non-finite float is `"NaN"` / `"Infinity"` / `"-Infinity"`, which is
+the only way JSON can carry one.
+
+`dbQuery!` answers `{"columns": […], "rows": […]}`, where a column is the WIT
+`db-column` — `{"ordinal": 0, "name": "id", "dbType": {"tag": "int4"},
+"dbTypeName": "INT4"}` — and a row is the JSON array of its values in column
+order (`db-row`'s single `values` field is that array). `dbTypeName` is the
+database's own spelling of the type, and Ignite's columns carry no type at all
+(its `db-column` has none):
+
+```json
+{"columns":[{"dbType":{"tag":"int4"},"dbTypeName":"INT4","name":"id","ordinal":0},
+            {"dbType":{"tag":"text"},"dbTypeName":"TEXT","name":"note","ordinal":1}],
+ "rows":[[{"tag":"int4","value":1},{"tag":"text","value":"hello"}]]}
+```
+
+### Transactions
+
+`dbBegin!` starts a transaction on a connection and returns its handle;
+statements run through that handle until `dbCommit!` or `dbRollback!` consumes
+it. A handle is spent once — using it again is reported (`unknown database
+handle 2`), not silently replayed. Golem records the transaction's statements
+in the invocation's oplog like the connection's, so a replay inside a
+transaction repeats the recorded statements instead of new ones.
+
+The counter example carries `db open <address>` (and `open-mysql` /
+`open-ignite`), plus `db roundtrip <table> <address>`, which opens its own
+connection and runs a create, an insert, a select and a count, then a
+rolled-back and a committed transaction and a drop, reporting every step's
+outcome in one reply. The ABI harness drives that round trip against a stub
+that keeps its own little relational store — so the params and the rendered
+rows really go in and out of it — and the recorded calls show which host
+functions ran; it also checks the three `open`s and the bad-address path, and
+runs on the counter component in CI and the release workflow. The `db:` checks
+in `tooling/e2e.sh` run the three opens and the failure path against a real
+server (no database needed — that is the honest check when none is running);
+the full round trip is opt-in through `E2E_DATABASE_URL`, because it writes to
+the database it names — it uses a run-specific table and drops it again.
+
+Not exposed: `query-stream` (the interfaces' chunked result stream — the
+effects hand an app text, and a stream would be a resource the app reads chunk
+by chunk).
+
+---
+
 ## ✨ Effects
 
 Every effect is declared in `platform/Effect.roc` and wrapped by `platform/Golem.roc`;
@@ -785,6 +883,7 @@ apps call them through `pf.Golem`.
 | `kvGet!` / `kvSet!` / `kvDelete!` / `kvExists!` | `wasi:keyvalue` | the environment's key-value store; buckets are implicit and the value travels as text, with a missing key reading as `null` (see [Key-value and blobstore](#-key-value-and-blobstore)) |
 | `blobCreateContainer!` / `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!` | `wasi:blobstore` | the environment's blobstore: containers of named objects, bodies as text, and `blobList!`'s object names as a JSON array (see [Key-value and blobstore](#-key-value-and-blobstore)) |
 | `readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` / `deleteFile!` / `makeDir!` / `listDir!` | `wasi:filesystem` (p2) | the agent's *own* filesystem: per-agent and durable, provisioned from the manifest's `files:` list, with paths resolved against the agent's root (see [The agent's own filesystem](#-the-agents-own-filesystem)) |
+| `dbOpen!` / `dbOpenMysql!` / `dbOpenIgnite!` / `dbQuery!` / `dbExecute!` / `dbBegin!` / `dbCommit!` / `dbRollback!` | `golem:rdbms` | the three database engines: connections and transactions as `U32` handles, statements and values as the JSON `db-value` encoding (see [Databases](#-databases)) |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
@@ -798,9 +897,9 @@ anything is published:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, and the `httpMount` metadata mapping |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips and the agent-filesystem round trip (write in one invocation, read in the next) included |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
+| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, and the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling) |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next) and the database round trip (params in, rows out, a rolled-back and a committed transaction) included |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so
