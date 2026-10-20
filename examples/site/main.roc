@@ -39,6 +39,12 @@ agent = defineAgent({
 			}
 		},
 
+	handleRequest!: |state, _request|
+		{
+			state,
+			response: { status: 404, headers: [], body: "this agent is not an HTTP router" },
+		},
+
 	handleToolCall!: |state, toolCall|
 		{
 			state,
@@ -66,6 +72,7 @@ agent = defineAgent({
 			fileResponseHeaders: [{ name: "referrer-policy", value: "no-referrer" }],
 			corsAllowedPatterns: ["*"],
 		}),
+		httpHandler: NoHandler,
 		openapiProvider: NoOpenApi,
 	},
 

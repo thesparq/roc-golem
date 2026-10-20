@@ -13,13 +13,34 @@ Types := {}.{
 		config : List(ConfigDeclaration),
 		agentKind : AgentKind,
 		httpMount : HttpMountOption,
+		httpHandler : HttpHandlerOption,
 		openapiProvider : OpenApiProvider,
 	}
 	# `HttpRouter` agent types are served by Golem itself: they are parameterless,
 	# ephemeral, have no durable filesystem and register only their OpenAPI
-	# provider method, so the app never sees a request. Use `Regular` for an
-	# agent with methods, state and (optionally) a filesystem mount.
+	# provider method (and their request handler, when declared). Use `Regular`
+	# for an agent with methods, state and (optionally) a filesystem mount.
 	AgentKind : [Regular, HttpRouter]
+	# `HandlesRequests` registers the router's `handle` method, so every request
+	# its static bindings do not match is handed to `handleRequest!`. `NoHandler`
+	# keeps a router purely static (and lets unmatched paths answer 404 without
+	# waking anything).
+	HttpHandlerOption : [NoHandler, HandlesRequests]
+	# One request routed to a router's mount. `headersJson` is the raw header list
+	# (`[{"name":...,"value":...}]`, in request order) and `query` is empty when
+	# the URL had none.
+	HttpRequest : {
+		method : Str,
+		scheme : Str,
+		authority : Str,
+		path : Str,
+		query : Str,
+		headersJson : Str,
+		body : Str,
+	}
+	HttpHeader : { name : Str, value : Str }
+	# What `handleRequest!` answers with: a status, response headers and a body.
+	HttpResponse : { status : U16, headers : List(HttpHeader), body : Str }
 	# The OpenAPI document a router publishes at the deployment's
 	# `/openapi.yaml`. `NoOpenApi` leaves the route to Golem's generated spec.
 	OpenApiProvider : [NoOpenApi, OpenApi(Str)]

@@ -146,8 +146,33 @@ pub unsafe extern "C" fn main_handle_tool_call_for_host_1_exposed_generic(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn main_metadata_for_host_1_exposed_generic(out: *mut RocStr) {
-    let meta_json = r#"{
+pub unsafe extern "C" fn main_handle_request_for_host_1_exposed_generic(
+    out: *mut RocResult<RocStr, RocStr>,
+    state: *const RocStr,
+    request: *const RocStr,
+) {
+    let state_str = if state.is_null() { "{}" } else { (*state).as_str() };
+    let request_str = if request.is_null() { "{}" } else { (*request).as_str() };
+    let path = serde_json::from_str::<serde_json::Value>(request_str)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("path")
+                .and_then(|path| path.as_str())
+                .map(|path| path.to_string())
+        })
+        .unwrap_or_default();
+    let payload = serde_json::json!({
+        "state": state_str,
+        "status": 200,
+        "headers": [{ "name": "content-type", "value": "text/plain" }],
+        "body": format!("stub router reply for {path}"),
+    });
+    ptr::write(out, RocResult::ok(RocStr::from_str(&payload.to_string())));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn main_metadata_for_host_1_exposed_generic(out: *mut RocStr) {    let meta_json = r#"{
         "name": "roc-golem-agent",
         "version": "1.0.0",
         "description": "Durable Roc Agent on Golem Cloud",

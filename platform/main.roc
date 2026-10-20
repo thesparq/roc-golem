@@ -11,6 +11,7 @@ platform "golem"
 		"main_init_for_host_1_exposed_generic": main_init_for_host!,
 		"main_handle_message_for_host_1_exposed_generic": main_handle_message_for_host!,
 		"main_handle_tool_call_for_host_1_exposed_generic": main_handle_tool_call_for_host!,
+		"main_handle_request_for_host_1_exposed_generic": main_handle_request_for_host!,
 		"main_metadata_for_host_1_exposed_generic": main_metadata_for_host,
 	}
 	hosted {
@@ -39,7 +40,10 @@ import Types exposing [
 	ConfigDeclaration,
 	FileBinding,
 	FileResponseHeader,
+	HttpHandlerOption,
+	HttpHeader,
 	HttpMountOption,
+	HttpResponse,
 	OpenApiProvider,
 	ToolDefinition,
 	ToolParameter,
@@ -92,6 +96,53 @@ main_handle_tool_call_for_host! = |state_json, tool_call_json| {
 	}
 }
 
+main_handle_request_for_host! : Str, Str => Try(Str, Str)
+main_handle_request_for_host! = |state_json, request_json| {
+	match (agent.deserializeState)(state_json) {
+		Err(err) =>
+			Err("Failed to deserialize state: ${err}")
+
+		Ok(current_model) => {
+			request = parse_http_request(request_json)
+			res = (agent.handleRequest!)(current_model, request)
+			next_state_json = (agent.serializeState)(res.state)
+			headers_json = format_http_headers(res.response.headers)
+			body_escaped = escape_json_str(res.response.body)
+			Ok("{\"state\":${next_state_json},\"status\":${U16.to_str(res.response.status)},\"headers\":[${headers_json}],\"body\":\"${body_escaped}\"}")
+		}
+	}
+}
+
+# The host builds this from the request Golem handed it; the header list stays a
+# string so the app can read it verbatim (or ignore it).
+parse_http_request : Str -> Types.HttpRequest
+parse_http_request = |raw_json| {
+	field = |name|
+		match extract_json_field(raw_json, name) {
+			Ok(value) => value
+			Err(_) => ""
+		}
+
+	{
+		method: field("method"),
+		scheme: field("scheme"),
+		authority: field("authority"),
+		path: field("path"),
+		query: field("query"),
+		headersJson: field("headersJson"),
+		body: field("body"),
+	}
+}
+
+format_http_headers : List(HttpHeader) -> Str
+format_http_headers = |headers| {
+	formatted = List.map(headers, format_http_header)
+	Str.join_with(formatted, ",")
+}
+
+format_http_header : HttpHeader -> Str
+format_http_header = |header| "{\"name\":${format_json_string(header.name)},\"value\":${format_json_string(header.value)}}"
+
 main_metadata_for_host : {} => Str
 main_metadata_for_host = |_| {
 	meta = agent.metadata
@@ -108,10 +159,18 @@ main_metadata_for_host = |_| {
 
 	mount_json = format_http_mount(meta.httpMount)
 	kind_json = format_agent_kind(meta.agentKind)
+	handler_json = format_http_handler(meta.httpHandler)
 	openapi_json = format_openapi_provider(meta.openapiProvider)
 
-	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}],\"agentKind\":${kind_json},\"httpMount\":${mount_json},\"openapiProvider\":${openapi_json}}"
+	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}],\"agentKind\":${kind_json},\"httpMount\":${mount_json},\"httpHandler\":${handler_json},\"openapiProvider\":${openapi_json}}"
 }
+
+format_http_handler : HttpHandlerOption -> Str
+format_http_handler = |handler|
+	match handler {
+		NoHandler => "null"
+		HandlesRequests => "\"handler\""
+	}
 
 format_agent_kind : AgentKind -> Str
 format_agent_kind = |kind|

@@ -57,6 +57,12 @@ agent = defineAgent({
 				}
 			},
 
+	handleRequest!: |state, _request|
+		{
+			state,
+			response: { status: 404, headers: [], body: "this agent is not an HTTP router" },
+		},
+
 	handleToolCall!: |state, toolCall|
 		match toolCall.name {
 			"get_count" =>
@@ -100,6 +106,7 @@ agent = defineAgent({
 		],
 		agentKind: Regular,
 		httpMount: None,
+		httpHandler: NoHandler,
 		openapiProvider: NoOpenApi,
 	},
 

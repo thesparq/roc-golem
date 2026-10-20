@@ -27,11 +27,15 @@ module [
 ]
 
 import Effect
-import Types exposing [LogLevel, PersistenceMode, ToolDefinition, ToolCall, ToolResult, Metadata]
+import Types exposing [LogLevel, PersistenceMode, ToolDefinition, ToolCall, ToolResult, Metadata, HttpRequest, HttpResponse]
 
 Agent(state) : {
 	init! : Str => state,
 	handleMessage! : state, Str => { state : state, replies : List(Str) },
+	# A router's request handler. Only called when the app declares
+	# `httpHandler: HandlesRequests`; every other agent type can answer with a
+	# plain `Err`-style response.
+	handleRequest! : state, HttpRequest => { state : state, response : HttpResponse },
 	handleToolCall! : state, ToolCall => { state : state, result : ToolResult },
 	metadata : Metadata,
 	serializeState : state -> Str,

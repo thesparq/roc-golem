@@ -19,6 +19,11 @@ extern "C" {
         state: *const RocStr,
         message: *const RocStr,
     );
+    pub fn main_handle_request_for_host_1_exposed_generic(
+        out: *mut RocResult<RocStr, RocStr>,
+        state: *const RocStr,
+        request: *const RocStr,
+    );
     pub fn main_handle_tool_call_for_host_1_exposed_generic(
         out: *mut RocResult<RocStr, RocStr>,
         state: *const RocStr,
@@ -55,7 +60,7 @@ use golem::agent::common::{
     OutputSchema, PathSegment, PathVariable, ReadOnlyConfig, Snapshotting, SubtreeFileMapping,
 };
 use golem::core::types::{
-    MetadataEnvelope, SchemaGraph, SchemaTypeBody, SchemaTypeNode, SchemaValueNode,
+    MetadataEnvelope, NamedFieldType, SchemaGraph, SchemaTypeBody, SchemaTypeNode, SchemaValueNode,
     SchemaValueTree,
 };
 
@@ -117,6 +122,98 @@ fn string_named_field(name: &str) -> NamedField {
         source: FieldSource::UserSupplied,
         schema: 0,
         metadata: empty_metadata(),
+    }
+}
+
+fn type_node(body: SchemaTypeBody) -> SchemaTypeNode {
+    SchemaTypeNode {
+        body,
+        metadata: empty_metadata(),
+    }
+}
+
+/// The endpoint a router's `handle` method must declare: Golem accepts exactly
+/// one handler endpoint, on any method, with no path suffix and no per-parameter
+/// policy.
+fn any_endpoint() -> HttpEndpointDetails {
+    HttpEndpointDetails {
+        http_method: HttpMethod::Any,
+        path_suffix: vec![],
+        header_vars: vec![],
+        query_vars: vec![],
+        auth_details: None,
+        cors_options: CorsOptions {
+            allowed_patterns: vec![],
+        },
+        durable_streams: None,
+    }
+}
+
+/// The schema graph a router's `handle` method declares. Golem requires the
+/// request and response to be exactly this shape (`request_schema` /
+/// `response_schema` in its own `schema/agent/http` module), so the graph is
+/// built to match: header lists, an optional query, and `stream<list<u8>>`
+/// bodies.
+struct RouterSchema {
+    graph: SchemaGraph,
+    request: i32,
+    response: i32,
+}
+
+fn router_schema_graph() -> RouterSchema {
+    let string = 0i32;
+    let u8_index = 1i32;
+    let bytes = 2i32; // list<u8>
+    let header = 3i32; // record { name, value }
+    let headers = 4i32; // list<header>
+    let query = 5i32; // option<string>
+    let body = 6i32; // stream<list<u8>>
+    let request = 7i32;
+    let status = 8i32; // u16
+    let response = 9i32;
+
+    let named = |name: &str, schema: i32| NamedFieldType {
+        name: name.to_string(),
+        body: schema,
+        metadata: empty_metadata(),
+    };
+
+    let graph = SchemaGraph {
+        type_nodes: vec![
+            type_node(SchemaTypeBody::StringType),
+            type_node(SchemaTypeBody::U8Type(None)),
+            type_node(SchemaTypeBody::ListType(u8_index)),
+            type_node(SchemaTypeBody::RecordType(vec![
+                named("name", string),
+                named("value", bytes),
+            ])),
+            type_node(SchemaTypeBody::ListType(header)),
+            type_node(SchemaTypeBody::OptionType(string)),
+            type_node(SchemaTypeBody::StreamType(Some(bytes))),
+            type_node(SchemaTypeBody::RecordType(vec![
+                named("method", string),
+                named("scheme", string),
+                named("authority", string),
+                named("path", string),
+                named("query", query),
+                named("headers", headers),
+                named("body", body),
+            ])),
+            type_node(SchemaTypeBody::U16Type(None)),
+            type_node(SchemaTypeBody::RecordType(vec![
+                named("status", status),
+                named("headers", headers),
+                named("body", body),
+            ])),
+        ],
+        defs: vec![],
+        root: request,
+    };
+
+    RouterSchema {
+        graph,
+        request,
+        response,
     }
 }
 
@@ -445,6 +542,259 @@ fn constructor_param_name(mount: &Option<HttpMountDetails>) -> String {
         .unwrap_or_else(|| "config".to_string())
 }
 
+/// One request routed to a router's mount, decoded from the value tree Golem
+/// passes as the handler's `request` argument.
+struct RouterRequest {
+    method: String,
+    scheme: String,
+    authority: String,
+    path: String,
+    query: Option<String>,
+    headers: Vec<(String, String)>,
+    /// The body arrives as a `stream<list<u8>>`; the caller drains it.
+    body: SchemaValueNode,
+}
+
+impl RouterRequest {
+    /// Reads the handler's `request` argument out of the value tree, taking
+    /// ownership of the body stream handle (a resource, so it cannot be cloned).
+    fn from_value_tree(tree: &mut SchemaValueTree) -> Result<Self, AgentError> {
+        // `invoke` inputs are a parameter record whose single field is the
+        // request record.
+        let request = match tree.value_nodes.get(tree.root as usize) {
+            Some(SchemaValueNode::RecordValue(fields)) => fields.first().copied(),
+            _ => None,
+        }
+        .and_then(|index| tree.value_nodes.get(index as usize))
+        .ok_or_else(|| AgentError::InvalidInput("missing request argument".to_string()))?;
+        let fields = match request {
+            SchemaValueNode::RecordValue(fields) => fields.clone(),
+            _ => {
+                return Err(AgentError::InvalidInput(
+                    "the request argument is not a record".to_string(),
+                ))
+            }
+        };
+        let node = |index: usize| fields.get(index).and_then(|i| tree.value_nodes.get(*i as usize));
+        let text = |index: usize| match node(index) {
+            Some(SchemaValueNode::StringValue(value)) => Ok(value.clone()),
+            _ => Err(AgentError::InvalidInput(format!(
+                "request field {} is missing or not a string",
+                index
+            ))),
+        };
+
+        let query = match node(4) {
+            Some(SchemaValueNode::OptionValue(Some(index))) => match tree
+                .value_nodes
+                .get(*index as usize)
+            {
+                Some(SchemaValueNode::StringValue(value)) => Some(value.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let mut headers = Vec::new();
+        if let Some(SchemaValueNode::ListValue(entries)) = node(5) {
+            for entry in entries {
+                if let Some(SchemaValueNode::RecordValue(parts)) = tree
+                    .value_nodes
+                    .get(*entry as usize)
+                {
+                    let name = parts.first().and_then(|i| tree.value_nodes.get(*i as usize));
+                    let value = parts.get(1).and_then(|i| tree.value_nodes.get(*i as usize));
+                    if let (Some(SchemaValueNode::StringValue(name)), Some(value)) = (name, value) {
+                        headers.push((name.clone(), bytes_of_tree(tree, value)));
+                    }
+                }
+            }
+        }
+
+        let method = text(0)?;
+        let scheme = text(1)?;
+        let authority = text(2)?;
+        let path = text(3)?;
+        let body_index = fields
+            .get(6)
+            .copied()
+            .ok_or_else(|| AgentError::InvalidInput("request body is missing".to_string()))?;
+        let body = std::mem::replace(
+            tree.value_nodes.get_mut(body_index as usize).ok_or_else(|| {
+                AgentError::InvalidInput("request body is missing".to_string())
+            })?,
+            SchemaValueNode::OptionValue(None),
+        );
+
+        Ok(RouterRequest {
+            method,
+            scheme,
+            authority,
+            path,
+            query,
+            headers,
+            body,
+        })
+    }
+}
+
+/// The bytes of a `list<u8>` value.
+fn bytes_of_tree(tree: &SchemaValueTree, value: &SchemaValueNode) -> String {
+    let mut bytes = Vec::new();
+    if let SchemaValueNode::ListValue(items) = value {
+        for item in items {
+            if let Some(SchemaValueNode::U8Value(byte)) = tree.value_nodes.get(*item as usize) {
+                bytes.push(*byte);
+            }
+        }
+    }
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+/// Drains the request's body stream. The stream carries `list<u8>` chunks.
+async fn read_request_body(body: SchemaValueNode) -> Result<String, AgentError> {
+    let SchemaValueNode::StreamValue(handle) = body else {
+        return Err(AgentError::InvalidInput(
+            "request body is not a stream".to_string(),
+        ));
+    };
+    let mut reader = golem::core::types::SchemaValueStream::unwrap(handle).await;
+    let chunks = reader.collect().await;
+    let mut text = String::new();
+    for chunk in chunks {
+        if let Some(value) = chunk.value_nodes.get(chunk.root as usize) {
+            text.push_str(&bytes_of_tree(&chunk, value));
+        }
+    }
+    Ok(text)
+}
+
+/// Serves one request routed to a router's mount: hands the request to the app
+/// and returns its response, with the body wrapped in the `stream<list<u8>>`
+/// the schema declares.
+async fn handle_router_request(
+    input: &mut SchemaValueTree,
+) -> Result<Option<SchemaValueTree>, AgentError> {
+    let request = RouterRequest::from_value_tree(input)?;
+    let body = read_request_body(request.body).await?;
+    let headers_json = serde_json::Value::Array(
+        request
+            .headers
+            .iter()
+            .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
+            .collect(),
+    )
+    .to_string();
+    let request_json = serde_json::json!({
+        "method": request.method,
+        "scheme": request.scheme,
+        "authority": request.authority,
+        "path": request.path,
+        "query": request.query.clone().unwrap_or_default(),
+        "headersJson": headers_json,
+        "body": body,
+    })
+    .to_string();
+
+    let state_str = get_current_state();
+    let roc_state = RocStr::from_str(&state_str);
+    let roc_request = RocStr::from_str(&request_json);
+    let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+
+    let response_json = unsafe {
+        main_handle_request_for_host_1_exposed_generic(roc_out.as_mut_ptr(), &roc_state, &roc_request);
+        core::mem::forget(roc_state);
+        core::mem::forget(roc_request);
+        match roc_out.assume_init().into_result() {
+            Ok(payload) => payload.to_string(),
+            Err(err) => return Err(AgentError::InvalidMethod(err.to_string())),
+        }
+    };
+
+    let parsed: serde_json::Value = serde_json::from_str(&response_json).map_err(|err| {
+        AgentError::InvalidMethod(format!("the app's response is not valid JSON: {err}"))
+    })?;
+    if let Some(state) = parsed.get("state") {
+        set_current_state(state.to_string());
+    }
+    let status = parsed
+        .get("status")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(200) as u16;
+    let mut header_nodes = Vec::new();
+    let mut value_nodes = vec![SchemaValueNode::RecordValue(vec![1, 2, 3])];
+    value_nodes.push(SchemaValueNode::U16Value(status));
+    // Replaced with the header list once its entries exist.
+    value_nodes.push(SchemaValueNode::ListValue(Vec::new()));
+    if let Some(headers) = parsed.get("headers").and_then(|v| v.as_array()) {
+        for header in headers {
+            let name = header.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let value = header.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            let name_index = value_nodes.len() as i32;
+            value_nodes.push(SchemaValueNode::StringValue(name.to_string()));
+            let mut byte_nodes = Vec::new();
+            for byte in value.bytes() {
+                byte_nodes.push(value_nodes.len() as i32);
+                value_nodes.push(SchemaValueNode::U8Value(byte));
+            }
+            let value_index = value_nodes.len() as i32;
+            value_nodes.push(SchemaValueNode::ListValue(byte_nodes));
+            let entry_index = value_nodes.len() as i32;
+            value_nodes.push(SchemaValueNode::RecordValue(vec![name_index, value_index]));
+            header_nodes.push(entry_index);
+        }
+    }
+    value_nodes[2] = SchemaValueNode::ListValue(header_nodes);
+
+    // The response body is a stream of `list<u8>` chunks. The runtime starts
+    // reading it only after this call returns, so the write runs as a task the
+    // export's executor keeps driving until the body is delivered — that is
+    // what the fork's `spawn_local` is for ("execution after returning"). A
+    // write that still cannot complete is reported through the log rather than
+    // silently truncating the body.
+    let (mut body_tx, body_rx) = wit_stream::new();
+    let body_text = parsed.get("body").and_then(|v| v.as_str()).unwrap_or("");
+    let mut body_nodes = Vec::new();
+    for byte in body_text.bytes() {
+        body_nodes.push(value_nodes.len() as i32);
+        value_nodes.push(SchemaValueNode::U8Value(byte));
+    }
+    let chunk = SchemaValueTree {
+        value_nodes: vec![SchemaValueNode::ListValue(body_nodes)],
+        root: 0,
+    };
+    wit_bindgen::spawn_local(async move {
+        wasi::logging::logging::log(
+            wasi::logging::logging::Level::Info,
+            "roc-agent",
+            "router: writing response body",
+        );
+        let leftover = body_tx.write_all(vec![chunk]).await;
+        drop(body_tx);
+        wasi::logging::logging::log(
+            wasi::logging::logging::Level::Info,
+            "roc-agent",
+            "router: response body written",
+        );
+        if !leftover.is_empty() {
+            wasi::logging::logging::log(
+                wasi::logging::logging::Level::Warn,
+                "roc-agent",
+                "the response body was not fully delivered to the runtime",
+            );
+        }
+    });
+    let handle = golem::core::types::SchemaValueStream::wrap(body_rx).await;
+    let body_index = value_nodes.len() as i32;
+    value_nodes.push(SchemaValueNode::StreamValue(handle));
+    value_nodes[0] = SchemaValueNode::RecordValue(vec![1, 2, body_index]);
+
+    Ok(Some(SchemaValueTree {
+        value_nodes,
+        root: 0,
+    }))
+}
+
 fn build_agent_type() -> Result<AgentType, AgentError> {
     let mut roc_out = MaybeUninit::<RocStr>::uninit();
     let meta_json = unsafe {
@@ -486,6 +836,7 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
     let mut http_mount: Option<HttpMountDetails> = None;
     let mut mount_error: Option<String> = None;
     let mut is_router = false;
+    let mut wants_handler = false;
     let mut openapi_document: Option<String> = None;
     let mut metadata_error: Option<String> = None;
 
@@ -493,6 +844,7 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
         // The agent kind decides the rest: a router registers no application
         // methods and has no constructor parameters.
         is_router = meta.get("agentKind").and_then(|v| v.as_str()) == Some("http-router");
+        wants_handler = meta.get("httpHandler").and_then(|v| v.as_str()) == Some("handler");
         if let Some(document) = meta.get("openapiProvider").and_then(|v| v.as_str()) {
             if !document.is_empty() {
                 openapi_document = Some(document.to_string());
@@ -620,14 +972,23 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
                          staticBindings"
                             .to_string(),
                     );
-                } else if mount.static_bindings.is_empty() && openapi_document.is_none() {
+                } else if mount.static_bindings.is_empty()
+                    && openapi_document.is_none()
+                    && !wants_handler
+                {
                     kind_error = Some(
-                        "an http-router mount must serve staticBindings or an OpenAPI document"
+                        "an http-router mount must serve staticBindings, an OpenAPI document or \
+                         requests (httpHandler)"
                             .to_string(),
                     );
                 }
             }
         }
+    } else if wants_handler {
+        kind_error = Some(
+            "httpHandler needs the http-router agent kind: only a router receives requests"
+                .to_string(),
+        );
     } else if http_mount
         .as_ref()
         .is_some_and(|mount| !mount.static_bindings.is_empty())
@@ -639,8 +1000,33 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
         );
     }
 
-    // A router's only method is the OpenAPI provider, which Golem calls to build
-    // the deployment's `/openapi.yaml`.
+    // A router's methods are the OpenAPI provider and, when the app handles
+    // requests, the handler Golem routes everything the static bindings do not
+    // match to.
+    let mut router_schema: Option<RouterSchema> = None;
+    if is_router {
+        let schema = router_schema_graph();
+        if wants_handler {
+            methods.push(AgentMethod {
+                name: "handle".to_string(),
+                description: "Handles an HTTP request routed to this mount".to_string(),
+                http_endpoint: vec![any_endpoint()],
+                prompt_hint: None,
+                input_schema: InputSchema::Parameters(vec![NamedField {
+                    name: "request".to_string(),
+                    source: FieldSource::UserSupplied,
+                    schema: schema.request,
+                    metadata: empty_metadata(),
+                }]),
+                output_schema: OutputSchema::Single(schema.response),
+                read_only: None,
+            });
+        }
+        router_schema = Some(schema);
+    }
+
+    // A router's only other method is the OpenAPI provider, which Golem calls to
+    // build the deployment's `/openapi.yaml`.
     let openapi_provider_method = if is_router && openapi_document.is_some() {
         if let Some(document) = &openapi_document {
             if let Err(err) = validate_openapi_document(document) {
@@ -694,7 +1080,10 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
             },
             description: description_str,
             source_language: "roc".to_string(),
-            schema: string_schema_graph(),
+            schema: match &router_schema {
+                Some(schema) => schema.graph.clone(),
+                None => string_schema_graph(),
+            },
             constructor: AgentConstructor {
                 name: None,
                 description: "Initializes the agent".to_string(),
@@ -1347,6 +1736,14 @@ impl Guest for GolemAgentHost {
         _principal: Principal,
     ) -> Result<Option<SchemaValueTree>, AgentError> {
         let state_str = get_current_state();
+
+        // A router's handler: Golem hands us the request and takes back the
+        // response, both as schema values with streamed bodies.
+        if method_name == "handle" {
+            let mut input = input;
+            return handle_router_request(&mut input).await;
+        }
+
         let input_str = extract_input_string(&input);
 
         // A router's provider method: Golem calls it to build the deployment's

@@ -19,6 +19,12 @@ agent = defineAgent({
 			replies: ["I am an AI assistant agent. You can invoke my tools (calculator, echo, memory)."],
 		},
 
+	handleRequest!: |state, _request|
+		{
+			state,
+			response: { status: 404, headers: [], body: "this agent is not an HTTP router" },
+		},
+
 	handleToolCall!: |state, toolCall| {
 		nextInvocations = state.invocations + 1
 		match toolCall.name {
@@ -94,6 +100,7 @@ agent = defineAgent({
 		config: [],
 		agentKind: Regular,
 		httpMount: None,
+		httpHandler: NoHandler,
 		openapiProvider: NoOpenApi,
 	},
 
