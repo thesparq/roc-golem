@@ -47,6 +47,15 @@ world golem-agent {
     import wasi:keyvalue/eventual@0.1.0;
     import wasi:keyvalue/types@0.1.0;
     import wasi:keyvalue/wasi-keyvalue-error@0.1.0;
+    // Databases: the three `golem:rdbms` interfaces Golem 1.6 registers, one
+    // per engine. Each is synchronous (a plain call, no `block_on`), and each
+    // carries its own `db-value`/`db-column-type` vocabulary — the platform
+    // mirrors all three as JSON (see `host/src/rdbms_json.rs`). `query-stream`
+    // is part of the interfaces but not exposed as an effect yet.
+    import golem:rdbms/ignite2@1.5.0;
+    import golem:rdbms/mysql@1.5.0;
+    import golem:rdbms/postgres@1.5.0;
+    import golem:rdbms/types@1.5.0;
     import wasi:logging/logging;
 
     export golem:agent/guest@2.0.0;

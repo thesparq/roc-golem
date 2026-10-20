@@ -23,6 +23,9 @@ pub mod roc_platform_abi;
 pub mod roc_std;
 /// The JSON mirror of the retry policy/predicate trees (`golem:api/retry`).
 mod retry_json;
+/// The JSON mirror of the three `golem:rdbms` `db-value` vocabularies, and the
+/// effects that carry them (`dbOpen!`, `dbQuery!`, …).
+mod rdbms_json;
 
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
@@ -815,16 +818,21 @@ pub unsafe extern "C" fn rocFxGetWorkerId() -> RocStr {
 // thread-local table, offset by one so that 0 is never a valid handle.
 
 fn handle_store<T>(table: &'static LocalKey<RefCell<Vec<Option<T>>>>, value: T) -> u32 {
-    table.with(|slots| {
-        let mut slots = slots.borrow_mut();
-        if let Some(index) = slots.iter().position(|slot| slot.is_none()) {
-            slots[index] = Some(value);
-            (index + 1) as u32
-        } else {
-            slots.push(Some(value));
-            slots.len() as u32
-        }
-    })
+    table.with(|slots| slot_store(&mut slots.borrow_mut(), value))
+}
+
+/// The body of `handle_store`, for callers that already hold the table's
+/// borrow: an effect that has to look one handle up *and* store another (the
+/// transaction `dbBegin!` starts on a connection) must do both inside one
+/// borrow, or the second `borrow_mut` panics.
+fn slot_store<T>(slots: &mut Vec<Option<T>>, value: T) -> u32 {
+    if let Some(index) = slots.iter().position(|slot| slot.is_none()) {
+        slots[index] = Some(value);
+        (index + 1) as u32
+    } else {
+        slots.push(Some(value));
+        slots.len() as u32
+    }
 }
 
 fn handle_with<T, R>(
@@ -1101,16 +1109,7 @@ pub unsafe extern "C" fn rocFxMakeAgentId(
 
 /// The canonical UUID spelling of Golem's two-word `uuid` type.
 fn uuid_string(id: &golem::core::types::Uuid) -> String {
-    let high = id.high_bits;
-    let low = id.low_bits;
-    format!(
-        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-        high >> 32,
-        (high >> 16) & 0xffff,
-        high & 0xffff,
-        low >> 48,
-        low & 0xffff_ffff_ffff,
-    )
+    rdbms_json::uuid_text(id.high_bits, id.low_bits)
 }
 
 // Webhook effects
@@ -2603,6 +2602,395 @@ pub unsafe extern "C" fn rocFxListDir(path: RocStr) -> RocResult<RocStr, RocStr>
     text_result(list_dir(path.as_str()))
 }
 
+// Database effects (`golem:rdbms`)
+//
+// Golem gives an agent three database interfaces, one per engine — postgres,
+// MySQL and Apache Ignite 2.x — and all three are synchronous: a connection
+// opens, a statement runs and a transaction commits with plain host calls (no
+// `block_on`), which is why the ABI harness can drive them against recording
+// stubs. `query-stream` is part of every one of the interfaces but not exposed
+// yet: a result stream is a resource an app would have to read chunk by chunk,
+// and this platform hands an app text.
+//
+// A connection and a transaction are host-side resources; the app carries them
+// as `U32` handles in one table, tagged by engine and kind, so a query can run
+// on either and a handle of the wrong kind is reported rather than misread.
+// Handles are positional (the first connection is 1), so replaying an invocation
+// hands out the same numbers again.
+//
+// Statements' values travel as the JSON mirror in `rdbms_json`: the params are a
+// JSON array of `db-value` encodings, and a result is
+// `{"columns": […], "rows": […]}`. An effect's `Err` is the interface's `error`
+// variant rendered as its WIT case name plus the host's message
+// (`connection-failure: …`), the way `webhook-error` and `agent-operation-error`
+// are rendered.
+
+thread_local! {
+    /// The database connections and transactions this instance holds, in the
+    /// order they were handed out: handle N is the entry at index N-1.
+    static DB_HANDLES: RefCell<Vec<Option<DbHandle>>> = const { RefCell::new(Vec::new()) };
+}
+
+enum DbHandle {
+    Connection(DbConnectionHandle),
+    Transaction(DbTransactionHandle),
+}
+
+enum DbConnectionHandle {
+    Postgres(golem::rdbms::postgres::DbConnection),
+    Mysql(golem::rdbms::mysql::DbConnection),
+    Ignite(golem::rdbms::ignite2::DbConnection),
+}
+
+enum DbTransactionHandle {
+    Postgres(golem::rdbms::postgres::DbTransaction),
+    Mysql(golem::rdbms::mysql::DbTransaction),
+    Ignite(golem::rdbms::ignite2::DbTransaction),
+}
+
+/// The `error` variant of `golem:rdbms/postgres` for an effect's `Err` channel.
+fn postgres_db_error_text(error: golem::rdbms::postgres::Error) -> String {
+    use golem::rdbms::postgres::Error;
+    match error {
+        Error::ConnectionFailure(message) => format!("connection-failure: {message}"),
+        Error::QueryParameterFailure(message) => format!("query-parameter-failure: {message}"),
+        Error::QueryExecutionFailure(message) => format!("query-execution-failure: {message}"),
+        Error::QueryResponseFailure(message) => format!("query-response-failure: {message}"),
+        Error::Other(message) => format!("other: {message}"),
+        Error::ResourceLost(message) => format!("resource-lost: {message}"),
+    }
+}
+
+/// The `error` variant of `golem:rdbms/mysql` for an effect's `Err` channel.
+fn mysql_db_error_text(error: golem::rdbms::mysql::Error) -> String {
+    use golem::rdbms::mysql::Error;
+    match error {
+        Error::ConnectionFailure(message) => format!("connection-failure: {message}"),
+        Error::QueryParameterFailure(message) => format!("query-parameter-failure: {message}"),
+        Error::QueryExecutionFailure(message) => format!("query-execution-failure: {message}"),
+        Error::QueryResponseFailure(message) => format!("query-response-failure: {message}"),
+        Error::Other(message) => format!("other: {message}"),
+        Error::ResourceLost(message) => format!("resource-lost: {message}"),
+    }
+}
+
+/// The `error` variant of `golem:rdbms/ignite2` for an effect's `Err` channel.
+fn ignite_db_error_text(error: golem::rdbms::ignite2::Error) -> String {
+    use golem::rdbms::ignite2::Error;
+    match error {
+        Error::ConnectionFailure(message) => format!("connection-failure: {message}"),
+        Error::QueryParameterFailure(message) => format!("query-parameter-failure: {message}"),
+        Error::QueryExecutionFailure(message) => format!("query-execution-failure: {message}"),
+        Error::QueryResponseFailure(message) => format!("query-response-failure: {message}"),
+        Error::Other(message) => format!("other: {message}"),
+        Error::ResourceLost(message) => format!("resource-lost: {message}"),
+    }
+}
+
+fn unknown_db_handle(handle: u32) -> String {
+    format!("unknown database handle {handle}")
+}
+
+fn db_query(handle: u32, statement: &str, params: &str) -> Result<String, String> {
+    let params = rdbms_json::params_array(params)?;
+    handle_with(&DB_HANDLES, handle, |entry| match entry {
+        DbHandle::Connection(connection) => db_connection_query(connection, statement, &params),
+        DbHandle::Transaction(transaction) => db_transaction_query(transaction, statement, &params),
+    })
+    .unwrap_or_else(|| Err(unknown_db_handle(handle)))
+}
+
+fn db_connection_query(
+    connection: &DbConnectionHandle,
+    statement: &str,
+    params: &[serde_json::Value],
+) -> Result<String, String> {
+    match connection {
+        DbConnectionHandle::Postgres(connection) => {
+            let params = rdbms_json::postgres_params(params)?;
+            connection
+                .query(statement, params)
+                .map(|result| rdbms_json::postgres_result(&result))
+                .map_err(postgres_db_error_text)
+        }
+        DbConnectionHandle::Mysql(connection) => {
+            let params = rdbms_json::mysql_params(params)?;
+            connection
+                .query(statement, &params)
+                .map(|result| rdbms_json::mysql_result(&result))
+                .map_err(mysql_db_error_text)
+        }
+        DbConnectionHandle::Ignite(connection) => {
+            let params = rdbms_json::ignite_params(params)?;
+            connection
+                .query(statement, &params)
+                .map(|result| rdbms_json::ignite_result(&result))
+                .map_err(ignite_db_error_text)
+        }
+    }
+}
+
+fn db_transaction_query(
+    transaction: &DbTransactionHandle,
+    statement: &str,
+    params: &[serde_json::Value],
+) -> Result<String, String> {
+    match transaction {
+        DbTransactionHandle::Postgres(transaction) => {
+            let params = rdbms_json::postgres_params(params)?;
+            transaction
+                .query(statement, params)
+                .map(|result| rdbms_json::postgres_result(&result))
+                .map_err(postgres_db_error_text)
+        }
+        DbTransactionHandle::Mysql(transaction) => {
+            let params = rdbms_json::mysql_params(params)?;
+            transaction
+                .query(statement, &params)
+                .map(|result| rdbms_json::mysql_result(&result))
+                .map_err(mysql_db_error_text)
+        }
+        DbTransactionHandle::Ignite(transaction) => {
+            let params = rdbms_json::ignite_params(params)?;
+            transaction
+                .query(statement, &params)
+                .map(|result| rdbms_json::ignite_result(&result))
+                .map_err(ignite_db_error_text)
+        }
+    }
+}
+
+fn db_execute(handle: u32, statement: &str, params: &str) -> Result<u64, String> {
+    let params = rdbms_json::params_array(params)?;
+    handle_with(&DB_HANDLES, handle, |entry| match entry {
+        DbHandle::Connection(connection) => db_connection_execute(connection, statement, &params),
+        DbHandle::Transaction(transaction) => db_transaction_execute(transaction, statement, &params),
+    })
+    .unwrap_or_else(|| Err(unknown_db_handle(handle)))
+}
+
+fn db_connection_execute(
+    connection: &DbConnectionHandle,
+    statement: &str,
+    params: &[serde_json::Value],
+) -> Result<u64, String> {
+    match connection {
+        DbConnectionHandle::Postgres(connection) => {
+            let params = rdbms_json::postgres_params(params)?;
+            connection.execute(statement, params).map_err(postgres_db_error_text)
+        }
+        DbConnectionHandle::Mysql(connection) => {
+            let params = rdbms_json::mysql_params(params)?;
+            connection.execute(statement, &params).map_err(mysql_db_error_text)
+        }
+        DbConnectionHandle::Ignite(connection) => {
+            let params = rdbms_json::ignite_params(params)?;
+            ignite_row_count(connection.execute(statement, &params).map_err(ignite_db_error_text)?)
+        }
+    }
+}
+
+fn db_transaction_execute(
+    transaction: &DbTransactionHandle,
+    statement: &str,
+    params: &[serde_json::Value],
+) -> Result<u64, String> {
+    match transaction {
+        DbTransactionHandle::Postgres(transaction) => {
+            let params = rdbms_json::postgres_params(params)?;
+            transaction.execute(statement, params).map_err(postgres_db_error_text)
+        }
+        DbTransactionHandle::Mysql(transaction) => {
+            let params = rdbms_json::mysql_params(params)?;
+            transaction.execute(statement, &params).map_err(mysql_db_error_text)
+        }
+        DbTransactionHandle::Ignite(transaction) => {
+            let params = rdbms_json::ignite_params(params)?;
+            ignite_row_count(transaction.execute(statement, &params).map_err(ignite_db_error_text)?)
+        }
+    }
+}
+
+/// Ignite's `execute` answers an `s64` where the other two answer a `u64`; an
+/// affected-row count is never negative, so a negative one is a host failure
+/// rather than a count to hand on.
+fn ignite_row_count(count: i64) -> Result<u64, String> {
+    u64::try_from(count)
+        .map_err(|_| format!("the host reported {count} affected rows"))
+}
+
+fn db_begin(handle: u32) -> Result<u32, String> {
+    // The connection is looked up and the transaction stored under one borrow of
+    // the table: a `borrow_mut` while the lookup's borrow is alive would panic.
+    DB_HANDLES.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        if handle == 0 {
+            return Err(unknown_db_handle(handle));
+        }
+        let Some(Some(entry)) = slots.get((handle - 1) as usize) else {
+            return Err(unknown_db_handle(handle));
+        };
+        let transaction = match entry {
+            DbHandle::Connection(connection) => db_connection_begin(connection)?,
+            DbHandle::Transaction(_) => {
+                return Err(format!(
+                    "database handle {handle} is a transaction, not a connection"
+                ))
+            }
+        };
+        Ok(slot_store(&mut slots, DbHandle::Transaction(transaction)))
+    })
+}
+
+/// Starts a transaction on the connection. It only reads the connection, so the
+/// table's borrow is not re-entered here.
+fn db_connection_begin(connection: &DbConnectionHandle) -> Result<DbTransactionHandle, String> {
+    match connection {
+        DbConnectionHandle::Postgres(connection) => connection
+            .begin_transaction()
+            .map(DbTransactionHandle::Postgres)
+            .map_err(postgres_db_error_text),
+        DbConnectionHandle::Mysql(connection) => connection
+            .begin_transaction()
+            .map(DbTransactionHandle::Mysql)
+            .map_err(mysql_db_error_text),
+        DbConnectionHandle::Ignite(connection) => connection
+            .begin_transaction()
+            .map(DbTransactionHandle::Ignite)
+            .map_err(ignite_db_error_text),
+    }
+}
+
+/// `dbCommit!` and `dbRollback!`: both consume the transaction handle, which is
+/// why one helper serves the two effects.
+fn db_finish_transaction(handle: u32, commit: bool) -> Result<(), String> {
+    let Some(entry) = handle_take(&DB_HANDLES, handle) else {
+        return Err(unknown_db_handle(handle));
+    };
+    let DbHandle::Transaction(transaction) = entry else {
+        return Err(format!(
+            "database handle {handle} is a connection, not a transaction"
+        ));
+    };
+    match transaction {
+        DbTransactionHandle::Postgres(transaction) => {
+            let outcome = if commit {
+                transaction.commit()
+            } else {
+                transaction.rollback()
+            };
+            outcome.map_err(postgres_db_error_text)
+        }
+        DbTransactionHandle::Mysql(transaction) => {
+            let outcome = if commit {
+                transaction.commit()
+            } else {
+                transaction.rollback()
+            };
+            outcome.map_err(mysql_db_error_text)
+        }
+        DbTransactionHandle::Ignite(transaction) => {
+            let outcome = if commit {
+                transaction.commit()
+            } else {
+                transaction.rollback()
+            };
+            outcome.map_err(ignite_db_error_text)
+        }
+    }
+}
+
+/// `dbOpen!`: opens a postgres connection. The address is
+/// `postgresql://user[:password]@host[:port]/database`; Golem parses it when the
+/// call is made and creates the pool on the first statement, so an address that
+/// parses is `Ok` even with no server listening, while one that does not is
+/// `Err` with `connection-failure`.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbOpen(address: RocStr) -> RocResult<u32, RocStr> {
+    // `address` is owned by this function and released when it drops.
+    match golem::rdbms::postgres::DbConnection::open(address.as_str()) {
+        Ok(connection) => RocResult::ok(handle_store(
+            &DB_HANDLES,
+            DbHandle::Connection(DbConnectionHandle::Postgres(connection)),
+        )),
+        Err(error) => RocResult::err(RocStr::from_str(&postgres_db_error_text(error))),
+    }
+}
+
+/// `dbOpenMysql!`: opens a MySQL connection. The address is
+/// `mysql://user[:password]@host[:port]/database`.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbOpenMysql(address: RocStr) -> RocResult<u32, RocStr> {
+    match golem::rdbms::mysql::DbConnection::open(address.as_str()) {
+        Ok(connection) => RocResult::ok(handle_store(
+            &DB_HANDLES,
+            DbHandle::Connection(DbConnectionHandle::Mysql(connection)),
+        )),
+        Err(error) => RocResult::err(RocStr::from_str(&mysql_db_error_text(error))),
+    }
+}
+
+/// `dbOpenIgnite!`: opens an Apache Ignite 2.x connection. The address is
+/// `ignite://[user:password@]host[:port][?pool_size=N&tls=true]` (default port
+/// 10800).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbOpenIgnite(address: RocStr) -> RocResult<u32, RocStr> {
+    match golem::rdbms::ignite2::DbConnection::open(address.as_str()) {
+        Ok(connection) => RocResult::ok(handle_store(
+            &DB_HANDLES,
+            DbHandle::Connection(DbConnectionHandle::Ignite(connection)),
+        )),
+        Err(error) => RocResult::err(RocStr::from_str(&ignite_db_error_text(error))),
+    }
+}
+
+/// `dbQuery!`: runs a statement and returns its result as JSON
+/// (`{"columns": […], "rows": […]}`, see `rdbms_json`). `params` is a JSON
+/// array of `db-value` encodings in the engine's own vocabulary; the handle is
+/// a connection or a transaction from `dbOpen!` / `dbBegin!`.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbQuery(
+    handle: u32,
+    statement: RocStr,
+    params: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    text_result(db_query(handle, statement.as_str(), params.as_str()))
+}
+
+/// `dbExecute!`: runs a statement and returns the affected-row count.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbExecute(
+    handle: u32,
+    statement: RocStr,
+    params: RocStr,
+) -> RocU64Result {
+    match db_execute(handle, statement.as_str(), params.as_str()) {
+        Ok(count) => RocU64Result::ok(count),
+        Err(err) => RocU64Result::err(RocStr::from_str(&err)),
+    }
+}
+
+/// `dbBegin!`: starts a transaction on the connection and returns its handle.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbBegin(handle: u32) -> RocResult<u32, RocStr> {
+    match db_begin(handle) {
+        Ok(transaction) => RocResult::ok(transaction),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+/// `dbCommit!`: commits the transaction and consumes its handle.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbCommit(handle: u32) -> RocResult<(), RocStr> {
+    unit_result(db_finish_transaction(handle, true))
+}
+
+/// `dbRollback!`: rolls the transaction back and consumes its handle.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbRollback(handle: u32) -> RocResult<(), RocStr> {
+    unit_result(db_finish_transaction(handle, false))
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
@@ -3760,5 +4148,249 @@ mod tests {
             crate::filesystem_error_text(ErrorCode::InsufficientSpace),
             "insufficient-space"
         );
+    }
+
+    /// The `db-value` JSON mirror, both ways: the common cases of each engine's
+    /// vocabulary parse into the interface's own variant, and every parsed value
+    /// renders back to the JSON it came from — so what `dbQuery!` prints can be
+    /// handed straight back as a param.
+    #[test]
+    fn test_db_value_json_round_trip() {
+        use crate::rdbms_json;
+
+        let items: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
+                {"tag":"int4","value":1},
+                {"tag":"text","value":"hello"},
+                {"tag":"boolean","value":true},
+                {"tag":"numeric","value":"1.50"},
+                {"tag":"bytea","value":[1,2,255]},
+                {"tag":"uuid","value":"01020304-0506-0708-090a-0b0c0d0e0f10"},
+                {"tag":"timestamp","value":{"date":{"year":2024,"month":1,"day":31},"time":{"hour":12,"minute":0,"second":5,"nanosecond":7}}},
+                {"tag":"null"}
+            ]"#,
+        )
+        .unwrap();
+        let values = rdbms_json::postgres_params(&items).unwrap();
+        assert_eq!(values.len(), items.len());
+        assert!(matches!(values[0], golem::rdbms::postgres::DbValue::Int4(1)));
+        assert!(
+            matches!(&values[1], golem::rdbms::postgres::DbValue::Text(text) if text == "hello")
+        );
+        assert!(matches!(
+            values[2],
+            golem::rdbms::postgres::DbValue::Boolean(true)
+        ));
+        assert!(
+            matches!(&values[3], golem::rdbms::postgres::DbValue::Numeric(number) if number == "1.50")
+        );
+        assert!(matches!(
+            &values[4],
+            golem::rdbms::postgres::DbValue::Bytea(bytes) if bytes == &[1, 2, 255]
+        ));
+        // A UUID is the one hand-mapped case: the WIT record's two words are the
+        // canonical text.
+        let golem::rdbms::postgres::DbValue::Uuid(uuid) = &values[5] else {
+            panic!("the sixth value must be a uuid, got {:?}", values[5]);
+        };
+        assert_eq!(uuid.high_bits, 0x0102_0304_0506_0708);
+        assert_eq!(uuid.low_bits, 0x090a_0b0c_0d0e_0f10);
+        let golem::rdbms::postgres::DbValue::Timestamp(timestamp) = &values[6] else {
+            panic!("the seventh value must be a timestamp, got {:?}", values[6]);
+        };
+        assert_eq!(timestamp.date.year, 2024);
+        assert_eq!(timestamp.date.day, 31);
+        assert_eq!(timestamp.time.nanosecond, 7);
+        assert!(matches!(values[7], golem::rdbms::postgres::DbValue::Null));
+
+        for (item, value) in items.iter().zip(&values) {
+            assert_eq!(&rdbms_json::postgres_value_json(value), item);
+        }
+
+        // MySQL's vocabulary has its own names for the same shapes.
+        let items: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
+                {"tag":"int","value":1},
+                {"tag":"bigintUnsigned","value":18446744073709551615},
+                {"tag":"varchar","value":"hello"},
+                {"tag":"decimal","value":"1.50"},
+                {"tag":"bit","value":[true,false]},
+                {"tag":"null"}
+            ]"#,
+        )
+        .unwrap();
+        let values = rdbms_json::mysql_params(&items).unwrap();
+        assert!(matches!(values[0], golem::rdbms::mysql::DbValue::Int(1)));
+        assert!(matches!(
+            values[1],
+            golem::rdbms::mysql::DbValue::BigintUnsigned(18446744073709551615)
+        ));
+        assert!(matches!(values[5], golem::rdbms::mysql::DbValue::Null));
+        for (item, value) in items.iter().zip(&values) {
+            assert_eq!(&rdbms_json::mysql_value_json(value), item);
+        }
+
+        // Ignite's names are the client's own (`db-…`), and its UUID is a tuple.
+        let items: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
+                {"tag":"dbInt","value":1},
+                {"tag":"dbString","value":"hello"},
+                {"tag":"dbUuid","value":"01020304-0506-0708-090a-0b0c0d0e0f10"},
+                {"tag":"dbTimestamp","value":[1700000000000,5]},
+                {"tag":"dbNull"}
+            ]"#,
+        )
+        .unwrap();
+        let values = rdbms_json::ignite_params(&items).unwrap();
+        assert!(matches!(values[0], golem::rdbms::ignite2::DbValue::DbInt(1)));
+        assert!(matches!(
+            values[2],
+            golem::rdbms::ignite2::DbValue::DbUuid((0x0102_0304_0506_0708, 0x090a_0b0c_0d0e_0f10))
+        ));
+        assert!(matches!(
+            values[3],
+            golem::rdbms::ignite2::DbValue::DbTimestamp((1700000000000, 5))
+        ));
+        assert!(matches!(values[4], golem::rdbms::ignite2::DbValue::DbNull));
+        for (item, value) in items.iter().zip(&values) {
+            assert_eq!(&rdbms_json::ignite_value_json(value), item);
+        }
+    }
+
+    /// A params text that is not the encoding is reported with what is wrong, so
+    /// an app can fix its JSON instead of reading a host error.
+    #[test]
+    fn test_db_params_json_errors() {
+        use crate::rdbms_json;
+
+        let error = rdbms_json::params_array("not json").unwrap_err();
+        assert!(error.contains("not valid JSON"), "unexpected: {error}");
+        let error = rdbms_json::params_array("{\"tag\":\"int4\"}").unwrap_err();
+        assert!(
+            error.contains("must be a JSON array"),
+            "unexpected: {error}"
+        );
+
+        let items: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
+                {"tag":"int5","value":1},
+                {"tag":"text"},
+                {"tag":"int4","value":"1"},
+                {"tag":"uuid","value":"nope"},
+                {"tag":"null","value":1}
+            ]"#,
+        )
+        .unwrap();
+        let errors: Vec<String> = items
+            .iter()
+            .map(|item| rdbms_json::postgres_params(std::slice::from_ref(item)).unwrap_err())
+            .collect();
+        assert!(
+            errors[0].contains("unknown db-value tag \"int5\""),
+            "unexpected: {}",
+            errors[0]
+        );
+        assert!(errors[1].contains("needs a \"value\""), "unexpected: {}", errors[1]);
+        assert!(
+            errors[2].contains("needs an integer"),
+            "unexpected: {}",
+            errors[2]
+        );
+        assert!(errors[3].contains("not a UUID"), "unexpected: {}", errors[3]);
+        assert!(
+            errors[4].contains("takes no \"value\""),
+            "unexpected: {}",
+            errors[4]
+        );
+
+        // The floats JSON has no number for travel as text and come back as the
+        // float they are.
+        let value = rdbms_json::postgres_params(&[serde_json::json!({"tag": "float8", "value": "NaN"})])
+            .unwrap();
+        assert!(matches!(&value[0], golem::rdbms::postgres::DbValue::Float8(number) if number.is_nan()));
+        let rendered = rdbms_json::postgres_value_json(&value[0]);
+        assert_eq!(rendered, serde_json::json!({"tag": "float8", "value": "NaN"}));
+    }
+
+    /// A `db-result` renders as the columns and rows `dbQuery!` promises: the
+    /// column carries its ordinal, name, WIT type and the database's own type
+    /// name, and a row is the JSON array of its values in column order.
+    #[test]
+    fn test_db_result_json() {
+        use crate::rdbms_json;
+        use golem::rdbms::postgres;
+
+        let result = postgres::DbResult {
+            columns: vec![
+                postgres::DbColumn {
+                    ordinal: 0,
+                    name: String::from("id"),
+                    db_type: postgres::DbColumnType::Int4,
+                    db_type_name: String::from("INT4"),
+                },
+                postgres::DbColumn {
+                    ordinal: 1,
+                    name: String::from("note"),
+                    db_type: postgres::DbColumnType::Text,
+                    db_type_name: String::from("TEXT"),
+                },
+            ],
+            rows: vec![
+                postgres::DbRow {
+                    values: vec![
+                        postgres::DbValue::Int4(1),
+                        postgres::DbValue::Text(String::from("hello db")),
+                    ],
+                },
+                postgres::DbRow {
+                    values: vec![postgres::DbValue::Int4(2), postgres::DbValue::Null],
+                },
+            ],
+        };
+        assert_eq!(
+            rdbms_json::postgres_result(&result),
+            "{\"columns\":[{\"dbType\":{\"tag\":\"int4\"},\"dbTypeName\":\"INT4\",\"name\":\"id\",\"ordinal\":0},{\"dbType\":{\"tag\":\"text\"},\"dbTypeName\":\"TEXT\",\"name\":\"note\",\"ordinal\":1}],\"rows\":[[{\"tag\":\"int4\",\"value\":1},{\"tag\":\"text\",\"value\":\"hello db\"}],[{\"tag\":\"int4\",\"value\":2},{\"tag\":\"null\"}]]}"
+        );
+
+        // Ignite's `db-column` carries no type at all, so neither does the
+        // column object.
+        let result = golem::rdbms::ignite2::DbResult {
+            columns: vec![golem::rdbms::ignite2::DbColumn {
+                ordinal: 0,
+                name: String::from("n"),
+            }],
+            rows: vec![golem::rdbms::ignite2::DbRow {
+                values: vec![golem::rdbms::ignite2::DbValue::DbLong(7)],
+            }],
+        };
+        assert_eq!(
+            rdbms_json::ignite_result(&result),
+            "{\"columns\":[{\"name\":\"n\",\"ordinal\":0}],\"rows\":[[{\"tag\":\"dbLong\",\"value\":7}]]}"
+        );
+    }
+
+    /// A handle this instance never handed out is reported instead of reaching
+    /// the host APIs (which are stubbed outside wasm, so a call would panic here
+    /// the way it would fail on a real server).
+    #[test]
+    fn test_db_unknown_handles() {
+        unsafe {
+            let statement = || RocStr::from_str("select 1");
+            let params = || RocStr::from_str("[]");
+
+            assert!(crate::rocFxDbBegin(9999).is_err());
+            assert!(crate::rocFxDbCommit(9999).is_err());
+            assert!(crate::rocFxDbRollback(9999).is_err());
+            assert!(crate::rocFxDbQuery(0, statement(), params()).is_err());
+            assert!(crate::rocFxDbExecute(9999, statement(), params())
+                .into_result()
+                .is_err());
+
+            let error = match crate::rocFxDbQuery(9999, statement(), params()).into_result() {
+                Err(error) => error,
+                Ok(_) => panic!("an unknown handle must be reported, not answered"),
+            };
+            assert_eq!(error.as_str(), "unknown database handle 9999");
+        }
     }
 }

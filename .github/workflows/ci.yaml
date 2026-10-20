@@ -154,6 +154,49 @@ jobs:
             --then-reply 'fs list: [{"name":"notes","type":"dir"}]' \
             --expect-fs "create-directory-at(path=notes)"
 
+          # The database effects (`golem:rdbms`) are synchronous host imports
+          # too, and the harness keeps a small relational store of its own: the
+          # round trip's create/insert/select/count and its rolled-back and
+          # committed transactions only come back correct if the params really
+          # went into that store and the results came back out, and the recorded
+          # calls show which host functions ran.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "db open postgresql://roc@127.0.0.1:5432/roc" \
+            --reply "db opened handle 1" \
+            --expect-db "postgres open(address=postgresql://roc@127.0.0.1:5432/roc)" \
+            --then-message "db roundtrip harness_db postgresql://roc@127.0.0.1:5432/roc" \
+            --then-reply 'select1={"columns":[{"dbType":{"tag":"int4"},"dbTypeName":"INT4","name":"id","ordinal":0},{"dbType":{"tag":"text"},"dbTypeName":"TEXT","name":"note","ordinal":1}],"rows":[[{"tag":"int4","value":1},{"tag":"text","value":"hello db"}]]}' \
+            --expect-db 'postgres execute(statement=INSERT INTO harness_db (id, note) VALUES ($1, $2), params=[int4(1), text("hello db")])'
+
+          # The same round trip, checking the transaction semantics: the
+          # rolled-back row leaves the count alone, the committed one moves it.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "db open postgresql://roc@127.0.0.1:5432/roc" \
+            --reply "db opened handle 1" \
+            --then-message "db roundtrip harness_db postgresql://roc@127.0.0.1:5432/roc" \
+            --then-reply 'count2={"columns":[{"dbType":{"tag":"int8"},"dbTypeName":"INT8","name":"count","ordinal":0}],"rows":[[{"tag":"int8","value":1}]]} begin=ok txn-insert=1 commit=ok count3={"columns":[{"dbType":{"tag":"int8"},"dbTypeName":"INT8","name":"count","ordinal":0}],"rows":[[{"tag":"int8","value":2}]]}' \
+            --expect-db "postgres commit"
+
+          # MySQL and Ignite have their own interfaces and their own `open`s;
+          # the stub records which one the component called.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --message "db open-mysql mysql://root@127.0.0.1:3306/roc" \
+            --reply "db mysql opened handle 1" \
+            --expect-db "mysql open(address=mysql://root@127.0.0.1:3306/roc)" \
+            --then-message "db open-ignite ignite://127.0.0.1:10800" \
+            --then-reply "db ignite opened handle 2" \
+            --expect-db "ignite open(address=ignite://127.0.0.1:10800)"
+
+          # An address Golem cannot parse is the effect's `Err` (the interface's
+          # `connection-failure` variant), not a trap.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --message "db open not-a-database-url" \
+            --reply "db open failed: connection-failure"
+
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
             --message hello --reply "AI assistant" \

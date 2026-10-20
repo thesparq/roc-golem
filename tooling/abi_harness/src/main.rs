@@ -97,6 +97,18 @@ struct Ctx {
     blob_outgoing: Vec<Arc<Mutex<Vec<u8>>>>,
     /// Incoming values a `get-data` answered with: rep → body.
     blob_incoming: Vec<Vec<u8>>,
+    /// Database host calls (`golem:rdbms`) the agent made, for `--expect-db`.
+    db_calls: Vec<String>,
+    /// The stub's relational store: the committed `(id, note)` rows, and one
+    /// copy per open transaction (a transaction's rep indexes this list).
+    db_rows: Vec<(i32, String)>,
+    db_transactions: Vec<Vec<(i32, String)>>,
+    /// The next connection rep; connections carry no state of their own.
+    db_connections: u32,
+    /// The postgres `lazy-db-value` / `lazy-db-column-type` resources the stub
+    /// handed out, by rep.
+    lazy_db_values: Vec<golem::rdbms::postgres::DbValue>,
+    lazy_db_column_types: Vec<golem::rdbms::postgres::DbColumnType>,
     /// Filesystem host calls (`wasi:filesystem@0.2.6`) the agent made, for
     /// `--expect-fs`.
     fs_calls: Vec<String>,
@@ -1516,6 +1528,893 @@ impl golem::api::retry::Host for Ctx {
     }
 }
 
+// The `golem:rdbms` database stubs
+//
+// The three database interfaces are synchronous host imports, so the harness
+// implements them: `open` answers a connection resource (and reports an address
+// that is not a URL the way Golem does — `connection-failure`), a statement runs
+// against a tiny relational store the stub keeps, and a transaction works on its
+// own copy of that store until it commits (which publishes it) or rolls back
+// (which drops it). It is not a SQL engine: it recognizes the statement shapes
+// the counter's `db` command sends — `create table …`, `insert into …`,
+// `select count(*) …`, `select … where id = $1`, `drop table …` — and answers
+// with the column shapes postgres would, which is what makes the component's
+// params and its rendering of the result a real round trip through the store.
+
+/// One statement as the stub's store understands it.
+enum StubSql {
+    Create,
+    Insert,
+    Select,
+    Count,
+    Drop,
+    Unknown,
+}
+
+fn stub_sql(statement: &str) -> StubSql {
+    let normalized = statement.trim_start().to_ascii_lowercase();
+    if normalized.starts_with("create table") {
+        StubSql::Create
+    } else if normalized.starts_with("insert into") {
+        StubSql::Insert
+    } else if normalized.starts_with("select count") {
+        StubSql::Count
+    } else if normalized.starts_with("select") {
+        StubSql::Select
+    } else if normalized.starts_with("drop table") {
+        StubSql::Drop
+    } else {
+        StubSql::Unknown
+    }
+}
+
+impl Ctx {
+    /// The rows a statement on a connection (`None`) or on an open transaction
+    /// sees: a transaction works on the copy it took when it began.
+    fn db_visible_rows(&self, transaction: Option<u32>) -> Vec<(i32, String)> {
+        match transaction {
+            None => self.db_rows.clone(),
+            Some(rep) => self
+                .db_transactions
+                .get(rep as usize)
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+
+    fn db_push_row(&mut self, transaction: Option<u32>, row: (i32, String)) {
+        match transaction {
+            None => self.db_rows.push(row),
+            Some(rep) => {
+                if let Some(rows) = self.db_transactions.get_mut(rep as usize) {
+                    rows.push(row);
+                }
+            }
+        }
+    }
+
+    fn db_begin(&mut self, engine: &str) -> u32 {
+        self.db_calls.push(format!("{engine} begin"));
+        let rep = self.db_transactions.len() as u32;
+        self.db_transactions.push(self.db_rows.clone());
+        rep
+    }
+
+    fn db_commit(&mut self, engine: &str, rep: u32) {
+        self.db_calls.push(format!("{engine} commit"));
+        if let Some(rows) = self.db_transactions.get_mut(rep as usize) {
+            self.db_rows = std::mem::take(rows);
+        }
+    }
+
+    fn db_rollback(&mut self, engine: &str, rep: u32) {
+        self.db_calls.push(format!("{engine} rollback"));
+        if let Some(rows) = self.db_transactions.get_mut(rep as usize) {
+            rows.clear();
+        }
+    }
+
+    /// Runs one `execute` against the stub's store. `row` is what an insert
+    /// would add — the engine's own params decoded by its caller — and the
+    /// classifier decides whether the statement is one the stub knows at all.
+    fn db_execute(
+        &mut self,
+        transaction: Option<u32>,
+        statement: &str,
+        row: Option<(i32, String)>,
+    ) -> Result<u64, String> {
+        match stub_sql(statement) {
+            StubSql::Create | StubSql::Drop => Ok(0),
+            StubSql::Insert => match row {
+                Some(row) => {
+                    self.db_push_row(transaction, row);
+                    Ok(1)
+                }
+                None => Err(String::from("an insert needs an int id and a text note")),
+            },
+            _ => Err(format!(
+                "the harness stub does not execute the statement {statement:?}"
+            )),
+        }
+    }
+
+    /// Runs one `query` against the stub's store, answering `id`/`note` columns
+    /// for a select and a `count` column for a count.
+    fn db_query_rows(
+        &mut self,
+        transaction: Option<u32>,
+        statement: &str,
+        id: Option<i32>,
+    ) -> Result<StubResult, String> {
+        let rows = self.db_visible_rows(transaction);
+        match stub_sql(statement) {
+            StubSql::Count => Ok(StubResult::Count(rows.len())),
+            StubSql::Select => Ok(StubResult::Rows(match id {
+                Some(id) => rows.into_iter().filter(|(row_id, _)| *row_id == id).collect(),
+                None => rows,
+            })),
+            StubSql::Unknown => Err(format!(
+                "the harness stub does not know the statement {statement:?}"
+            )),
+            _ => Err(format!(
+                "the statement {statement:?} answers no rows"
+            )),
+        }
+    }
+}
+
+/// What a stub query answered: the count a `select count(*)` reports, or the
+/// `(id, note)` rows a select reports.
+enum StubResult {
+    Count(usize),
+    Rows(Vec<(i32, String)>),
+}
+
+fn stub_open(calls: &mut Vec<String>, engine: &str, address: &str) -> Result<(), String> {
+    if !address.contains("://") {
+        return Err(format!("invalid address {address:?}"));
+    }
+    calls.push(format!("{engine} open(address={address})"));
+    Ok(())
+}
+
+impl golem::rdbms::postgres::Host for Ctx {}
+
+impl golem::rdbms::postgres::HostDbConnection for Ctx {
+    fn open(
+        &mut self,
+        address: String,
+    ) -> Result<Resource<golem::rdbms::postgres::DbConnection>, golem::rdbms::postgres::Error>
+    {
+        stub_open(&mut self.db_calls, "postgres", &address)
+            .map_err(golem::rdbms::postgres::Error::ConnectionFailure)?;
+        let rep = self.db_connections;
+        self.db_connections += 1;
+        Ok(unsafe { Resource::new_own(rep) })
+    }
+
+    fn query(
+        &mut self,
+        _connection: Resource<golem::rdbms::postgres::DbConnection>,
+        statement: String,
+        params: Vec<golem::rdbms::postgres::DbValue>,
+    ) -> Result<golem::rdbms::postgres::DbResult, golem::rdbms::postgres::Error> {
+        self.db_calls.push(format!(
+            "postgres query(statement={statement}, params={})",
+            postgres_params_text(&params)
+        ));
+        let result = self.db_query_rows(None, &statement, postgres_param_id(&params));
+        postgres_result(result)
+    }
+
+    fn query_stream(
+        &mut self,
+        _connection: Resource<golem::rdbms::postgres::DbConnection>,
+        statement: String,
+        _params: Vec<golem::rdbms::postgres::DbValue>,
+    ) -> Result<Resource<golem::rdbms::postgres::DbResultStream>, golem::rdbms::postgres::Error>
+    {
+        Err(golem::rdbms::postgres::Error::Other(format!(
+            "query-stream is not used by roc-golem components ({statement})"
+        )))
+    }
+
+    fn execute(
+        &mut self,
+        _connection: Resource<golem::rdbms::postgres::DbConnection>,
+        statement: String,
+        params: Vec<golem::rdbms::postgres::DbValue>,
+    ) -> Result<u64, golem::rdbms::postgres::Error> {
+        self.db_calls.push(format!(
+            "postgres execute(statement={statement}, params={})",
+            postgres_params_text(&params)
+        ));
+        self.db_execute(None, &statement, postgres_param_row(&params))
+            .map_err(golem::rdbms::postgres::Error::Other)
+    }
+
+    fn begin_transaction(
+        &mut self,
+        _connection: Resource<golem::rdbms::postgres::DbConnection>,
+    ) -> Result<Resource<golem::rdbms::postgres::DbTransaction>, golem::rdbms::postgres::Error>
+    {
+        let rep = self.db_begin("postgres");
+        Ok(unsafe { Resource::new_own(rep) })
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::postgres::DbConnection>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::rdbms::postgres::HostDbTransaction for Ctx {
+    fn query(
+        &mut self,
+        transaction: Resource<golem::rdbms::postgres::DbTransaction>,
+        statement: String,
+        params: Vec<golem::rdbms::postgres::DbValue>,
+    ) -> Result<golem::rdbms::postgres::DbResult, golem::rdbms::postgres::Error> {
+        self.db_calls.push(format!(
+            "postgres transaction query(statement={statement}, params={})",
+            postgres_params_text(&params)
+        ));
+        let result = self.db_query_rows(Some(transaction.rep()), &statement, postgres_param_id(&params));
+        postgres_result(result)
+    }
+
+    fn query_stream(
+        &mut self,
+        _transaction: Resource<golem::rdbms::postgres::DbTransaction>,
+        statement: String,
+        _params: Vec<golem::rdbms::postgres::DbValue>,
+    ) -> Result<Resource<golem::rdbms::postgres::DbResultStream>, golem::rdbms::postgres::Error>
+    {
+        Err(golem::rdbms::postgres::Error::Other(format!(
+            "query-stream is not used by roc-golem components ({statement})"
+        )))
+    }
+
+    fn execute(
+        &mut self,
+        transaction: Resource<golem::rdbms::postgres::DbTransaction>,
+        statement: String,
+        params: Vec<golem::rdbms::postgres::DbValue>,
+    ) -> Result<u64, golem::rdbms::postgres::Error> {
+        self.db_calls.push(format!(
+            "postgres transaction execute(statement={statement}, params={})",
+            postgres_params_text(&params)
+        ));
+        self.db_execute(Some(transaction.rep()), &statement, postgres_param_row(&params))
+            .map_err(golem::rdbms::postgres::Error::Other)
+    }
+
+    fn commit(
+        &mut self,
+        transaction: Resource<golem::rdbms::postgres::DbTransaction>,
+    ) -> Result<(), golem::rdbms::postgres::Error> {
+        self.db_commit("postgres", transaction.rep());
+        Ok(())
+    }
+
+    fn rollback(
+        &mut self,
+        transaction: Resource<golem::rdbms::postgres::DbTransaction>,
+    ) -> Result<(), golem::rdbms::postgres::Error> {
+        self.db_rollback("postgres", transaction.rep());
+        Ok(())
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::postgres::DbTransaction>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::rdbms::postgres::HostDbResultStream for Ctx {
+    fn get_columns(
+        &mut self,
+        _stream: Resource<golem::rdbms::postgres::DbResultStream>,
+    ) -> Result<Vec<golem::rdbms::postgres::DbColumn>, golem::rdbms::postgres::Error> {
+        Err(golem::rdbms::postgres::Error::Other(String::from(
+            "query-stream is not used by roc-golem components",
+        )))
+    }
+
+    fn get_next(
+        &mut self,
+        _stream: Resource<golem::rdbms::postgres::DbResultStream>,
+    ) -> Result<Option<Vec<golem::rdbms::postgres::DbRow>>, golem::rdbms::postgres::Error> {
+        Err(golem::rdbms::postgres::Error::Other(String::from(
+            "query-stream is not used by roc-golem components",
+        )))
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::postgres::DbResultStream>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::rdbms::postgres::HostLazyDbValue for Ctx {
+    /// The stub keeps the wrapped value and hands it back on the next read: the
+    /// platform's JSON mirror constructs one lazy value per wrapped value, reads
+    /// it once and drops it, which is exactly one read. The type is a resource
+    /// handle rather than `Clone`, so a second read answers `null` instead of
+    /// duplicating the value — nothing in this harness reads one twice.
+    fn new(
+        &mut self,
+        value: golem::rdbms::postgres::DbValue,
+    ) -> Resource<golem::rdbms::postgres::LazyDbValue> {
+        let rep = self.lazy_db_values.len() as u32;
+        self.lazy_db_values.push(value);
+        unsafe { Resource::new_own(rep) }
+    }
+
+    fn get(
+        &mut self,
+        value: Resource<golem::rdbms::postgres::LazyDbValue>,
+    ) -> golem::rdbms::postgres::DbValue {
+        self.lazy_db_values
+            .get_mut(value.rep() as usize)
+            .map(|slot| std::mem::replace(slot, golem::rdbms::postgres::DbValue::Null))
+            .unwrap_or(golem::rdbms::postgres::DbValue::Null)
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::postgres::LazyDbValue>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::rdbms::postgres::HostLazyDbColumnType for Ctx {
+    fn new(
+        &mut self,
+        value: golem::rdbms::postgres::DbColumnType,
+    ) -> Resource<golem::rdbms::postgres::LazyDbColumnType> {
+        let rep = self.lazy_db_column_types.len() as u32;
+        self.lazy_db_column_types.push(value);
+        unsafe { Resource::new_own(rep) }
+    }
+
+    fn get(
+        &mut self,
+        value: Resource<golem::rdbms::postgres::LazyDbColumnType>,
+    ) -> golem::rdbms::postgres::DbColumnType {
+        self.lazy_db_column_types
+            .get_mut(value.rep() as usize)
+            .map(|slot| std::mem::replace(slot, golem::rdbms::postgres::DbColumnType::Text))
+            .unwrap_or(golem::rdbms::postgres::DbColumnType::Text)
+    }
+
+    fn drop(
+        &mut self,
+        _rep: Resource<golem::rdbms::postgres::LazyDbColumnType>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+/// The params as the recorded call prints them: the common cases by name, and
+/// anything else through `Debug` so an unexpected shape is still visible.
+fn postgres_params_text(params: &[golem::rdbms::postgres::DbValue]) -> String {
+    let rendered: Vec<String> = params
+        .iter()
+        .map(|param| match param {
+            golem::rdbms::postgres::DbValue::Int4(number) => format!("int4({number})"),
+            golem::rdbms::postgres::DbValue::Int8(number) => format!("int8({number})"),
+            golem::rdbms::postgres::DbValue::Text(text) => format!("text({text:?})"),
+            golem::rdbms::postgres::DbValue::Boolean(flag) => format!("boolean({flag})"),
+            golem::rdbms::postgres::DbValue::Null => String::from("null"),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    format!("[{}]", rendered.join(", "))
+}
+
+/// The `int4` a select filters on, when its first param is one.
+fn postgres_param_id(params: &[golem::rdbms::postgres::DbValue]) -> Option<i32> {
+    match params.first() {
+        Some(golem::rdbms::postgres::DbValue::Int4(id)) => Some(*id),
+        _ => None,
+    }
+}
+
+/// The row an insert's params describe.
+fn postgres_param_row(params: &[golem::rdbms::postgres::DbValue]) -> Option<(i32, String)> {
+    match params {
+        [
+            golem::rdbms::postgres::DbValue::Int4(id),
+            golem::rdbms::postgres::DbValue::Text(note),
+        ] => Some((*id, note.clone())),
+        _ => None,
+    }
+}
+
+fn postgres_result(
+    result: Result<StubResult, String>,
+) -> Result<golem::rdbms::postgres::DbResult, golem::rdbms::postgres::Error> {
+    use golem::rdbms::postgres::{DbColumn, DbColumnType, DbResult, DbRow, DbValue};
+
+    let result = result.map_err(golem::rdbms::postgres::Error::Other)?;
+    Ok(match result {
+        StubResult::Count(count) => DbResult {
+            columns: vec![DbColumn {
+                ordinal: 0,
+                name: String::from("count"),
+                db_type: DbColumnType::Int8,
+                db_type_name: String::from("INT8"),
+            }],
+            rows: vec![DbRow {
+                values: vec![DbValue::Int8(count as i64)],
+            }],
+        },
+        StubResult::Rows(rows) => DbResult {
+            columns: vec![
+                DbColumn {
+                    ordinal: 0,
+                    name: String::from("id"),
+                    db_type: DbColumnType::Int4,
+                    db_type_name: String::from("INT4"),
+                },
+                DbColumn {
+                    ordinal: 1,
+                    name: String::from("note"),
+                    db_type: DbColumnType::Text,
+                    db_type_name: String::from("TEXT"),
+                },
+            ],
+            rows: rows
+                .into_iter()
+                .map(|(id, note)| DbRow {
+                    values: vec![DbValue::Int4(id), DbValue::Text(note)],
+                })
+                .collect(),
+        },
+    })
+}
+
+impl golem::rdbms::mysql::Host for Ctx {}
+
+impl golem::rdbms::mysql::HostDbConnection for Ctx {
+    fn open(
+        &mut self,
+        address: String,
+    ) -> Result<Resource<golem::rdbms::mysql::DbConnection>, golem::rdbms::mysql::Error> {
+        stub_open(&mut self.db_calls, "mysql", &address)
+            .map_err(golem::rdbms::mysql::Error::ConnectionFailure)?;
+        let rep = self.db_connections;
+        self.db_connections += 1;
+        Ok(unsafe { Resource::new_own(rep) })
+    }
+
+    fn query(
+        &mut self,
+        _connection: Resource<golem::rdbms::mysql::DbConnection>,
+        statement: String,
+        params: Vec<golem::rdbms::mysql::DbValue>,
+    ) -> Result<golem::rdbms::mysql::DbResult, golem::rdbms::mysql::Error> {
+        self.db_calls.push(format!(
+            "mysql query(statement={statement}, params={})",
+            mysql_params_text(&params)
+        ));
+        mysql_result(self.db_query_rows(None, &statement, mysql_param_id(&params)))
+    }
+
+    fn query_stream(
+        &mut self,
+        _connection: Resource<golem::rdbms::mysql::DbConnection>,
+        statement: String,
+        _params: Vec<golem::rdbms::mysql::DbValue>,
+    ) -> Result<Resource<golem::rdbms::mysql::DbResultStream>, golem::rdbms::mysql::Error> {
+        Err(golem::rdbms::mysql::Error::Other(format!(
+            "query-stream is not used by roc-golem components ({statement})"
+        )))
+    }
+
+    fn execute(
+        &mut self,
+        _connection: Resource<golem::rdbms::mysql::DbConnection>,
+        statement: String,
+        params: Vec<golem::rdbms::mysql::DbValue>,
+    ) -> Result<u64, golem::rdbms::mysql::Error> {
+        self.db_calls.push(format!(
+            "mysql execute(statement={statement}, params={})",
+            mysql_params_text(&params)
+        ));
+        self.db_execute(None, &statement, mysql_param_row(&params))
+            .map_err(golem::rdbms::mysql::Error::Other)
+    }
+
+    fn begin_transaction(
+        &mut self,
+        _connection: Resource<golem::rdbms::mysql::DbConnection>,
+    ) -> Result<Resource<golem::rdbms::mysql::DbTransaction>, golem::rdbms::mysql::Error> {
+        let rep = self.db_begin("mysql");
+        Ok(unsafe { Resource::new_own(rep) })
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::mysql::DbConnection>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::rdbms::mysql::HostDbTransaction for Ctx {
+    fn query(
+        &mut self,
+        transaction: Resource<golem::rdbms::mysql::DbTransaction>,
+        statement: String,
+        params: Vec<golem::rdbms::mysql::DbValue>,
+    ) -> Result<golem::rdbms::mysql::DbResult, golem::rdbms::mysql::Error> {
+        self.db_calls.push(format!(
+            "mysql transaction query(statement={statement}, params={})",
+            mysql_params_text(&params)
+        ));
+        mysql_result(self.db_query_rows(Some(transaction.rep()), &statement, mysql_param_id(&params)))
+    }
+
+    fn query_stream(
+        &mut self,
+        _transaction: Resource<golem::rdbms::mysql::DbTransaction>,
+        statement: String,
+        _params: Vec<golem::rdbms::mysql::DbValue>,
+    ) -> Result<Resource<golem::rdbms::mysql::DbResultStream>, golem::rdbms::mysql::Error> {
+        Err(golem::rdbms::mysql::Error::Other(format!(
+            "query-stream is not used by roc-golem components ({statement})"
+        )))
+    }
+
+    fn execute(
+        &mut self,
+        transaction: Resource<golem::rdbms::mysql::DbTransaction>,
+        statement: String,
+        params: Vec<golem::rdbms::mysql::DbValue>,
+    ) -> Result<u64, golem::rdbms::mysql::Error> {
+        self.db_calls.push(format!(
+            "mysql transaction execute(statement={statement}, params={})",
+            mysql_params_text(&params)
+        ));
+        self.db_execute(Some(transaction.rep()), &statement, mysql_param_row(&params))
+            .map_err(golem::rdbms::mysql::Error::Other)
+    }
+
+    fn commit(
+        &mut self,
+        transaction: Resource<golem::rdbms::mysql::DbTransaction>,
+    ) -> Result<(), golem::rdbms::mysql::Error> {
+        self.db_commit("mysql", transaction.rep());
+        Ok(())
+    }
+
+    fn rollback(
+        &mut self,
+        transaction: Resource<golem::rdbms::mysql::DbTransaction>,
+    ) -> Result<(), golem::rdbms::mysql::Error> {
+        self.db_rollback("mysql", transaction.rep());
+        Ok(())
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::mysql::DbTransaction>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::rdbms::mysql::HostDbResultStream for Ctx {
+    fn get_columns(
+        &mut self,
+        _stream: Resource<golem::rdbms::mysql::DbResultStream>,
+    ) -> Result<Vec<golem::rdbms::mysql::DbColumn>, golem::rdbms::mysql::Error> {
+        Err(golem::rdbms::mysql::Error::Other(String::from(
+            "query-stream is not used by roc-golem components",
+        )))
+    }
+
+    fn get_next(
+        &mut self,
+        _stream: Resource<golem::rdbms::mysql::DbResultStream>,
+    ) -> Result<Option<Vec<golem::rdbms::mysql::DbRow>>, golem::rdbms::mysql::Error> {
+        Err(golem::rdbms::mysql::Error::Other(String::from(
+            "query-stream is not used by roc-golem components",
+        )))
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::mysql::DbResultStream>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+fn mysql_params_text(params: &[golem::rdbms::mysql::DbValue]) -> String {
+    let rendered: Vec<String> = params
+        .iter()
+        .map(|param| match param {
+            golem::rdbms::mysql::DbValue::Int(number) => format!("int({number})"),
+            golem::rdbms::mysql::DbValue::Bigint(number) => format!("bigint({number})"),
+            golem::rdbms::mysql::DbValue::Varchar(text) => format!("varchar({text:?})"),
+            golem::rdbms::mysql::DbValue::Boolean(flag) => format!("boolean({flag})"),
+            golem::rdbms::mysql::DbValue::Null => String::from("null"),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    format!("[{}]", rendered.join(", "))
+}
+
+fn mysql_param_id(params: &[golem::rdbms::mysql::DbValue]) -> Option<i32> {
+    match params.first() {
+        Some(golem::rdbms::mysql::DbValue::Int(id)) => Some(*id),
+        _ => None,
+    }
+}
+
+fn mysql_param_row(params: &[golem::rdbms::mysql::DbValue]) -> Option<(i32, String)> {
+    match params {
+        [golem::rdbms::mysql::DbValue::Int(id), golem::rdbms::mysql::DbValue::Varchar(note)] => {
+            Some((*id, note.clone()))
+        }
+        _ => None,
+    }
+}
+
+fn mysql_result(
+    result: Result<StubResult, String>,
+) -> Result<golem::rdbms::mysql::DbResult, golem::rdbms::mysql::Error> {
+    use golem::rdbms::mysql::{DbColumn, DbColumnType, DbResult, DbRow, DbValue};
+
+    let result = result.map_err(golem::rdbms::mysql::Error::Other)?;
+    Ok(match result {
+        StubResult::Count(count) => DbResult {
+            columns: vec![DbColumn {
+                ordinal: 0,
+                name: String::from("count"),
+                db_type: DbColumnType::Bigint,
+                db_type_name: String::from("BIGINT"),
+            }],
+            rows: vec![DbRow {
+                values: vec![DbValue::Bigint(count as i64)],
+            }],
+        },
+        StubResult::Rows(rows) => DbResult {
+            columns: vec![
+                DbColumn {
+                    ordinal: 0,
+                    name: String::from("id"),
+                    db_type: DbColumnType::Int,
+                    db_type_name: String::from("INT"),
+                },
+                DbColumn {
+                    ordinal: 1,
+                    name: String::from("note"),
+                    db_type: DbColumnType::Varchar,
+                    db_type_name: String::from("VARCHAR"),
+                },
+            ],
+            rows: rows
+                .into_iter()
+                .map(|(id, note)| DbRow {
+                    values: vec![DbValue::Int(id), DbValue::Varchar(note)],
+                })
+                .collect(),
+        },
+    })
+}
+
+impl golem::rdbms::ignite2::Host for Ctx {}
+
+impl golem::rdbms::ignite2::HostDbConnection for Ctx {
+    fn open(
+        &mut self,
+        address: String,
+    ) -> Result<Resource<golem::rdbms::ignite2::DbConnection>, golem::rdbms::ignite2::Error> {
+        stub_open(&mut self.db_calls, "ignite", &address)
+            .map_err(golem::rdbms::ignite2::Error::ConnectionFailure)?;
+        let rep = self.db_connections;
+        self.db_connections += 1;
+        Ok(unsafe { Resource::new_own(rep) })
+    }
+
+    fn query(
+        &mut self,
+        _connection: Resource<golem::rdbms::ignite2::DbConnection>,
+        statement: String,
+        params: Vec<golem::rdbms::ignite2::DbValue>,
+    ) -> Result<golem::rdbms::ignite2::DbResult, golem::rdbms::ignite2::Error> {
+        self.db_calls.push(format!(
+            "ignite query(statement={statement}, params={})",
+            ignite_params_text(&params)
+        ));
+        ignite_result(self.db_query_rows(None, &statement, ignite_param_id(&params)))
+    }
+
+    fn query_stream(
+        &mut self,
+        _connection: Resource<golem::rdbms::ignite2::DbConnection>,
+        statement: String,
+        _params: Vec<golem::rdbms::ignite2::DbValue>,
+    ) -> Result<Resource<golem::rdbms::ignite2::DbResultStream>, golem::rdbms::ignite2::Error> {
+        Err(golem::rdbms::ignite2::Error::Other(format!(
+            "query-stream is not used by roc-golem components ({statement})"
+        )))
+    }
+
+    fn execute(
+        &mut self,
+        _connection: Resource<golem::rdbms::ignite2::DbConnection>,
+        statement: String,
+        params: Vec<golem::rdbms::ignite2::DbValue>,
+    ) -> Result<i64, golem::rdbms::ignite2::Error> {
+        self.db_calls.push(format!(
+            "ignite execute(statement={statement}, params={})",
+            ignite_params_text(&params)
+        ));
+        self.db_execute(None, &statement, ignite_param_row(&params))
+            .map(|count| count as i64)
+            .map_err(golem::rdbms::ignite2::Error::Other)
+    }
+
+    fn begin_transaction(
+        &mut self,
+        _connection: Resource<golem::rdbms::ignite2::DbConnection>,
+    ) -> Result<Resource<golem::rdbms::ignite2::DbTransaction>, golem::rdbms::ignite2::Error> {
+        let rep = self.db_begin("ignite");
+        Ok(unsafe { Resource::new_own(rep) })
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::ignite2::DbConnection>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::rdbms::ignite2::HostDbTransaction for Ctx {
+    fn query(
+        &mut self,
+        transaction: Resource<golem::rdbms::ignite2::DbTransaction>,
+        statement: String,
+        params: Vec<golem::rdbms::ignite2::DbValue>,
+    ) -> Result<golem::rdbms::ignite2::DbResult, golem::rdbms::ignite2::Error> {
+        self.db_calls.push(format!(
+            "ignite transaction query(statement={statement}, params={})",
+            ignite_params_text(&params)
+        ));
+        ignite_result(self.db_query_rows(Some(transaction.rep()), &statement, ignite_param_id(&params)))
+    }
+
+    fn query_stream(
+        &mut self,
+        _transaction: Resource<golem::rdbms::ignite2::DbTransaction>,
+        statement: String,
+        _params: Vec<golem::rdbms::ignite2::DbValue>,
+    ) -> Result<Resource<golem::rdbms::ignite2::DbResultStream>, golem::rdbms::ignite2::Error> {
+        Err(golem::rdbms::ignite2::Error::Other(format!(
+            "query-stream is not used by roc-golem components ({statement})"
+        )))
+    }
+
+    fn execute(
+        &mut self,
+        transaction: Resource<golem::rdbms::ignite2::DbTransaction>,
+        statement: String,
+        params: Vec<golem::rdbms::ignite2::DbValue>,
+    ) -> Result<i64, golem::rdbms::ignite2::Error> {
+        self.db_calls.push(format!(
+            "ignite transaction execute(statement={statement}, params={})",
+            ignite_params_text(&params)
+        ));
+        self.db_execute(Some(transaction.rep()), &statement, ignite_param_row(&params))
+            .map(|count| count as i64)
+            .map_err(golem::rdbms::ignite2::Error::Other)
+    }
+
+    fn commit(
+        &mut self,
+        transaction: Resource<golem::rdbms::ignite2::DbTransaction>,
+    ) -> Result<(), golem::rdbms::ignite2::Error> {
+        self.db_commit("ignite", transaction.rep());
+        Ok(())
+    }
+
+    fn rollback(
+        &mut self,
+        transaction: Resource<golem::rdbms::ignite2::DbTransaction>,
+    ) -> Result<(), golem::rdbms::ignite2::Error> {
+        self.db_rollback("ignite", transaction.rep());
+        Ok(())
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::ignite2::DbTransaction>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::rdbms::ignite2::HostDbResultStream for Ctx {
+    fn get_columns(
+        &mut self,
+        _stream: Resource<golem::rdbms::ignite2::DbResultStream>,
+    ) -> Result<Vec<golem::rdbms::ignite2::DbColumn>, golem::rdbms::ignite2::Error> {
+        Err(golem::rdbms::ignite2::Error::Other(String::from(
+            "query-stream is not used by roc-golem components",
+        )))
+    }
+
+    fn get_next(
+        &mut self,
+        _stream: Resource<golem::rdbms::ignite2::DbResultStream>,
+    ) -> Result<Option<Vec<golem::rdbms::ignite2::DbRow>>, golem::rdbms::ignite2::Error> {
+        Err(golem::rdbms::ignite2::Error::Other(String::from(
+            "query-stream is not used by roc-golem components",
+        )))
+    }
+
+    fn drop(&mut self, _rep: Resource<golem::rdbms::ignite2::DbResultStream>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+fn ignite_params_text(params: &[golem::rdbms::ignite2::DbValue]) -> String {
+    let rendered: Vec<String> = params
+        .iter()
+        .map(|param| match param {
+            golem::rdbms::ignite2::DbValue::DbInt(number) => format!("dbInt({number})"),
+            golem::rdbms::ignite2::DbValue::DbLong(number) => format!("dbLong({number})"),
+            golem::rdbms::ignite2::DbValue::DbString(text) => format!("dbString({text:?})"),
+            golem::rdbms::ignite2::DbValue::DbBoolean(flag) => format!("dbBoolean({flag})"),
+            golem::rdbms::ignite2::DbValue::DbNull => String::from("dbNull"),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    format!("[{}]", rendered.join(", "))
+}
+
+fn ignite_param_id(params: &[golem::rdbms::ignite2::DbValue]) -> Option<i32> {
+    match params.first() {
+        Some(golem::rdbms::ignite2::DbValue::DbInt(id)) => Some(*id),
+        _ => None,
+    }
+}
+
+fn ignite_param_row(params: &[golem::rdbms::ignite2::DbValue]) -> Option<(i32, String)> {
+    match params {
+        [
+            golem::rdbms::ignite2::DbValue::DbInt(id),
+            golem::rdbms::ignite2::DbValue::DbString(note),
+        ] => Some((*id, note.clone())),
+        _ => None,
+    }
+}
+
+fn ignite_result(
+    result: Result<StubResult, String>,
+) -> Result<golem::rdbms::ignite2::DbResult, golem::rdbms::ignite2::Error> {
+    use golem::rdbms::ignite2::{DbColumn, DbResult, DbRow, DbValue};
+
+    let result = result.map_err(golem::rdbms::ignite2::Error::Other)?;
+    Ok(match result {
+        StubResult::Count(count) => DbResult {
+            columns: vec![DbColumn {
+                ordinal: 0,
+                name: String::from("count"),
+            }],
+            rows: vec![DbRow {
+                values: vec![DbValue::DbLong(count as i64)],
+            }],
+        },
+        StubResult::Rows(rows) => DbResult {
+            columns: vec![
+                DbColumn {
+                    ordinal: 0,
+                    name: String::from("id"),
+                },
+                DbColumn {
+                    ordinal: 1,
+                    name: String::from("note"),
+                },
+            ],
+            rows: rows
+                .into_iter()
+                .map(|(id, note)| DbRow {
+                    values: vec![DbValue::DbInt(id), DbValue::DbString(note)],
+                })
+                .collect(),
+        },
+    })
+}
+
+impl golem::rdbms::types::Host for Ctx {}
+
 /// The component reference and the component id the `golem:api/host` stubs
 /// resolve, plus the UUID a stubbed idempotency key comes back as. A real server
 /// looks the reference up in the registry; here one name is known and anything
@@ -1781,6 +2680,9 @@ struct Expectation {
     /// Substring expected in the filesystem calls the agent made through
     /// `wasi:filesystem@0.2.6` (`open-at`, `write`, `read-directory`, …).
     expect_fs: Option<String>,
+    /// Substring expected in the database calls the agent made through
+    /// `golem:rdbms` (`postgres open`, `postgres execute`, `mysql query`, …).
+    expect_db: Option<String>,
     /// The first message is expected to trap, with the substring in the trap's
     /// text. The message/reply checks are skipped in that case: a trap is a
     /// failed invocation, not a reply, and the instance is not asked for
@@ -1806,7 +2708,7 @@ fn usage() -> String {
          [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING] \
          [--expect-quota SUBSTRING] [--expect-retry SUBSTRING] \
          [--expect-host-call SUBSTRING] [--expect-kv SUBSTRING] \
-         [--expect-blob SUBSTRING] [--expect-fs SUBSTRING] \
+         [--expect-blob SUBSTRING] [--expect-fs SUBSTRING] [--expect-db SUBSTRING] \
          [--expect-trap SUBSTRING] \
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
          [--expect-kind regular|http-router]",
@@ -1834,6 +2736,7 @@ fn parse_args() -> Result<Expectation> {
         expect_kv: None,
         expect_blob: None,
         expect_fs: None,
+        expect_db: None,
         expect_trap: None,
         tool: None,
         tool_reply: None,
@@ -1862,6 +2765,7 @@ fn parse_args() -> Result<Expectation> {
             "--expect-kv" => expectation.expect_kv = args.next(),
             "--expect-blob" => expectation.expect_blob = args.next(),
             "--expect-fs" => expectation.expect_fs = args.next(),
+            "--expect-db" => expectation.expect_db = args.next(),
             "--expect-trap" => expectation.expect_trap = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
@@ -1965,6 +2869,12 @@ async fn run() -> Result<ExitCode> {
             blob_outgoing: Vec::new(),
             blob_incoming: Vec::new(),
             fs_calls: Vec::new(),
+            db_calls: Vec::new(),
+            db_rows: Vec::new(),
+            db_transactions: Vec::new(),
+            db_connections: 0,
+            lazy_db_values: Vec::new(),
+            lazy_db_column_types: Vec::new(),
             fs_entries: Default::default(),
             fs_contents: Default::default(),
             fs_descriptors: Vec::new(),
@@ -2387,6 +3297,17 @@ async fn run() -> Result<ExitCode> {
             if !hit {
                 failures.push(format!(
                     "no filesystem call contains {:?} (made: {:?})",
+                    expected, calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_db {
+            let calls = ctx.db_calls.clone();
+            let hit = calls.iter().any(|call| call.contains(expected.as_str()));
+            println!("[database calls] {:?}", calls);
+            if !hit {
+                failures.push(format!(
+                    "no database call contains {:?} (made: {:?})",
                     expected, calls
                 ));
             }
