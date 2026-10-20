@@ -30,6 +30,7 @@ httpApi:
       - subdomain: roc-golem
         agents:
           file-site-agent: {}
+          static-site-agent: {}
 
 tools:
   # The tool surface (`golem:tool/guest`) exposes each app tool under its
@@ -68,6 +69,15 @@ agents:
         targetPath: /assets/hello.txt
       - sourcePath: examples/site/static/index.html
         targetPath: /site/index.html
+  # A router's static bindings are served from these uploads, not from an agent
+  # filesystem: the runtime answers matching GET/HEAD requests with the
+  # content-addressed blob and an immutable ETag, without creating the agent.
+  static-site-agent:
+    files:
+      - sourcePath: examples/static_site/static/assets/hello.txt
+        targetPath: /assets/hello.txt
+      - sourcePath: examples/static_site/static/index.html
+        targetPath: /index.html
 
 components:
   roc-golem:counter:
@@ -95,3 +105,8 @@ components:
     componentWasm: "../../build/site_agent.wasm"
     build:
       - command: "../../tooling/build.sh site"
+  roc-golem:static-site:
+    dir: "examples/static_site"
+    componentWasm: "../../build/static_site_agent.wasm"
+    build:
+      - command: "../../tooling/build.sh static_site"

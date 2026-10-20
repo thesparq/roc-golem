@@ -668,6 +668,9 @@ struct Expectation {
     /// The mount path the agent type should publish, rendered as a URL path
     /// (`site/{id}`): literal segments verbatim, captures in braces.
     mount: Option<String>,
+    /// The agent type kind the app should register (`regular` or
+    /// `http-router`).
+    kind: Option<String>,
 }
 
 fn usage() -> String {
@@ -676,7 +679,8 @@ fn usage() -> String {
          [--message TEXT] [--reply SUBSTRING] [--then-message TEXT] \
          [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING] \
          [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING] \
-         [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH]",
+         [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
+         [--expect-kind regular|http-router]",
     )
 }
 
@@ -698,6 +702,7 @@ fn parse_args() -> Result<Expectation> {
         tool: None,
         tool_reply: None,
         mount: None,
+        kind: None,
     };
 
     while let Some(arg) = args.next() {
@@ -718,6 +723,7 @@ fn parse_args() -> Result<Expectation> {
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
             "--expect-mount" => expectation.mount = args.next(),
+            "--expect-kind" => expectation.kind = args.next(),
             "-h" | "--help" => bail!("{}", usage()),
             other => {
                 if expectation.component.as_os_str().is_empty() {
@@ -837,11 +843,13 @@ async fn run() -> Result<ExitCode> {
     };
     let methods: Vec<String> = definition.methods.iter().map(|m| m.name.clone()).collect();
     println!("[get-definition] type-name = {:?}", definition.type_name);
+    println!("[get-definition] kind      = {:?}", definition.kind);
     println!("[get-definition] methods   = {:?}", methods);
     if let Some(mount) = &definition.http_mount {
         println!(
-            "[get-definition] http-mount = {:?} (filesystem bindings: {}, file response headers: {})",
+            "[get-definition] http-mount = {:?} (static bindings: {}, filesystem bindings: {}, file response headers: {})",
             render_mount_path(&mount.path_prefix),
+            mount.static_bindings.len(),
             mount.filesystem_bindings.len(),
             mount.file_response_headers.len(),
         );
@@ -851,6 +859,17 @@ async fn run() -> Result<ExitCode> {
             failures.push(format!(
                 "agent type name is {:?}, expected {:?} (the host falls back to \"roc-agent\" when the app's metadata cannot be read)",
                 definition.type_name, expected
+            ));
+        }
+    }
+    if let Some(expected) = &expectation.kind {
+        let actual = match definition.kind {
+            golem::agent::common::AgentTypeKind::Regular => "regular",
+            golem::agent::common::AgentTypeKind::HttpRouter => "http-router",
+        };
+        if actual != expected {
+            failures.push(format!(
+                "agent type kind is {actual:?}, expected {expected:?}"
             ));
         }
     }

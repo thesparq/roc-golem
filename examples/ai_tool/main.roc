@@ -92,7 +92,9 @@ agent = defineAgent({
 			},
 		],
 		config: [],
+		agentKind: Regular,
 		httpMount: None,
+		openapiProvider: NoOpenApi,
 	},
 
 	serializeState: |state|

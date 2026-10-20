@@ -97,12 +97,27 @@ jobs:
           #   --then-message hello --then-reply "Sent: hello" \
           #   --expect-sent hello
 
-          check "$HARNESS" build/effects_agent.wasm \
-            --type effects-agent --config "http://example.test/" \
-            --message fetch --reply "HTTP 200" \
-            --expect-http "GET / host=example.test" \
-            --then-message rpc --then-reply "RPC reply: stub-rpc-reply" \
-            --expect-rpc "invoke-and-await(handle-message)"
+          # The effects agent now imports an async host function too
+          # (`wasi:http/client.send`, the p3 replacement for the p2 interfaces
+          # Golem 1.6.0 dropped), which traps inside the harness's wasmtime for
+          # the same reason the streaming agent does (see
+          # tooling/abi_harness/README.md). The e2e step below is the
+          # authoritative check for it.
+          # check "$HARNESS" build/effects_agent.wasm \
+          #   --type effects-agent --config "http://example.test/" \
+          #   --message fetch --reply "HTTP 200" \
+          #   --expect-http "GET / host=example.test" \
+          #   --then-message rpc --then-reply "RPC reply: stub-rpc-reply" \
+          #   --expect-rpc "invoke-and-await(handle-message)"
+
+          check "$HARNESS" build/site_agent.wasm \
+            --type file-site-agent --method handle-message \
+            --expect-mount "site/{id}" \
+            --message ping --reply "is serving its mount"
+
+          check "$HARNESS" build/static_site_agent.wasm \
+            --type static-site-agent --expect-kind http-router \
+            --expect-mount "static" --message ping --reply ""
 
           exit $status
 

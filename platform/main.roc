@@ -35,10 +35,12 @@ platform "golem"
 	}
 
 import Types exposing [
+	AgentKind,
 	ConfigDeclaration,
 	FileBinding,
 	FileResponseHeader,
 	HttpMountOption,
+	OpenApiProvider,
 	ToolDefinition,
 	ToolParameter,
 	ToolCall,
@@ -105,9 +107,25 @@ main_metadata_for_host = |_| {
 	config_json = Str.join_with(formatted_config, ",")
 
 	mount_json = format_http_mount(meta.httpMount)
+	kind_json = format_agent_kind(meta.agentKind)
+	openapi_json = format_openapi_provider(meta.openapiProvider)
 
-	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}],\"httpMount\":${mount_json}}"
+	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}],\"agentKind\":${kind_json},\"httpMount\":${mount_json},\"openapiProvider\":${openapi_json}}"
 }
+
+format_agent_kind : AgentKind -> Str
+format_agent_kind = |kind|
+	match kind {
+		Regular => "\"regular\""
+		HttpRouter => "\"http-router\""
+	}
+
+format_openapi_provider : OpenApiProvider -> Str
+format_openapi_provider = |provider|
+	match provider {
+		NoOpenApi => "null"
+		OpenApi(document) => format_json_string(document)
+	}
 
 format_http_mount : HttpMountOption -> Str
 format_http_mount = |mount|
@@ -116,10 +134,11 @@ format_http_mount = |mount|
 
 		Mount(m) => {
 			prefix_json = format_string_list(m.pathPrefix)
+			static_json = format_file_bindings(m.staticBindings)
 			bindings_json = format_file_bindings(m.filesystemBindings)
 			headers_json = format_file_response_headers(m.fileResponseHeaders)
 			cors_json = format_string_list(m.corsAllowedPatterns)
-			"{\"pathPrefix\":${prefix_json},\"filesystemBindings\":${bindings_json},\"fileResponseHeaders\":${headers_json},\"corsAllowedPatterns\":${cors_json}}"
+			"{\"pathPrefix\":${prefix_json},\"staticBindings\":${static_json},\"filesystemBindings\":${bindings_json},\"fileResponseHeaders\":${headers_json},\"corsAllowedPatterns\":${cors_json}}"
 		}
 	}
 

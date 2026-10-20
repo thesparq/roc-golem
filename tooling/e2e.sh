@@ -75,7 +75,7 @@ mkdir -p "$WORK_DIR"
 say "==> Building platform and example components"
 if [[ "${E2E_SKIP_BUILD:-0}" != "1" ]]; then
     "$ROOT_DIR/tooling/build.sh" platform >"$WORK_DIR/build.log" 2>&1
-    for app in counter ai_tool streaming_agent effects site; do
+    for app in counter ai_tool streaming_agent effects site static_site; do
         "$ROOT_DIR/tooling/build.sh" "$app" >>"$WORK_DIR/build.log" 2>&1
     done
 fi
@@ -202,6 +202,22 @@ check "site: subtree binding does not expose other files" "404" \
 # called still serves its provisioned files.
 check "site: first read serves provisioned files" "200" \
     "$(fetch_status "/site/absent-$RUN_ID/assets/hello.txt")"
+
+say "==> HTTP router (static-site agent, served by Golem from uploaded files)"
+# A router serves files that `golem deploy` uploaded for its agent type: no
+# method runs, and nothing here creates an agent instance.
+check "router: subtree binding serves an uploaded file" "uploaded at deploy time" \
+    "$(fetch "/static/assets/hello.txt")"
+check "router: exact binding serves an uploaded file" "Served by the router" \
+    "$(fetch "/static/index.html")"
+check_true "router: uploaded files carry an immutable ETag" \
+    "$(fetch_headers "/static/assets/hello.txt" | grep -qi '^etag: "blake3-' && echo true || echo false)"
+check "router: unmapped path answers 404" "404" \
+    "$(fetch_status "/static/assets/missing.txt")"
+# The router's OpenAPI provider method supplies the document for the mount, and
+# Golem rebases its paths under the mount prefix.
+check "router: openapi provider reaches the deployment spec" "The uploaded index page" \
+    "$(fetch "/openapi.yaml")"
 
 say ""
 if [[ "$failures" -eq 0 ]]; then

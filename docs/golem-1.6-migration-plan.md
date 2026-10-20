@@ -33,13 +33,27 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
 - **P3 done**: the v1.6.0 GA pin, the vendored WIT bundle and the `golem.yaml`
   schema URL all moved to GA; `golem:websocket/client.connect` gained its
   `reconstruction-policy` parameter (host updated).
-- **P4 done**: HTTP mounts. `metadata.httpMount` publishes a
-  `filesystemBindings` mount (subtree and exact) that the runtime serves from
-  the agent's durable filesystem without invoking it, with configured file
-  response headers and 404s for unmapped paths. `httpApi` + `localServer` are
-  documented in the README; the `site` example and eight e2e checks cover it.
-  Static bindings and an OpenAPI provider need an `http-router` agent type
-  (stream-typed request/response), still to do.
+- **P4 done**: HTTP mounts, in both shapes Golem serves itself.
+  - *Regular agents*: `metadata.httpMount` with `filesystemBindings` (subtree and
+    exact) serves files from the agent's durable filesystem without invoking it,
+    with configured file response headers and 404s for unmapped paths.
+  - *Routers*: `agentKind: HttpRouter` registers a parameterless, ephemeral
+    `http-router` agent type whose `staticBindings` are served from files
+    `golem deploy` uploads for it (content-addressed, immutable ETag, no agent
+    created), and whose `openapiProvider` document Golem merges into the
+    deployment's `/openapi.yaml` through the agent type's single provider
+    method. The host refuses the combinations Golem would reject (captures or
+    filesystem bindings on a router, static bindings or tools on a regular
+    agent, a document that is not OpenAPI 3.1 JSON) with messages that name the
+    app.
+  - Both are covered by the `site` and `static_site` examples, by the
+    `--expect-mount`/`--expect-kind` checks in the ABI harness, and by thirteen
+    e2e checks (200/404, both binding kinds, response headers, the ETag, and the
+    merged spec).
+  - Still to do: the **dynamic** handler (`handle(request) -> response`), whose
+    bodies are `stream<u8>` values: that needs stream-typed schema values and
+    the host reading/writing bodies, which the synchronous Roc-facing effects do
+    not model yet.
 - **Open**: nothing blocking on GA. `http!` moved to WASI p3
   (`wasi:http/types@0.3.0` + `client@0.3.0`) because **Golem 1.6.0 dropped the p2
   HTTP interfaces**: the 1.6.0 executor registers `durable_host::p3` plus p2

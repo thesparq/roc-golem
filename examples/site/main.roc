@@ -55,8 +55,10 @@ agent = defineAgent({
 		description: "Serves files from its durable Golem filesystem over HTTP",
 		tools: [],
 		config: [],
+		agentKind: Regular,
 		httpMount: Mount({
 			pathPrefix: ["site", "{id}"],
+			staticBindings: [],
 			filesystemBindings: [
 				Subtree({ publicPrefix: ["assets"], filesystemRoot: "/assets" }),
 				Exact({ publicPath: ["index.html"], filePath: "/site/index.html" }),
@@ -64,6 +66,7 @@ agent = defineAgent({
 			fileResponseHeaders: [{ name: "referrer-policy", value: "no-referrer" }],
 			corsAllowedPatterns: ["*"],
 		}),
+		openapiProvider: NoOpenApi,
 	},
 
 	serializeState: |state|

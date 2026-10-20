@@ -94,7 +94,9 @@ agent = defineAgent({
 		description: "Calls HTTP endpoints and other agents from a Golem Cloud agent",
 		tools: [],
 		config: [],
+		agentKind: Regular,
 		httpMount: None,
+		openapiProvider: NoOpenApi,
 	},
 
 	serializeState: |state|

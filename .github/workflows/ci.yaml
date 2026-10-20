@@ -115,6 +115,12 @@ jobs:
             --expect-mount "site/{id}" \
             --message ping --reply "is serving its mount"
 
+          # The static-site router: kind, its single provider method, and a
+          # literal-only mount carrying the static bindings.
+          check "$HARNESS" build/static_site_agent.wasm \
+            --type static-site-agent --expect-kind http-router \
+            --expect-mount "static" --message ping --reply ""
+
           # The platform has had build-sensitive ABI bugs, so the same checks
           # also run against a debug build of an effect-heavy example. The
           # effects example itself is skipped above, so this uses the site

@@ -180,9 +180,14 @@ fn single_param_value_tree(s: &str) -> SchemaValueTree {
 }
 
 /// Parses the app's `httpMount` metadata into the registered agent type's mount
-/// details. Golem binds a constructor parameter through the mount, so a valid
-/// mount captures exactly one path variable — the agent's identity parameter.
-fn parse_http_mount(mount: &serde_json::Value) -> Result<HttpMountDetails, String> {
+/// details. Golem binds a regular agent's constructor parameter through the
+/// mount, so such a mount captures exactly one path variable — the agent's
+/// identity parameter — while a router is parameterless and its mount must be
+/// literal-only.
+fn parse_http_mount(
+    mount: &serde_json::Value,
+    is_router: bool,
+) -> Result<HttpMountDetails, String> {
     let segments = mount
         .get("pathPrefix")
         .and_then(|v| v.as_array())
@@ -205,23 +210,33 @@ fn parse_http_mount(mount: &serde_json::Value) -> Result<HttpMountDetails, Strin
 
     // This platform's agents take exactly one constructor parameter, and Golem
     // requires every constructor parameter to be captured by the mount, so a
-    // mount with any other number of captures cannot be deployed.
-    match captures.as_slice() {
-        [_] => {}
-        [] => {
-            return Err(
-                "httpMount.pathPrefix must capture the agent's constructor parameter, \
-                 for example [\"site\", \"{id}\"]"
-                    .to_string(),
-            );
-        }
-        _ => {
+    // mount with any other number of captures cannot be deployed. Routers have
+    // no constructor at all and must not capture anything.
+    if is_router {
+        if let Some(name) = captures.first() {
             return Err(format!(
-                "httpMount.pathPrefix captures {} variables ({}), but a Roc agent has a single \
-                 constructor parameter",
-                captures.len(),
-                captures.join(", ")
+                "an http-router mount cannot capture path variables (found {{{name}}}): routers \
+                 have no constructor parameters"
             ));
+        }
+    } else {
+        match captures.as_slice() {
+            [_] => {}
+            [] => {
+                return Err(
+                    "httpMount.pathPrefix must capture the agent's constructor parameter, \
+                     for example [\"site\", \"{id}\"]"
+                        .to_string(),
+                );
+            }
+            _ => {
+                return Err(format!(
+                    "httpMount.pathPrefix captures {} variables ({}), but a Roc agent has a \
+                     single constructor parameter",
+                    captures.len(),
+                    captures.join(", ")
+                ));
+            }
         }
     }
 
@@ -238,10 +253,10 @@ fn parse_http_mount(mount: &serde_json::Value) -> Result<HttpMountDetails, Strin
             allowed_patterns: cors_allowed_patterns,
         },
         webhook_suffix: vec![],
-        // Static bindings need a router agent type, which this platform does
-        // not emit yet; filesystem bindings are served from the agent's own
-        // durable filesystem and work on regular durable agents.
-        static_bindings: vec![],
+        // Static bindings are served from files uploaded at deploy time and only
+        // exist on `http-router` agent types; filesystem bindings are served
+        // from the agent's own durable filesystem on regular durable agents.
+        static_bindings: parse_file_bindings(mount, "staticBindings")?,
         filesystem_bindings,
         file_response_headers,
         openapi_provider_method: None,
@@ -470,8 +485,22 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
     let mut config_decls = Vec::new();
     let mut http_mount: Option<HttpMountDetails> = None;
     let mut mount_error: Option<String> = None;
+    let mut is_router = false;
+    let mut openapi_document: Option<String> = None;
+    let mut metadata_error: Option<String> = None;
 
     if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_json) {
+        // The agent kind decides the rest: a router registers no application
+        // methods and has no constructor parameters.
+        is_router = meta.get("agentKind").and_then(|v| v.as_str()) == Some("http-router");
+        if let Some(document) = meta.get("openapiProvider").and_then(|v| v.as_str()) {
+            if !document.is_empty() {
+                openapi_document = Some(document.to_string());
+            }
+        }
+        if is_router {
+            methods.clear();
+        }
         if let Some(n) = meta.get("name").and_then(|v| v.as_str()) {
             if !n.is_empty() {
                 name_seen = true;
@@ -510,6 +539,14 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
         }
         if let Some(tools) = meta.get("tools").and_then(|v| v.as_array()) {
             for t in tools {
+                if is_router {
+                    metadata_error = Some(
+                        "an http-router agent cannot declare tools: routers register only their \
+                         OpenAPI provider method"
+                            .to_string(),
+                    );
+                    break;
+                }
                 let t_name = t
                     .get("name")
                     .and_then(|v| v.as_str())
@@ -549,11 +586,82 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
         }
         match meta.get("httpMount") {
             None | Some(serde_json::Value::Null) => {}
-            Some(mount) => match parse_http_mount(mount) {
+            Some(mount) => match parse_http_mount(mount, is_router) {
                 Ok(details) => http_mount = Some(details),
                 Err(err) => mount_error = Some(err),
             },
         }
+    }
+
+    // What the mount is allowed to serve depends on the kind: routers serve
+    // uploaded static files and/or an OpenAPI document and must stay
+    // parameterless and literal-mounted, while filesystem bindings need the
+    // durable regular agent that owns the filesystem.
+    let mut kind_error: Option<String> = None;
+    if is_router {
+        match &http_mount {
+            None => {
+                kind_error = Some("an http-router agent needs an httpMount".to_string());
+            }
+            Some(mount) => {
+                if mount
+                    .path_prefix
+                    .iter()
+                    .any(|segment| !matches!(segment, PathSegment::Literal(_)))
+                {
+                    kind_error = Some(
+                        "an http-router mount cannot capture path variables: routers have no \
+                         constructor parameters"
+                            .to_string(),
+                    );
+                } else if !mount.filesystem_bindings.is_empty() {
+                    kind_error = Some(
+                        "filesystem bindings need a regular durable agent; a router serves \
+                         staticBindings"
+                            .to_string(),
+                    );
+                } else if mount.static_bindings.is_empty() && openapi_document.is_none() {
+                    kind_error = Some(
+                        "an http-router mount must serve staticBindings or an OpenAPI document"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    } else if http_mount
+        .as_ref()
+        .is_some_and(|mount| !mount.static_bindings.is_empty())
+    {
+        kind_error = Some(
+            "staticBindings need the http-router agent kind (they are served from files \
+             uploaded at deploy time, not from an agent filesystem)"
+                .to_string(),
+        );
+    }
+
+    // A router's only method is the OpenAPI provider, which Golem calls to build
+    // the deployment's `/openapi.yaml`.
+    let openapi_provider_method = if is_router && openapi_document.is_some() {
+        if let Some(document) = &openapi_document {
+            if let Err(err) = validate_openapi_document(document) {
+                metadata_error = Some(format!("openapiProvider is not usable: {err}"));
+            }
+        }
+        methods.push(AgentMethod {
+            name: "openapi".to_string(),
+            description: "Returns this router's OpenAPI document".to_string(),
+            http_endpoint: vec![],
+            prompt_hint: None,
+            input_schema: InputSchema::Parameters(vec![]),
+            output_schema: OutputSchema::Single(0),
+            read_only: None,
+        });
+        Some("openapi".to_string())
+    } else {
+        None
+    };
+    if let Some(mount) = http_mount.as_mut() {
+        mount.openapi_provider_method = openapi_provider_method;
     }
 
     // Build the result without early returns: errors and success are assembled
@@ -572,10 +680,18 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
         Err(AgentError::InvalidType(format!(
             "app metadata has an invalid httpMount: {err}"
         )))
+    } else if let Some(err) = metadata_error {
+        Err(AgentError::InvalidType(format!("app metadata is invalid: {err}")))
+    } else if let Some(err) = kind_error {
+        Err(AgentError::InvalidType(format!("app metadata is invalid: {err}")))
     } else {
         Ok(AgentType {
             type_name: name_str,
-            kind: AgentTypeKind::Regular,
+            kind: if is_router {
+                AgentTypeKind::HttpRouter
+            } else {
+                AgentTypeKind::Regular
+            },
             description: description_str,
             source_language: "roc".to_string(),
             schema: string_schema_graph(),
@@ -583,19 +699,59 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
                 name: None,
                 description: "Initializes the agent".to_string(),
                 prompt_hint: None,
-                input_schema: InputSchema::Parameters(vec![string_named_field(
-                    &constructor_param_name(&http_mount),
-                )]),
+                input_schema: InputSchema::Parameters(if is_router {
+                    // Routers are parameterless: their mount is literal-only, so
+                    // there is nothing to bind a constructor parameter to.
+                    vec![]
+                } else {
+                    vec![string_named_field(&constructor_param_name(&http_mount))]
+                }),
             },
             methods,
             dependencies: vec![],
-            mode: AgentMode::Durable,
+            mode: if is_router {
+                AgentMode::Ephemeral
+            } else {
+                AgentMode::Durable
+            },
             http_mount,
             snapshotting: Snapshotting::Disabled,
             config: config_decls,
         })
     };
     agent_type
+}
+
+/// Golem parses the provider's document as strict OpenAPI 3.1 JSON and answers a
+/// request for the deployment's spec with a 502 when it cannot, so check the
+/// parts it insists on here: the deployment fails with a message that names the
+/// app instead of a route that breaks at request time.
+fn validate_openapi_document(document: &str) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(document)
+        .map_err(|err| format!("it is not valid JSON: {err}"))?;
+    if value.get("openapi").and_then(|v| v.as_str()) != Some("3.1.0") {
+        return Err("it must declare \"openapi\": \"3.1.0\"".to_string());
+    }
+    if !value.get("paths").is_some_and(|paths| paths.is_object()) {
+        return Err("it must have a \"paths\" object".to_string());
+    }
+    Ok(())
+}
+
+/// The OpenAPI document the app declared, read from the metadata hook the same
+/// way the agent type is built. The provider method returns it verbatim.
+fn openapi_document() -> Option<String> {
+    let mut roc_out = MaybeUninit::<RocStr>::uninit();
+    let meta_json = unsafe {
+        main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
+        roc_out.assume_init().to_string()
+    };
+    serde_json::from_str::<serde_json::Value>(&meta_json)
+        .ok()?
+        .get("openapiProvider")?
+        .as_str()
+        .filter(|document| !document.is_empty())
+        .map(|document| document.to_string())
 }
 
 // Host effect functions exposed to the Roc guest runtime via C-ABI
@@ -1193,6 +1349,17 @@ impl Guest for GolemAgentHost {
         let state_str = get_current_state();
         let input_str = extract_input_string(&input);
 
+        // A router's provider method: Golem calls it to build the deployment's
+        // `/openapi.yaml`, and it returns the app's document verbatim.
+        if method_name == "openapi" {
+            return match openapi_document() {
+                Some(document) => Ok(Some(single_string_value_tree(&document))),
+                None => Err(AgentError::InvalidMethod(
+                    "this agent type declares no OpenAPI document".to_string(),
+                )),
+            };
+        }
+
         if method_name == "handle-message" || method_name == "message" {
             let roc_state = RocStr::from_str(&state_str);
             let roc_message = RocStr::from_str(&input_str);
@@ -1579,7 +1746,7 @@ mod tests {
             "corsAllowedPatterns": ["https://example.com"],
         });
 
-        let details = parse_http_mount(&mount).expect("mount should parse");
+        let details = parse_http_mount(&mount, false).expect("mount should parse");
         // The mount's capture is what names the constructor parameter.
         assert_eq!(constructor_param_name(&Some(details.clone())), "id");
         assert_eq!(constructor_param_name(&None), "config");
@@ -1626,21 +1793,38 @@ mod tests {
             "pathPrefix": ["site"],
             "filesystemBindings": [],
         });
-        let err = parse_http_mount(&no_capture).expect_err("mount without a capture");
+        let err = parse_http_mount(&no_capture, false).expect_err("mount without a capture");
         assert!(err.contains("must capture"), "unexpected error: {err}");
 
         let two_captures: serde_json::Value = serde_json::json!({
             "pathPrefix": ["{a}", "{b}"],
             "filesystemBindings": [],
         });
-        let err = parse_http_mount(&two_captures).expect_err("mount with two captures");
+        let err = parse_http_mount(&two_captures, false).expect_err("mount with two captures");
         assert!(err.contains("single"), "unexpected error: {err}");
+
+        // A router's mount is literal-only, and it must not capture anything.
+        let router_capture: serde_json::Value = serde_json::json!({
+            "pathPrefix": ["static", "{id}"],
+            "staticBindings": [],
+        });
+        let err = parse_http_mount(&router_capture, true).expect_err("router with a capture");
+        assert!(
+            err.contains("cannot capture path variables"),
+            "unexpected error: {err}"
+        );
+        let router_ok: serde_json::Value = serde_json::json!({
+            "pathPrefix": ["static"],
+            "staticBindings": [{"exact": {"publicPath": ["index.html"], "filePath": "/index.html"}}],
+        });
+        let details = parse_http_mount(&router_ok, true).expect("router mount should parse");
+        assert_eq!(details.static_bindings.len(), 1);
 
         let bad_segment: serde_json::Value = serde_json::json!({
             "pathPrefix": ["site", "{id}"],
             "filesystemBindings": [{"subtree": {"publicPrefix": ["../etc"], "filesystemRoot": "/assets"}}],
         });
-        let err = parse_http_mount(&bad_segment).expect_err("bad public segment");
+        let err = parse_http_mount(&bad_segment, false).expect_err("bad public segment");
         assert!(
             err.contains("not a valid path segment"),
             "unexpected error: {err}"
@@ -1650,7 +1834,7 @@ mod tests {
             "pathPrefix": ["site", "{id}"],
             "filesystemBindings": [{"exact": {"publicPath": ["a.txt"], "filePath": "a.txt"}}],
         });
-        let err = parse_http_mount(&bad_target).expect_err("relative file target");
+        let err = parse_http_mount(&bad_target, false).expect_err("relative file target");
         assert!(err.contains("absolute"), "unexpected error: {err}");
     }
 
@@ -1723,6 +1907,18 @@ mod tests {
         assert!(parts.body.is_empty());
 
         assert!(parse_http_request("not a url").is_err());
+    }
+
+    #[test]
+    fn test_validate_openapi_document() {
+        assert!(validate_openapi_document(
+            r#"{"openapi":"3.1.0","paths":{"/static/index.html":{"get":{}}}}"#
+        )
+        .is_ok());
+        // What Golem rejects with a 502 when the deployment serves its spec.
+        assert!(validate_openapi_document("not json").is_err());
+        assert!(validate_openapi_document(r#"{"openapi":"3.0.0","paths":{}}"#).is_err());
+        assert!(validate_openapi_document(r#"{"openapi":"3.1.0"}"#).is_err());
     }
 
     #[test]

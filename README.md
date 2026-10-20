@@ -363,16 +363,64 @@ error naming the problem, rather than at deploy time.
   servers, so the running server has to bind the port the manifest names (the
   CLI warns when `--custom-request-port` disagrees).
 
-Not implemented yet, and rejected by the server if declared today: `staticBindings`
-and an `openapiProviderMethod`, both of which Golem only accepts on an
-`http-router` agent type — that kind needs a `handle(request) -> response`
-method whose request/response bodies are `stream<u8>` resources, which this
-platform does not emit yet.
+The `site` example is the worked case for a **regular** agent's filesystem mount:
+`examples/site/main.roc`, `examples/site/static/`, and the `site:` checks in
+`tooling/e2e.sh` (subtree and exact bindings, 200/404, the configured response
+header, that the subtree does not expose other files, and that a first read
+materializes the instance's filesystem).
 
-The `site` example is the worked case: `examples/site/main.roc`,
-`examples/site/static/`, and the `site:` checks in `tooling/e2e.sh` (subtree and
-exact bindings, 200/404, the configured response header, and that an id that was
-never created has no files to serve).
+### Router mounts (static sites)
+
+A second kind of mount is served entirely by Golem. Declare
+`agentKind: HttpRouter` and Golem registers an `http-router` agent type: it is
+parameterless, ephemeral, has no filesystem, and the app never sees a request.
+Two things it can serve:
+
+- **`staticBindings`** map public paths onto files that `golem deploy` uploads
+  from the agent type's manifest `files:` list. The runtime answers matching
+  `GET`/`HEAD` requests from the content-addressed blob (so responses carry an
+  immutable `etag`, and no agent is created).
+- **`openapiProvider`** is the document Golem merges into the deployment's
+  `/openapi.yaml`, and the agent type's only method returns it. Its paths are
+  relative to the mount prefix, so `/index.html` in the document is
+  `/static/index.html` on the domain. A document that is not OpenAPI 3.1 JSON
+  with a `paths` object is rejected at `initialize` instead of breaking the spec
+  route with a 502.
+
+```roc
+metadata: {
+        name: "static-site-agent",
+        // ...
+        agentKind: HttpRouter,
+        httpMount: Mount({
+                pathPrefix: ["static"],
+                staticBindings: [
+                        Subtree({ publicPrefix: ["assets"], filesystemRoot: "/assets" }),
+                        Exact({ publicPath: ["index.html"], filePath: "/index.html" }),
+                ],
+                filesystemBindings: [],
+                fileResponseHeaders: [{ name: "referrer-policy", value: "no-referrer" }],
+                corsAllowedPatterns: ["*"],
+        }),
+        openapiProvider: OpenApi("{\"openapi\":\"3.1.0\", ...}"),
+}
+```
+
+Router mounts are literal-only (routers have no constructor parameter to capture)
+and cannot declare tools; the host refuses those combinations, along with
+`staticBindings` on a regular agent, before Golem sees them.
+
+Still to do: the **dynamic** router handler (`handle(request) -> response`),
+whose request and response bodies are `stream<u8>` values. That needs the schema
+graph to carry streams and the host to read the incoming body and write the
+outgoing one, which the synchronous Roc-facing effects do not model yet — so
+router mounts today serve uploaded files and the OpenAPI document, not computed
+responses.
+
+The `static_site` example is the worked case: `examples/static_site/main.roc`,
+`examples/static_site/static/`, and the `router:` checks in `tooling/e2e.sh`
+(both binding kinds, the immutable ETag, 404, and that the provider document
+reaches the deployment's spec).
 
 ---
 
