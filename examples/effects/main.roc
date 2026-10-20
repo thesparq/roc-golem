@@ -4,7 +4,9 @@ import pf.Golem exposing [Agent, defineAgent]
 import pf.Golem exposing [
 	awaitWebhook!,
 	createWebhook!,
+	fork!,
 	http!,
+	idempotencyKey!,
 	logInfo!,
 	makeAgentId!,
 	parseAgentId!,
@@ -21,7 +23,9 @@ import pf.Golem exposing [
 # harness can hand the agent an address to call; otherwise it falls back to a
 # local default. `webhookUrl` is the callback URL of the webhook this agent
 # created (`webhook-create`), kept in state because the webhook lives across
-# invocations: the POST arrives while no invocation is running.
+# invocations: the POST arrives while no invocation is running. `lastForkId` and
+# `lastKey` are what the `fork` and `idempotency` commands compare the next
+# invocation against.
 State :: {
 	baseUrl : Str,
 	lastStatus : Str,
@@ -31,6 +35,10 @@ State :: {
 	# is none, which is what `cancel` reports back.
 	cancelHandle : U32,
 	webhookUrl : Str,
+	# The phantom id of the copy the last `fork` created.
+	lastForkId : Str,
+	# The first idempotency key the last `idempotency` command generated.
+	lastKey : Str,
 }
 
 agent : Agent(State)
@@ -43,6 +51,8 @@ agent = defineAgent({
 			lastRpc: "none",
 			cancelHandle: 0,
 			webhookUrl: "",
+			lastForkId: "",
+			lastKey: "",
 		},
 
 	handleMessage!: |state, message|
@@ -148,7 +158,7 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"baseUrl\":\"${state.baseUrl}\",\"lastStatus\":\"${state.lastStatus}\",\"lastBody\":\"${state.lastBody}\",\"lastRpc\":\"${state.lastRpc}\",\"cancelHandle\":${U32.to_str(state.cancelHandle)},\"webhookUrl\":\"${state.webhookUrl}\"}",
+		"{\"baseUrl\":\"${state.baseUrl}\",\"lastStatus\":\"${state.lastStatus}\",\"lastBody\":\"${state.lastBody}\",\"lastRpc\":\"${state.lastRpc}\",\"cancelHandle\":${U32.to_str(state.cancelHandle)},\"webhookUrl\":\"${state.webhookUrl}\",\"lastForkId\":\"${state.lastForkId}\",\"lastKey\":\"${state.lastKey}\"}",
 
 	deserializeState: |stateJson|
 		Ok({
@@ -158,6 +168,8 @@ agent = defineAgent({
 			lastRpc: extract_json_str(stateJson, "lastRpc") ?? "none",
 			cancelHandle: U32.from_str(extract_json_str(stateJson, "cancelHandle") ?? "0") ?? 0,
 			webhookUrl: extract_json_str(stateJson, "webhookUrl") ?? "",
+			lastForkId: extract_json_str(stateJson, "lastForkId") ?? "",
+			lastKey: extract_json_str(stateJson, "lastKey") ?? "",
 		}),
 })
 
@@ -301,13 +313,82 @@ runCommand = |state, message| {
 					}
 			}
 
+		"fork" =>
+		# fork <target> <method> <payload>: forks this agent at this point. The
+		# copy the caller is invoking is the original and answers with the fork's
+		# phantom id; the forked copy is a separate agent that calls the target,
+		# which is how the e2e observes both sides of the fork.
+			forkAndReport!(state, command)
+
+		"idempotency" => {
+			# Two keys from this invocation, and the first key of the previous one:
+			# each call sits at its own oplog position, so the two here differ from
+			# each other and from the earlier invocation's, while a replay of this
+			# invocation hands the same positions the same keys back.
+			first = idempotencyKey!({})
+			second = idempotencyKey!({})
+			previous = if (state.lastKey == "") "none" else state.lastKey
+			same = if (first == second) "true" else "false"
+			{
+				state: { ..state, lastKey: first },
+				replies: ["Idempotency keys: first=${first} second=${second} agree=${same} previous-first=${previous}"],
+			}
+		}
+
 		_ =>
 			{
 				state,
-				replies: ["Commands: fetch, rpc, cancel, webhook-create, webhook-await, fire-and-forget <id> <method> <payload>, schedule <id> <method> <payload> <millis>, schedule-cancelable <id> <method> <payload> <millis>, parse-agent-id <id>, make-agent-id <type> <param>"],
+				replies: ["Commands: fetch, rpc, cancel, webhook-create, webhook-await, idempotency, fork <id> <method> <payload>, fire-and-forget <id> <method> <payload>, schedule <id> <method> <payload> <millis>, schedule-cancelable <id> <method> <payload> <millis>, parse-agent-id <id>, make-agent-id <type> <param>"],
 			}
 	}
 }
+
+## Forks this agent, then reports on the side this execution is: the original
+## answers the invocation the caller is waiting for, and the forked copy — a new
+## agent with the same agent id plus the phantom id in `fork-result` — calls the
+## target agent, so the e2e can see that the copy really continued.
+## `command.a`/`b`/`c` are the target, method and payload of that call.
+forkAndReport! : State, Command => { state : State, replies : List(Str) }
+forkAndReport! = |state, command|
+	match fork!({}) {
+		Err(err) =>
+			{
+				state,
+				replies: ["Forking failed: ${err}"],
+			}
+
+		Ok(result) =>
+			match Str.split_first(result, ":") {
+				Err(_) =>
+					{
+						state,
+						replies: ["Fork returned an unexpected result: ${result}"],
+					}
+
+				Ok({ before: side, after: forkedId }) =>
+					if (side == "forked")
+						match rpc!(command.a, command.b, command.c) {
+							Ok(reply) =>
+								{
+									state,
+									replies: ["Forked copy ${forkedId} called ${command.a}: ${reply}"],
+								}
+
+							Err(err) =>
+								{
+									state,
+									replies: ["Forked copy ${forkedId} could not call ${command.a}: ${err}"],
+								}
+						}
+					else {
+						previous = if (state.lastForkId == "") "none" else state.lastForkId
+						{
+							state: { ..state, lastForkId: forkedId },
+							replies: ["Forked copy ${forkedId} (original side; previous fork: ${previous})"],
+						}
+					}
+			}
+	}
 
 Command : {
 	verb : Str,

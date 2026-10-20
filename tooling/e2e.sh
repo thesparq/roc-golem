@@ -129,23 +129,31 @@ else
     failures=$((failures + 1))
 fi
 
-invoke() { # invoke <agent-id> <method> <argument> -> result line
-    # A result wider than the terminal comes back wrapped onto continuation
-    # lines indented by five spaces, so the wrap is undone before the checks
-    # see the text (the CLI only wraps when it can see a terminal width).
-    "$CLI" $CLI_EXTRA -L -A "$MANIFEST" agent invoke "$1" "$2" "$3" 2>&1 \
-        | sed -e ':slurp' -e '$!{N;bslurp}' -e 's/\n     / /g' \
+# A result wider than the terminal comes back wrapped onto continuation lines
+# indented by five spaces, so the wrap is undone before the checks see the text
+# (the CLI only wraps when it can see a terminal width); the CLI's own quoting of
+# the result is stripped as well.
+unwrap_cli() {
+    sed -e ':slurp' -e '$!{N;bslurp}' -e 's/\n     / /g' \
         | tail -n 1 \
         | sed -e 's/^"//' -e 's/"$//' -e 's/\\"/"/g'
+}
+
+invoke() { # invoke <agent-id> <method> <argument> -> result line
+    "$CLI" $CLI_EXTRA -L -A "$MANIFEST" agent invoke "$1" "$2" "$3" 2>&1 | unwrap_cli
+}
+
+invoke_with_key() { # invoke_with_key <idempotency-key> <agent-id> <method> <argument>
+    # The same, with an explicit idempotency key: a second call with the same key
+    # is answered from the first invocation's recorded result instead of running
+    # the agent again.
+    "$CLI" $CLI_EXTRA -L -A "$MANIFEST" agent invoke -i "$1" "$2" "$3" "$4" 2>&1 | unwrap_cli
 }
 
 invoke_within() { # invoke_within <seconds> <agent-id> <method> <argument>
     # The same, but bounded: `awaitWebhook!` blocks until the callback arrives,
     # so a callback that never came has to fail its check, not hang the run.
-    timeout "$1" "$CLI" $CLI_EXTRA -L -A "$MANIFEST" agent invoke "$2" "$3" "$4" 2>&1 \
-        | sed -e ':slurp' -e '$!{N;bslurp}' -e 's/\n     / /g' \
-        | tail -n 1 \
-        | sed -e 's/^"//' -e 's/"$//' -e 's/\\"/"/g' || true
+    { timeout "$1" "$CLI" $CLI_EXTRA -L -A "$MANIFEST" agent invoke "$2" "$3" "$4" 2>&1 || true; } | unwrap_cli
 }
 
 # Requests to a mounted agent are routed by the `Host` header, which must be the
@@ -313,6 +321,96 @@ check "retry: the first walk step returns the policy's delay" \
     'first={"delayNanos":100000000' "$retry_reply"
 check "retry: the second walk step returns the policy's delay" \
     'second={"delayNanos":100000000' "$retry_reply"
+
+say "==> Oplog and execution control (golem:api/host)"
+# What an app can reach on 1.6: fail an invocation (`trap!`), name an external
+# write durably (`idempotencyKey!`), fork the agent (`fork!`), wait for the oplog
+# to reach replicas (`oplogCommit!`), and resolve components and agents
+# (`resolveComponentId!` / `resolveAgentId!`). The 1.5-era cursor and idempotence
+# switches are gone — see the README. `trap`, `oplog-commit` and the resolvers
+# live on the counter (the same commands the ABI harness drives against stubs);
+# `fork` and `idempotency` need the effects agent's state and RPC.
+control_agent="counter-agent(\"$RUN_ID-control\")"
+
+# `trap!` never returns: the invocation fails with the reason, and Golem leaves
+# the agent holding that failed invocation until an operator reverts it (which is
+# why `revert-agent` stays a CLI operation and is not an effect), so this uses an
+# agent id no other check touches.
+check "trap: the invocation fails with the reason" \
+    "guest-requested trap: $RUN_ID trap reason" \
+    "$(invoke "counter-agent(\"$RUN_ID-trap\")" handle-message "$(message_arg "trap $RUN_ID trap reason")")"
+
+check "oplog-commit: reaching the replicas returns" "Committed the oplog to 2 replicas" \
+    "$(invoke "$control_agent" handle-message '"oplog-commit 2"')"
+
+# Both resolvers name a component of this deployment — the counter's own,
+# `roc-golem:counter` — and the agent id the second one returns has to carry the
+# component id the first one resolved.
+resolved_component="$(invoke "$control_agent" handle-message '"resolve-component-id roc-golem:counter"')"
+component_id="${resolved_component#Resolved component: }"
+check_true "resolve-component-id: a deployed component resolves to a UUID" \
+    "$([[ "$component_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && echo true || echo false)"
+resolved_agent="$(invoke "$control_agent" handle-message \
+    "$(message_arg "resolve-agent-id roc-golem:counter counter-agent(\"$RUN_ID-control\")")")"
+check "resolve-agent-id: the resolved agent carries the component id" \
+    "\"componentId\":\"$component_id\"" "$resolved_agent"
+check "resolve-agent-id: the name the app asked for comes back" \
+    "\"agentId\":\"counter-agent(" "$resolved_agent"
+check "resolve-component-id: a reference that names no component is reported" \
+    "no component named \"roc-golem:nope\"" \
+    "$(invoke "$control_agent" handle-message '"resolve-component-id roc-golem:nope"')"
+
+# `fork!` copies the agent at the call: the invocation the CLI is waiting for
+# answers on the original side, and the copy — a new agent under the same id plus
+# the phantom id both sides are told — runs the rest of the handler too. That
+# handler calls the counter, so the counter's count is what shows the copy really
+# continued, and the copy can then be invoked under its own id.
+fork_agent="effects-agent(\"$RUN_ID-fork\")"
+fork_calls="counter-agent(\"$RUN_ID-fork-calls\")"
+
+first_fork="$(invoke "$fork_agent" handle-message "$(message_arg "fork $fork_calls handle-message increment")")"
+check "fork: the original side reports the fork" "original side" "$first_fork"
+first_phantom="${first_fork#Forked copy }"
+first_phantom="${first_phantom%% *}"
+check_true "fork: the reported phantom id is a UUID" \
+    "$([[ "$first_phantom" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && echo true || echo false)"
+check "fork: the forked copy continued and called the target" "Current count is 1" \
+    "$(poll_reply "$fork_calls" '"get"' "Current count is 1")"
+
+second_fork="$(invoke "$fork_agent" handle-message "$(message_arg "fork $fork_calls handle-message increment")")"
+second_phantom="${second_fork#Forked copy }"
+second_phantom="${second_phantom%% *}"
+check_true "fork: each fork gets its own phantom id" \
+    "$([[ -n "$second_phantom" && "$second_phantom" != "$first_phantom" ]] && echo true || echo false)"
+check "fork: the original's state carries the previous fork" \
+    "previous fork: $first_phantom" "$second_fork"
+check "fork: the second copy continued too" "Current count is 2" \
+    "$(poll_reply "$fork_calls" '"get"' "Current count is 2")"
+check "fork: the forked copy is a live agent instance" "effects-agent is up" \
+    "$(invoke "effects-agent(\"$RUN_ID-fork\")[$first_phantom]" handle-message '"status"')"
+
+# `idempotencyKey!` is durable per call site: Golem derives the key from the
+# call's position in the invocation's oplog and records it, so a replay of that
+# invocation hands the same keys back. Two calls in one invocation are two
+# positions (their keys differ), a later invocation is a new key sequence, and a
+# second CLI call under the same idempotency key replays the recorded answer.
+idem_agent="effects-agent(\"$RUN_ID-idem\")"
+idem_key="$RUN_ID-idem-key"
+first_idem="$(invoke_with_key "$idem_key" "$idem_agent" handle-message '"idempotency"')"
+first_key="${first_idem#*first=}"
+first_key="${first_key%% *}"
+check_true "idempotency: the first key is a UUID" \
+    "$([[ "$first_key" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && echo true || echo false)"
+check "idempotency: each call in an invocation is its own position" "agree=false" "$first_idem"
+check_true "idempotency: the same idempotency key replays the recorded keys" \
+    "$([[ "$(invoke_with_key "$idem_key" "$idem_agent" handle-message '"idempotency"')" == "$first_idem" ]] && echo true || echo false)"
+later_idem="$(invoke "$idem_agent" handle-message '"idempotency"')"
+second_key="${later_idem#*first=}"
+second_key="${second_key%% *}"
+check "idempotency: a later invocation is a new key sequence" \
+    "previous-first=$first_key" "$later_idem"
+check_true "idempotency: and its keys differ from the previous invocation's" \
+    "$([[ -n "$second_key" && "$second_key" != "$first_key" ]] && echo true || echo false)"
 
 say "==> Webhooks (promise + POST callback)"
 # `createWebhook!` registers a promise and returns the URL that completes it.

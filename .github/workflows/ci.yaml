@@ -88,6 +88,29 @@ jobs:
             --then-message retry --then-reply '"countBox"' \
             --expect-retry "state=3 bytes"
 
+          # The `golem:api/host` execution-control effects are synchronous too:
+          # the resolve stubs answer with a known component id (which the app's
+          # reply has to carry back), `oplog-commit` is recorded, and a `trap`
+          # fails the invocation — the one failure the harness reports as a trap.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message 'resolve-agent-id roc-golem:counter counter-agent("c-1")' \
+            --reply '"componentId":"01020304-0506-0708-090a-0b0c0d0e0f10"' \
+            --then-message 'resolve-component-id roc-golem:counter' \
+            --then-reply 'Resolved component: 01020304-0506-0708-090a-0b0c0d0e0f10' \
+            --expect-host-call 'resolve-agent-id(component=roc-golem:counter, agent=counter-agent("c-1"))'
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --message "oplog-commit 2" --reply "Committed the oplog to 2 replicas" \
+            --expect-host-call "oplog-commit(replicas=2)"
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --message "trap harness trap reason" \
+            --expect-trap "harness trap reason" \
+            --expect-host-call "trap(reason=harness trap reason)"
+
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
             --message hello --reply "AI assistant" \

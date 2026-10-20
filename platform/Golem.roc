@@ -43,6 +43,12 @@ module [
 	nextRetryDelay!,
 	setRetryPolicy!,
 	removeRetryPolicy!,
+	trap!,
+	idempotencyKey!,
+	fork!,
+	oplogCommit!,
+	resolveAgentId!,
+	resolveComponentId!,
 ]
 
 import Effect
@@ -258,3 +264,56 @@ setRetryPolicy! = |policyJson|
 removeRetryPolicy! : Str => {}
 removeRetryPolicy! = |name|
 	Effect.removeRetryPolicy!(name)
+
+## Fails the current invocation with `reason` and never returns. The host turns
+## the call into a trap, so the failure is permanent and uncaught: Golem does not
+## retry it, and the app has no result to branch on. A condition the app should
+## handle belongs in its own error handling instead (`Try`, a `Err` reply, …).
+trap! : Str => {}
+trap! = |reason|
+	Effect.trap!(reason)
+
+## A durable key for an external write, as a UUID string. Golem derives it from
+## the position of this call in the invocation's oplog, so a replay of the same
+## invocation (a retry, or recovery after a crash) hands the same call the key the
+## earlier attempt used — which is what makes a repeated write duplicate-safe at
+## the peer. Pass it to whatever the peer treats as an idempotency key; a header
+## alone is not a guarantee. Two calls in one invocation are two positions, so
+## each gets its own key.
+idempotencyKey! : {} => Str
+idempotencyKey! = |_|
+	Effect.idempotencyKey!({})
+
+## Forks the agent at this point in the invocation: both copies continue from
+## here, and each gets its own result — `Ok("original:<phantom-id>")` on the copy
+## the caller is invoking, `Ok("forked:<phantom-id>")` on the new one. The phantom
+## id is the same on both sides and is what the forked copy's agent id carries;
+## the fork is durable, so neither copy replays the work that led to it twice.
+## The two copies are separate agents after this point — they can rejoin through a
+## promise or talk over `rpc!`.
+fork! : {} => Try(Str, Str)
+fork! = |_|
+	Effect.fork!({})
+
+## Blocks until the oplog is durable on `replicas` replicas (or on all of them,
+## when the deployment has fewer). It is a replication barrier for this agent's
+## own history: not a transaction and no guarantee about an external system.
+oplogCommit! : U8 => {}
+oplogCommit! = |replicas|
+	Effect.oplogCommit!(replicas)
+
+## The agent id for `agentName` in the `componentReference` component, as
+## `{"componentId": …, "agentId": …}`. The reference is the component's name as
+## the manifest declares it (`"roc-golem:counter"`); the name is an agent id
+## string such as `counter-agent("c-1")`, and it is not checked for existence. A
+## reference that names no deployed component is reported as `Err`.
+resolveAgentId! : Str, Str => Try(Str, Str)
+resolveAgentId! = |componentReference, agentName|
+	Effect.resolveAgentId!(componentReference, agentName)
+
+## The component id of a deployed component, as a UUID string. The reference is
+## the component's name as the manifest declares it (`"roc-golem:counter"`); a
+## reference that names no deployed component is reported as `Err`.
+resolveComponentId! : Str => Try(Str, Str)
+resolveComponentId! = |componentReference|
+	Effect.resolveComponentId!(componentReference)

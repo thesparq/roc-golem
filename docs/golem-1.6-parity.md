@@ -16,6 +16,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | webhooks | `golem:agent/host` + `golem:api/host` promises | `createWebhook!` / `awaitWebhook!`; the POST callback completes a durable promise |
 | user-defined snapshots | `golem:api/save-snapshot`/`load-snapshot` | state JSON; e2e-covered across an incompatible revision |
 | quotas + retry policies | `golem:quota/types`, `golem:api/retry` | `newQuotaToken!` / `quotaReserve!` / `quotaCommit!` / `quotaSplit!` / `quotaMerge!`, and `getRetryPolicies!` / `resolveRetryPolicy!` / `nextRetryDelay!` / … with the policy trees as JSON |
+| oplog + execution control | `golem:api/host` | `trap!`, `idempotencyKey!`, `fork!`, `oplogCommit!`, `resolveComponentId!` / `resolveAgentId!` — the part of the 1.5 surface 1.6 kept (see item 10) |
 | tools | `golem:tool/guest` | CLI/MCP surface; stateless (fresh instance) |
 | read-only methods | agent metadata | declared for tools; until-write cache |
 | HTTP mounts | agent metadata | filesystem bindings (regular agents), static bindings + OpenAPI provider (routers) |
@@ -107,9 +108,45 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 9. **The agent's own filesystem**: the SDKs read/write files in the agent's
    durable filesystem; we can only *serve* files through mounts. Needs
    `wasi:filesystem` in the world plus effects. Cost: medium.
-10. **Oplog/execution control**: `get-oplog-index`, `mark-begin-operation`,
-    `get-idempotence-mode`, interrupt/suspend, `fork`/`revert`. Cost: small each,
-    mostly unused by app code.
+10. ~~**Oplog/execution control**~~ — **done**: six effects on `golem:api/host`,
+    which was already imported: `trap!` (`trap`, never returns — the invocation
+    fails with the reason), `idempotencyKey!` (`generate-idempotency-key`, as a
+    UUID string), `fork!` (`fork`, as `Try(Str, Str)` with
+    `"original:<phantom-id>"` / `"forked:<phantom-id>"`), `oplogCommit!`
+    (`oplog-commit`), `resolveComponentId!` and `resolveAgentId!` (the two
+    resolvers; the second returns `{"componentId": …, "agentId": …}`). They are
+    synchronous host calls, so no `block_on` — and the ABI harness drives them:
+    the counter example carries `trap`, `oplog-commit`,
+    `resolve-agent-id` and `resolve-component-id` commands, whose replies (and
+    recorded host calls) the harness checks against stubs, while the e2e runs the
+    same commands against a real deployment plus `fork!` and `idempotencyKey!` on
+    the effects agent.
+
+    Two things worth knowing about the surface itself:
+
+    - **Most of the 1.5 execution-control interface is gone in 1.6, on purpose**
+      (`wit/deps/golem-1.x/golem-host.wit` has none of them, and
+      `docs/src/content/next/develop/durability.mdx` in
+      [golem-verify](https://github.com/golemcloud/golem), tag `v1.6.0`, says
+      why): `get-oplog-index` and `set-oplog-index` (guests no longer read or
+      move the execution cursor), `mark-begin-operation` and
+      `mark-end-operation` (no guest-defined oplog markers; the runtime repairs
+      an incomplete call at its own `Start` instead of rerunning a group of
+      completed effects), and `get-idempotence-mode` / `set-idempotence-mode`
+      (no guest switch that declares host calls idempotent; a remote write has to
+      be made duplicate-safe at the peer, and retry predicates must not use
+      `is-idempotent`). Do not try to expose them.
+    - `idempotencyKey!` is **per call position**, not per invocation: Golem
+      derives the key from the call's oplog index and records it with the
+      invocation's outcome, so two calls in one invocation return two different
+      keys, a later invocation is a new sequence, and a replay of the invocation
+      hands the recorded keys back. The e2e asserts exactly that (`agree=false`
+      for the two keys of one invocation, the recorded answer for a re-invocation
+      under the same key, and a different `previous-first` after a new one).
+    - `update-agent`, `revert-agent` and `get-agent-metadata` are still in the
+      interface but stay operator-facing (the CLI does them; a trapped agent's
+      failed invocation is reverted with `golem agent revert`), so the platform
+      does not expose them.
 11. **Tool middleware** (`golem:tool/middleware`) and **tool streams**
     (`golem:tool/streams`, stdin/stdout/stderr for CLI-shaped tools). Cost:
     medium.

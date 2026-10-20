@@ -7,9 +7,13 @@ import pf.Golem exposing [
 	getRetryPolicies!,
 	newQuotaToken!,
 	nextRetryDelay!,
+	oplogCommit!,
 	quotaCommit!,
 	quotaReserve!,
+	resolveAgentId!,
+	resolveComponentId!,
 	resolveRetryPolicy!,
+	trap!,
 ]
 
 State :: {
@@ -88,10 +92,55 @@ agent = defineAgent({
 					replies: [retryReport({})],
 				}
 
+			"trap" =>
+			# trap <reason>: fails the invocation with the reason, which is what
+			# the ABI harness checks the trap path with and what the e2e observes
+			# as the failed invocation's message. Nothing after it runs.
+				{
+					state,
+					replies: [trapWith!(command.rest)],
+				}
+
+			"oplog-commit" =>
+			# oplog-commit <replicas>: waits for the oplog to reach that many
+			# replicas (or all of them) and then returns.
+				match U8.from_str(command.rest) {
+					Err(_) =>
+						{
+							state,
+							replies: ["Usage: oplog-commit <replicas>, for example `oplog-commit 2`"],
+						}
+
+					Ok(replicas) => {
+						oplogCommit!(replicas)
+						{
+							state,
+							replies: ["Committed the oplog to ${U8.to_str(replicas)} replicas"],
+						}
+					}
+				}
+
+			"resolve-agent-id" => {
+				# resolve-agent-id <component> <agent-name>, for example
+				# `resolve-agent-id roc-golem:counter counter-agent("c-1")`.
+				target = splitToken(command.rest)
+				{
+					state,
+					replies: [describeResolveAgentId!(target.first, target.rest)],
+				}
+			}
+
+			"resolve-component-id" =>
+			# resolve-component-id <component>.
+				{
+					state,
+					replies: [describeResolveComponentId!(command.rest)],
+				}
+
 			_ =>
 				{
 					state,
-					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry"],
+					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>"],
 				}
 		}
 	},
@@ -170,6 +219,34 @@ splitToken = |text|
 		Ok({ before, after }) => { first: before, rest: after }
 
 		Err(_) => { first: text, rest: "" }
+	}
+
+## Fails the invocation with `reason`; the host traps, so nothing after this
+## returns. It sits in a helper so the handler's arm still has a reply to name:
+## the value never comes back.
+trapWith! : Str => Str
+trapWith! = |reason| {
+	trap!(reason)
+	"trap! returned: this is unreachable"
+}
+
+## The agent id `resolve-agent-id <component> <agent-name>` reports:
+## `{"componentId": …, "agentId": …}` from the host, or why the reference
+## resolved to nothing.
+describeResolveAgentId! : Str, Str => Str
+describeResolveAgentId! = |componentReference, agentName|
+	match resolveAgentId!(componentReference, agentName) {
+		Ok(agentIdJson) => "Resolved agent: ${agentIdJson}"
+		Err(err) => "Resolving an agent id failed: ${err}"
+	}
+
+## The component id `resolve-component-id <component>` reports, or why the
+## reference resolved to nothing.
+describeResolveComponentId! : Str => Str
+describeResolveComponentId! = |componentReference|
+	match resolveComponentId!(componentReference) {
+		Ok(componentId) => "Resolved component: ${componentId}"
+		Err(err) => "Resolving a component failed: ${err}"
 	}
 
 ## Reserves and commits `units` of the `example-requests` resource the manifest
