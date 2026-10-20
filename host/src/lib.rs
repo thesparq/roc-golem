@@ -1984,6 +1984,257 @@ pub unsafe extern "C" fn rocFxResolveAgentId(
     }
 }
 
+// Key-value and blobstore effects
+//
+// `wasi:keyvalue` and `wasi:blobstore` are the two shared stores Golem gives an
+// environment: buckets of key-value pairs, and containers of named objects.
+// Both belong to the environment rather than to one agent, both are
+// permission-checked and recorded in the agent's oplog by the runtime, and both
+// are synchronous interfaces — the blobstore's `list-objects` is the one call
+// whose `stream<object-name>` the host has to drain itself.
+//
+// Values on the wire are bytes; the effects carry them as lossy-UTF-8 text, the
+// convention `http!` and `awaitWebhook!` already use for bodies. Buckets, keys,
+// containers and objects are named by strings, so no handle reaches the app.
+
+/// What `kvGet!` answers when the bucket holds no such key: a missing key is an
+/// ordinary answer rather than an error, and it has to be told apart from an
+/// empty value. The value's text comes back verbatim (so an empty value is
+/// `""`), and the JSON literal `null` marks the missing case. The one blind
+/// spot is a value that is itself the text `null`; `kvExists!` is the check to
+/// reach for when that matters.
+const MISSING_KEY_TEXT: &str = "null";
+
+/// The text of a `wasi:keyvalue` error: its error type is a resource whose only
+/// reader is `trace`.
+fn kv_error_text(error: wasi::keyvalue::wasi_keyvalue_error::Error) -> String {
+    error.trace()
+}
+
+/// Opens the bucket an effect names. Buckets are implicit — the store makes one
+/// the first time it is written to — so opening only fails where the store
+/// itself refuses.
+fn kv_bucket(name: &str) -> Result<wasi::keyvalue::types::Bucket, String> {
+    wasi::keyvalue::types::Bucket::open_bucket(name).map_err(kv_error_text)
+}
+
+/// The container an object operation names. A container that does not exist is
+/// reported as an error by the host (`Container not found`), which is the
+/// effect's `Err`.
+fn blob_container(name: &str) -> Result<wasi::blobstore::container::Container, String> {
+    wasi::blobstore::blobstore::get_container(name)
+}
+
+/// The object names of a `list-objects` stream as the JSON array `blobList!`
+/// promises: arbitrary text, so the encoder builds it rather than a hand-rolled
+/// join.
+fn names_json(names: &[String]) -> String {
+    serde_json::to_string(names).unwrap_or_else(|_| String::from("[]"))
+}
+
+/// The `Try` an effect whose success value is text returns.
+fn text_result(result: Result<String, String>) -> RocResult<RocStr, RocStr> {
+    match result {
+        Ok(text) => RocResult::ok(RocStr::from_str(&text)),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+/// The `Try` an effect whose success value is `{}` returns (`Try({}, Str)`).
+fn unit_result(result: Result<(), String>) -> RocResult<(), RocStr> {
+    match result {
+        Ok(()) => RocResult::ok(()),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+/// The `Try` of `kvExists!` / `blobHas!`.
+fn bool_result(result: Result<bool, String>) -> RocResult<bool, RocStr> {
+    match result {
+        Ok(value) => RocResult::ok(value),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+fn kv_get(bucket: &str, key: &str) -> Result<String, String> {
+    let bucket = kv_bucket(bucket)?;
+    let Some(value) = wasi::keyvalue::eventual::get(&bucket, key).map_err(kv_error_text)? else {
+        return Ok(String::from(MISSING_KEY_TEXT));
+    };
+    let bytes = value
+        .incoming_value_consume_sync()
+        .map_err(kv_error_text)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn kv_set(bucket: &str, key: &str, value: &str) -> Result<(), String> {
+    let bucket = kv_bucket(bucket)?;
+    let outgoing = wasi::keyvalue::types::OutgoingValue::new_outgoing_value();
+    outgoing
+        .outgoing_value_write_body_sync(value.as_bytes())
+        .map_err(kv_error_text)?;
+    wasi::keyvalue::eventual::set(&bucket, key, &outgoing).map_err(kv_error_text)
+}
+
+fn kv_delete(bucket: &str, key: &str) -> Result<(), String> {
+    let bucket = kv_bucket(bucket)?;
+    wasi::keyvalue::eventual::delete(&bucket, key).map_err(kv_error_text)
+}
+
+fn kv_exists(bucket: &str, key: &str) -> Result<bool, String> {
+    let bucket = kv_bucket(bucket)?;
+    wasi::keyvalue::eventual::exists(&bucket, key).map_err(kv_error_text)
+}
+
+/// The whole object as lossy UTF-8. `get-data` takes an inclusive byte range,
+/// so the size has to come from `object-info` first: the whole object is
+/// `0..=size-1`, and a zero-length object is read without a range at all (the
+/// store rejects an empty range rather than answering with no bytes).
+fn blob_get(container: &str, object: &str) -> Result<String, String> {
+    let container = blob_container(container)?;
+    let size = container.object_info(object)?.size;
+    let Some(last_byte) = size.checked_sub(1) else {
+        return Ok(String::new());
+    };
+    let value = container.get_data(object, 0, last_byte)?;
+    let bytes = value.incoming_value_consume_sync()?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn blob_put(container: &str, object: &str, value: &str) -> Result<(), String> {
+    let container = blob_container(container)?;
+    // An outgoing value's body is written through a stream: attaching the
+    // stream returns right away and the host reads it while the guest writes
+    // (the same shape `http!` uses for a request body), so the bytes have to be
+    // in before `write-data` copies them.
+    let outgoing = wasi::blobstore::types::OutgoingValue::new_outgoing_value();
+    let (mut body_tx, body_rx) = wit_stream::new();
+    outgoing
+        .outgoing_value_write_body(body_rx)
+        .map_err(|()| String::from("the host refused the object body stream"))?;
+    let remaining = wit_bindgen::block_on(body_tx.write_all(value.as_bytes().to_vec()));
+    drop(body_tx);
+    if !remaining.is_empty() {
+        return Err(format!(
+            "the host did not take the whole object body ({} bytes left)",
+            remaining.len()
+        ));
+    }
+    container.write_data(object, &outgoing)
+}
+
+fn blob_has(container: &str, object: &str) -> Result<bool, String> {
+    let container = blob_container(container)?;
+    container.has_object(object)
+}
+
+fn blob_list(container: &str) -> Result<String, String> {
+    let container = blob_container(container)?;
+    // The names arrive as a stream; the effect answers with the JSON array of
+    // all of them, so the host drains the stream here.
+    let names = wit_bindgen::block_on(container.list_objects()?.collect());
+    Ok(names_json(&names))
+}
+
+fn blob_delete(container: &str, object: &str) -> Result<(), String> {
+    let container = blob_container(container)?;
+    container.delete_object(object)
+}
+
+/// `kvGet!`: the value at `key` in `bucket` as lossy UTF-8, or the literal
+/// `null` when the key is absent (see `MISSING_KEY_TEXT`).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxKvGet(bucket: RocStr, key: RocStr) -> RocResult<RocStr, RocStr> {
+    // Both arguments are owned by this function and released when they drop.
+    text_result(kv_get(bucket.as_str(), key.as_str()))
+}
+
+/// `kvSet!`: stores `value` (as UTF-8 bytes) at `key` in `bucket`, overwriting
+/// whatever was there.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxKvSet(
+    bucket: RocStr,
+    key: RocStr,
+    value: RocStr,
+) -> RocResult<(), RocStr> {
+    unit_result(kv_set(bucket.as_str(), key.as_str(), value.as_str()))
+}
+
+/// `kvDelete!`: removes `key` from `bucket`; deleting a key that is not there
+/// is not an error.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxKvDelete(bucket: RocStr, key: RocStr) -> RocResult<(), RocStr> {
+    unit_result(kv_delete(bucket.as_str(), key.as_str()))
+}
+
+/// `kvExists!`: whether `bucket` holds `key` — the direct check that does not
+/// need the value read.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxKvExists(bucket: RocStr, key: RocStr) -> RocResult<bool, RocStr> {
+    bool_result(kv_exists(bucket.as_str(), key.as_str()))
+}
+
+/// `blobCreateContainer!`: creates the container if it is not there yet.
+/// Creating one that exists is not an error — the store keeps a directory entry
+/// and a second call leaves it alone.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxBlobCreateContainer(name: RocStr) -> RocResult<(), RocStr> {
+    let name = name.as_str();
+    // The host reads the container back to report its creation time, which the
+    // effect does not expose: drop the handle and keep the outcome.
+    unit_result(wasi::blobstore::blobstore::create_container(name).map(|_container| ()))
+}
+
+/// `blobPut!`: stores `value` (as UTF-8 bytes) as `object` in `container`,
+/// replacing an object with that name.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxBlobPut(
+    container: RocStr,
+    object: RocStr,
+    value: RocStr,
+) -> RocResult<(), RocStr> {
+    unit_result(blob_put(
+        container.as_str(),
+        object.as_str(),
+        value.as_str(),
+    ))
+}
+
+/// `blobGet!`: the whole object as lossy UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxBlobGet(
+    container: RocStr,
+    object: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    text_result(blob_get(container.as_str(), object.as_str()))
+}
+
+/// `blobHas!`: whether `container` holds an object with that name.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxBlobHas(
+    container: RocStr,
+    object: RocStr,
+) -> RocResult<bool, RocStr> {
+    bool_result(blob_has(container.as_str(), object.as_str()))
+}
+
+/// `blobList!`: the names in `container` as a JSON array of strings (`[]` for
+/// an empty container), in the store's own order — the interface promises none.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxBlobList(container: RocStr) -> RocResult<RocStr, RocStr> {
+    text_result(blob_list(container.as_str()))
+}
+
+/// `blobDelete!`: deletes the object; deleting one that is not there is not an
+/// error.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxBlobDelete(
+    container: RocStr,
+    object: RocStr,
+) -> RocResult<(), RocStr> {
+    unit_result(blob_delete(container.as_str(), object.as_str()))
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
@@ -2805,6 +3056,40 @@ mod tests {
                 "the hosted function released the argument it owned"
             );
         }
+    }
+
+    /// `blobList!` renders the names the stream produced as a JSON array of
+    /// strings, which is what the effect promises the app.
+    #[test]
+    fn test_names_json() {
+        assert_eq!(crate::names_json(&[]), "[]");
+        assert_eq!(crate::names_json(&[String::from("one")]), "[\"one\"]");
+        assert_eq!(
+            crate::names_json(&[String::from("a\"b"), String::from("c\\d")]),
+            "[\"a\\\"b\",\"c\\\\d\"]"
+        );
+    }
+
+    /// The three result shapes the store effects use (`Try(Str, …)`,
+    /// `Try({}, …)` and `Try(Bool, …)`) travel through the hand-written ABI the
+    /// way the other effects' results do.
+    #[test]
+    fn test_store_result_helpers() {
+        let ok = crate::text_result(Ok(String::from("value")));
+        assert!(matches!(ok.into_result(), Ok(text) if text.as_str() == "value"));
+        let err = crate::text_result(Err(String::from("store is down")));
+        assert!(matches!(err.into_result(), Err(text) if text.as_str() == "store is down"));
+
+        assert!(matches!(crate::unit_result(Ok(())).into_result(), Ok(())));
+        assert!(
+            matches!(crate::unit_result(Err(String::from("no"))).into_result(), Err(text) if text.as_str() == "no")
+        );
+
+        assert!(matches!(crate::bool_result(Ok(true)).into_result(), Ok(true)));
+        assert!(matches!(crate::bool_result(Ok(false)).into_result(), Ok(false)));
+        assert!(
+            matches!(crate::bool_result(Err(String::from("no"))).into_result(), Err(text) if text.as_str() == "no")
+        );
     }
 
     #[test]

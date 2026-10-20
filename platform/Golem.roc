@@ -49,6 +49,16 @@ module [
 	oplogCommit!,
 	resolveAgentId!,
 	resolveComponentId!,
+	kvGet!,
+	kvSet!,
+	kvDelete!,
+	kvExists!,
+	blobCreateContainer!,
+	blobPut!,
+	blobGet!,
+	blobHas!,
+	blobList!,
+	blobDelete!,
 ]
 
 import Effect
@@ -317,3 +327,75 @@ resolveAgentId! = |componentReference, agentName|
 resolveComponentId! : Str => Try(Str, Str)
 resolveComponentId! = |componentReference|
 	Effect.resolveComponentId!(componentReference)
+
+## The key-value store (`wasi:keyvalue/eventual`): buckets of key-value pairs,
+## shared by the whole environment rather than owned by one agent. Values go in
+## and come back as lossy-UTF-8 text — bytes are the store's wire type and this
+## platform carries them the way `http!` carries a body — and a bucket is made
+## by the first write to it, so there is nothing to open first.
+##
+## `kvGet!` answers with the value's text, and with the JSON literal `null`
+## when the bucket holds no such key. That is how a missing key is told apart
+## from an empty value (an empty value reads as `""`); the one value it cannot
+## tell apart is stored text that is itself `null`, which `kvExists!` resolves.
+kvGet! : Str, Str => Try(Str, Str)
+kvGet! = |bucket, key|
+	Effect.kvGet!(bucket, key)
+
+## Stores `value` (as UTF-8 bytes) at `key` in `bucket`, replacing whatever was
+## there. The bucket comes into existence with the first write.
+kvSet! : Str, Str, Str => Try({}, Str)
+kvSet! = |bucket, key, value|
+	Effect.kvSet!(bucket, key, value)
+
+## Removes `key` from `bucket`. Deleting a key that is not there is not an
+## error.
+kvDelete! : Str, Str => Try({}, Str)
+kvDelete! = |bucket, key|
+	Effect.kvDelete!(bucket, key)
+
+## Whether `bucket` holds `key` — the direct check, without reading the value.
+kvExists! : Str, Str => Try(Bool, Str)
+kvExists! = |bucket, key|
+	Effect.kvExists!(bucket, key)
+
+## The blobstore (`wasi:blobstore`): containers of named objects, shared by the
+## whole environment. Object bodies go in and come back as lossy-UTF-8 text,
+## the convention above; container and object names are plain strings, so no
+## handle reaches the app.
+
+## Creates `name` if the container does not exist yet. Calling it on one that
+## is already there leaves the container and its objects alone, so an app can
+## ensure its container with this one call.
+blobCreateContainer! : Str => Try({}, Str)
+blobCreateContainer! = |name|
+	Effect.blobCreateContainer!(name)
+
+## Stores `value` as the object `object` in `container`, replacing an object
+## with that name. The container has to exist (`blobCreateContainer!`).
+blobPut! : Str, Str, Str => Try({}, Str)
+blobPut! = |container, object, value|
+	Effect.blobPut!(container, object, value)
+
+## The whole object as lossy-UTF-8 text. A container or object that is not
+## there is reported as `Err`.
+blobGet! : Str, Str => Try(Str, Str)
+blobGet! = |container, object|
+	Effect.blobGet!(container, object)
+
+## Whether `container` holds an object with that name.
+blobHas! : Str, Str => Try(Bool, Str)
+blobHas! = |container, object|
+	Effect.blobHas!(container, object)
+
+## The object names in `container` as a JSON array of strings (`[]` when the
+## container is empty). The order is the store's own — the interface promises
+## none — so an app that needs a stable one sorts the array.
+blobList! : Str => Try(Str, Str)
+blobList! = |container|
+	Effect.blobList!(container)
+
+## Deletes the object. Deleting one that is not there is not an error.
+blobDelete! : Str, Str => Try({}, Str)
+blobDelete! = |container, object|
+	Effect.blobDelete!(container, object)

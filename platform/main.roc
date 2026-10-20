@@ -15,6 +15,12 @@ platform "golem"
 	}
 	hosted {
 		"rocFxAwaitWebhook": Host.rocFxAwaitWebhook!,
+		"rocFxBlobCreateContainer": Host.rocFxBlobCreateContainer!,
+		"rocFxBlobDelete": Host.rocFxBlobDelete!,
+		"rocFxBlobGet": Host.rocFxBlobGet!,
+		"rocFxBlobHas": Host.rocFxBlobHas!,
+		"rocFxBlobList": Host.rocFxBlobList!,
+		"rocFxBlobPut": Host.rocFxBlobPut!,
 		"rocFxCreateWebhook": Host.rocFxCreateWebhook!,
 		"rocFxFork": Host.rocFxFork!,
 		"rocFxGetConfig": Host.rocFxGetConfig!,
@@ -23,6 +29,10 @@ platform "golem"
 		"rocFxGetWorkerId": Host.rocFxGetWorkerId!,
 		"rocFxHttpRequest": Host.rocFxHttpRequest!,
 		"rocFxIdempotencyKey": Host.rocFxIdempotencyKey!,
+		"rocFxKvDelete": Host.rocFxKvDelete!,
+		"rocFxKvExists": Host.rocFxKvExists!,
+		"rocFxKvGet": Host.rocFxKvGet!,
+		"rocFxKvSet": Host.rocFxKvSet!,
 		"rocFxLog": Host.rocFxLog!,
 		"rocFxMakeAgentId": Host.rocFxMakeAgentId!,
 		"rocFxNewQuotaToken": Host.rocFxNewQuotaToken!,

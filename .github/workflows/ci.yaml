@@ -111,16 +111,30 @@ jobs:
             --expect-trap "harness trap reason" \
             --expect-host-call "trap(reason=harness trap reason)"
 
+          # Key-value and blobstore are synchronous host imports too, and the
+          # harness keeps a small store of its own for each: the round-trip
+          # replies only come back correct if the values really went in and out
+          # of that store, and the recorded calls show which host functions ran
+          # (including the blobstore's `list-objects`, whose stream the host
+          # drains into the JSON array the reply carries).
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "kv harness-bucket harness-key hello kv" \
+            --reply "kv set=ok get=hello kv exists=true delete=ok exists-after=false missing=null" \
+            --expect-kv "set(bucket=harness-bucket, key=harness-key, 8 bytes)" \
+            --then-message "blob harness-blob obj.txt hello blob" \
+            --then-reply 'blob create=ok put=ok get=hello blob has=true list=["obj.txt"] delete=ok has-after=false' \
+            --expect-blob "write-data(container=harness-blob, object=obj.txt, 10 bytes)"
+
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
             --message hello --reply "AI assistant" \
             --tool calculator --tool-reply '{"result": 42}'
 
-          # The streaming agent imports an async host function
-          # (`websocket/client.receive`), which traps inside the harness's
-          # wasmtime (a fork-vs-wasmtime async-ABI gap — see
-          # tooling/abi_harness/README.md). The e2e job below is the
-          # authoritative check for it until that is resolved.
+          # The streaming agent is not driven here: the harness can run its
+          # async `websocket/client.receive` import (see
+          # tooling/abi_harness/README.md), but the e2e job below is what runs
+          # this component against a real server on every change.
           # check "$HARNESS" build/streaming_agent_agent.wasm \
           #   --type streaming-agent --method stream_message \
           #   --message connect --reply "Connected with handle" \
@@ -128,13 +142,11 @@ jobs:
           #   --then-message hello --then-reply "Sent: hello" \
           #   --expect-sent hello
 
-          # The effects agent now imports an async host function too
-          # (`wasi:http/client.send`, the p3 replacement for the p2 interfaces
-          # Golem 1.6.0 dropped), which traps inside the harness's wasmtime for
-          # the same reason the streaming agent does (see
-          # tooling/abi_harness/README.md). The e2e job below is the
-          # authoritative check for it until the harness can drive async
-          # imports.
+          # The effects agent cannot be instantiated by the harness at all: it
+          # imports p3 `wasi:http/client@0.3.0` (`wasi:http/client.send`, the
+          # replacement for the p2 interfaces Golem 1.6.0 dropped) and the
+          # harness world implements no p3 HTTP interface. The e2e job below is
+          # its authoritative check.
           # check "$HARNESS" build/effects_agent.wasm \
           #   --type effects-agent --config "http://example.test/" \
           #   --message fetch --reply "HTTP 200" \

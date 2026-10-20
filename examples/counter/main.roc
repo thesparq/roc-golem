@@ -2,9 +2,19 @@ app [agent] { pf: platform "../../platform/main.roc" }
 
 import pf.Golem exposing [
 	Agent,
+	blobCreateContainer!,
+	blobDelete!,
+	blobGet!,
+	blobHas!,
+	blobList!,
+	blobPut!,
 	defineAgent,
 	getConfig!,
 	getRetryPolicies!,
+	kvDelete!,
+	kvExists!,
+	kvGet!,
+	kvSet!,
 	newQuotaToken!,
 	nextRetryDelay!,
 	oplogCommit!,
@@ -137,10 +147,27 @@ agent = defineAgent({
 					replies: [describeResolveComponentId!(command.rest)],
 				}
 
+			"kv" =>
+			# kv <bucket> <key> <value>: a key-value round trip (set, read it
+			# back, check it exists, delete, read the deleted key — the last
+			# read is what shows a missing key answering the literal `null`).
+				{
+					state,
+					replies: [kvRoundTrip!(command.rest)],
+				}
+
+			"blob" =>
+			# blob <container> <object> <value>: a blobstore round trip (ensure
+			# the container, put, read back, check, list, delete, check again).
+				{
+					state,
+					replies: [blobRoundTrip!(command.rest)],
+				}
+
 			_ =>
 				{
 					state,
-					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>"],
+					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>, kv <bucket> <key> <value>, blob <container> <object> <value>"],
 				}
 		}
 	},
@@ -220,6 +247,95 @@ splitToken = |text|
 
 		Err(_) => { first: text, rest: "" }
 	}
+
+## Splits the first two space-separated tokens off `text` (`first`, `second`);
+## `rest` is everything after them, spaces included, so a command's last
+## argument can be text with spaces in it.
+splitThree : Str -> { first : Str, second : Str, rest : Str }
+splitThree = |text| {
+	firstTwo = splitToken(text)
+	secondOfThem = splitToken(firstTwo.rest)
+	{ first: firstTwo.first, second: secondOfThem.first, rest: secondOfThem.rest }
+}
+
+## `true` / `false` as the text the round-trip reports render their checks with.
+boolText : Bool -> Str
+boolText = |value|
+	if (value) "true" else "false"
+
+## The key-value round trip `kv <bucket> <key> <value>` runs. Every step's
+## outcome is in the one reply, so a check sees exactly how far it got; a step
+## that fails is reported as `error(<message>)` in its own slot instead of
+## hiding the rest.
+kvRoundTrip! : Str => Str
+kvRoundTrip! = |args| {
+	{ first: bucket, second: key, rest: value } = splitThree(args)
+
+	setOutcome = match kvSet!(bucket, key, value) {
+		Ok(_) => "ok"
+		Err(err) => "error(${err})"
+	}
+	readOutcome = match kvGet!(bucket, key) {
+		Ok(text) => text
+		Err(err) => "error(${err})"
+	}
+	existsOutcome = match kvExists!(bucket, key) {
+		Ok(found) => boolText(found)
+		Err(err) => "error(${err})"
+	}
+	deleteOutcome = match kvDelete!(bucket, key) {
+		Ok(_) => "ok"
+		Err(err) => "error(${err})"
+	}
+	afterOutcome = match kvExists!(bucket, key) {
+		Ok(found) => boolText(found)
+		Err(err) => "error(${err})"
+	}
+	missingOutcome = match kvGet!(bucket, key) {
+		Ok(text) => text
+		Err(err) => "error(${err})"
+	}
+
+	"kv set=${setOutcome} get=${readOutcome} exists=${existsOutcome} delete=${deleteOutcome} exists-after=${afterOutcome} missing=${missingOutcome}"
+}
+
+## The blobstore round trip `blob <container> <object> <value>` runs, reported
+## the same way as `kvRoundTrip!`.
+blobRoundTrip! : Str => Str
+blobRoundTrip! = |args| {
+	{ first: container, second: object, rest: value } = splitThree(args)
+
+	createOutcome = match blobCreateContainer!(container) {
+		Ok(_) => "ok"
+		Err(err) => "error(${err})"
+	}
+	putOutcome = match blobPut!(container, object, value) {
+		Ok(_) => "ok"
+		Err(err) => "error(${err})"
+	}
+	getOutcome = match blobGet!(container, object) {
+		Ok(text) => text
+		Err(err) => "error(${err})"
+	}
+	hasOutcome = match blobHas!(container, object) {
+		Ok(found) => boolText(found)
+		Err(err) => "error(${err})"
+	}
+	listOutcome = match blobList!(container) {
+		Ok(names) => names
+		Err(err) => "error(${err})"
+	}
+	deleteOutcome = match blobDelete!(container, object) {
+		Ok(_) => "ok"
+		Err(err) => "error(${err})"
+	}
+	hasAfterOutcome = match blobHas!(container, object) {
+		Ok(found) => boolText(found)
+		Err(err) => "error(${err})"
+	}
+
+	"blob create=${createOutcome} put=${putOutcome} get=${getOutcome} has=${hasOutcome} list=${listOutcome} delete=${deleteOutcome} has-after=${hasAfterOutcome}"
+}
 
 ## Fails the invocation with `reason`; the host traps, so nothing after this
 ## returns. It sits in a helper so the handler's arm still has a reply to name:
