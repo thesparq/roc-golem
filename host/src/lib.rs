@@ -5,6 +5,7 @@ pub mod roc_std;
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
 use core::ptr;
+use std::boxed::Box;
 use roc_std::{RocResult, RocStr};
 
 #[cfg(not(any(feature = "stub-guest", test)))]
@@ -673,16 +674,33 @@ pub unsafe extern "C" fn rocFxSetPersistence(mode: u8) {
     let _ = mode;
 }
 
-fn parse_url(url: &str) -> Result<(wasi::http0_2_6::types::Scheme, String, String), String> {
+fn parse_method(m: &str) -> wasi::http0_3_0::types::Method {
+    use wasi::http0_3_0::types::Method;
+    match m.to_uppercase().as_str() {
+        "GET" => Method::Get,
+        "POST" => Method::Post,
+        "PUT" => Method::Put,
+        "DELETE" => Method::Delete,
+        "PATCH" => Method::Patch,
+        "HEAD" => Method::Head,
+        "OPTIONS" => Method::Options,
+        "CONNECT" => Method::Connect,
+        "TRACE" => Method::Trace,
+        other => Method::Other(other.to_string()),
+    }
+}
+
+fn parse_url(url: &str) -> Result<(wasi::http0_3_0::types::Scheme, String, String), String> {
+    use wasi::http0_3_0::types::Scheme;
     let (scheme, rest) = if let Some(stripped) = url.strip_prefix("https://") {
-        (wasi::http0_2_6::types::Scheme::Https, stripped)
+        (Scheme::Https, stripped)
     } else if let Some(stripped) = url.strip_prefix("http://") {
-        (wasi::http0_2_6::types::Scheme::Http, stripped)
+        (Scheme::Http, stripped)
     } else if let Some(idx) = url.find("://") {
         let (s, r) = url.split_at(idx);
-        (wasi::http0_2_6::types::Scheme::Other(s.to_string()), &r[3..])
+        (Scheme::Other(s.to_string()), &r[3..])
     } else {
-        (wasi::http0_2_6::types::Scheme::Https, url)
+        (Scheme::Https, url)
     };
 
     let (authority, path_with_query) = if let Some(idx) = rest.find('/') {
@@ -699,38 +717,35 @@ fn parse_url(url: &str) -> Result<(wasi::http0_2_6::types::Scheme, String, Strin
     Ok((scheme, authority, path_with_query))
 }
 
-fn parse_method(m: &str) -> wasi::http0_2_6::types::Method {
-    match m.to_uppercase().as_str() {
-        "GET" => wasi::http0_2_6::types::Method::Get,
-        "POST" => wasi::http0_2_6::types::Method::Post,
-        "PUT" => wasi::http0_2_6::types::Method::Put,
-        "DELETE" => wasi::http0_2_6::types::Method::Delete,
-        "PATCH" => wasi::http0_2_6::types::Method::Patch,
-        "HEAD" => wasi::http0_2_6::types::Method::Head,
-        "OPTIONS" => wasi::http0_2_6::types::Method::Options,
-        "CONNECT" => wasi::http0_2_6::types::Method::Connect,
-        "TRACE" => wasi::http0_2_6::types::Method::Trace,
-        other => wasi::http0_2_6::types::Method::Other(other.to_string()),
-    }
+/// One parsed `http!` request: what a WASI p3 request needs, already decoded.
+struct HttpRequestParts {
+    method: wasi::http0_3_0::types::Method,
+    scheme: wasi::http0_3_0::types::Scheme,
+    authority: String,
+    path_with_query: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
 }
 
-pub fn execute_http_request(req_str: &str) -> Result<String, String> {
-    use wasi::http0_2_6::outgoing_handler;
-    use wasi::http0_2_6::types::{Fields, IncomingBody, OutgoingBody, OutgoingRequest};
-    use wasi::io::streams::StreamError;
-
-    let mut method = wasi::http0_2_6::types::Method::Get;
+/// Parses the effect's JSON payload (`{url, method, headers, body}`), accepting a
+/// bare URL string as well.
+fn parse_http_request(req_str: &str) -> Result<HttpRequestParts, String> {
+    let mut method_name = String::from("GET");
     let mut url = String::new();
-    let mut custom_headers: Vec<(String, String)> = Vec::new();
+    let mut headers: Vec<(String, String)> = Vec::new();
     let mut body_bytes: Option<Vec<u8>> = None;
 
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(req_str) {
         if let Some(obj) = parsed.as_object() {
-            if let Some(u) = obj.get("url").and_then(|v| v.as_str()).or_else(|| obj.get("uri").and_then(|v| v.as_str())) {
+            if let Some(u) = obj
+                .get("url")
+                .and_then(|v| v.as_str())
+                .or_else(|| obj.get("uri").and_then(|v| v.as_str()))
+            {
                 url = u.to_string();
             }
             if let Some(m) = obj.get("method").and_then(|v| v.as_str()) {
-                method = parse_method(m);
+                method_name = m.to_string();
             }
             if let Some(h) = obj.get("headers") {
                 if let Some(h_obj) = h.as_object() {
@@ -740,7 +755,7 @@ pub fn execute_http_request(req_str: &str) -> Result<String, String> {
                         } else {
                             v.to_string()
                         };
-                        custom_headers.push((k.clone(), val_str));
+                        headers.push((k.clone(), val_str));
                     }
                 } else if let Some(h_arr) = h.as_array() {
                     for item in h_arr {
@@ -749,7 +764,7 @@ pub fn execute_http_request(req_str: &str) -> Result<String, String> {
                                 let k = pair[0].as_str().unwrap_or("").to_string();
                                 let v = pair[1].as_str().unwrap_or("").to_string();
                                 if !k.is_empty() {
-                                    custom_headers.push((k, v));
+                                    headers.push((k, v));
                                 }
                             }
                         }
@@ -770,100 +785,188 @@ pub fn execute_http_request(req_str: &str) -> Result<String, String> {
         if req_str.starts_with("http://") || req_str.starts_with("https://") {
             url = req_str.trim().to_string();
         } else {
-            return Err(format!("Invalid HTTP request payload (missing 'url'): {}", req_str));
+            return Err(format!(
+                "Invalid HTTP request payload (missing 'url'): {}",
+                req_str
+            ));
         }
     }
 
     let (scheme, authority, path_with_query) = parse_url(&url)?;
+    Ok(HttpRequestParts {
+        method: parse_method(&method_name),
+        scheme,
+        authority,
+        path_with_query,
+        headers,
+        body: body_bytes.unwrap_or_default(),
+    })
+}
+
+/// Runs one `http!` request. Golem 1.6.0 dropped the p2 WASI HTTP interfaces
+/// (`wasi:http/outgoing-handler@0.2.6`), so this goes through WASI p3
+/// (`wasi:http/client@0.3.0`) instead.
+pub fn execute_http_request(req_str: &str) -> Result<String, String> {
+    let parts = parse_http_request(req_str)?;
+    // The Roc side calls this effect synchronously, so `block_on` drives the
+    // async p3 call (and the body upload running alongside it) to completion.
+    wit_bindgen::block_on(send_http_request(parts))
+}
+
+/// Sends one buffered request and renders the response the way the effect
+/// promises: `{status, headers, body}` as JSON.
+async fn send_http_request(parts: HttpRequestParts) -> Result<String, String> {
+    use wasi::http0_3_0::client;
+    use wasi::http0_3_0::types::{Fields, Request, Response};
 
     let fields = Fields::new();
-    for (name, val) in custom_headers {
-        let _ = fields.set(&name, &[val.as_bytes().to_vec()]);
+    for (name, value) in &parts.headers {
+        fields
+            .append(name, value.as_bytes())
+            .map_err(|err| format!("invalid HTTP header {name:?}: {err:?}"))?;
     }
 
-    let request = OutgoingRequest::new(fields);
-    request.set_method(&method).map_err(|_| "Failed to set HTTP method".to_string())?;
-    request.set_scheme(Some(&scheme)).map_err(|_| "Failed to set HTTP scheme".to_string())?;
-    request.set_authority(Some(&authority)).map_err(|_| "Failed to set HTTP authority".to_string())?;
-    request.set_path_with_query(Some(&path_with_query)).map_err(|_| "Failed to set HTTP path and query".to_string())?;
+    // The body is a p3 stream: `send` consumes it while we write into it, so the
+    // two run concurrently (the stream has a bounded buffer, so writing first
+    // would deadlock on a large body).
+    let (mut body_tx, body_rx) = wit_stream::new();
+    // No trailers: dropping the writer leaves the future resolved to `Ok(None)`.
+    let (trailers_tx, trailers_rx) = wit_future::new(|| Ok(None));
+    let (request, transmitted) = Request::new(fields, Some(body_rx), trailers_rx, None);
+    drop(trailers_tx);
 
-    if let Some(data) = body_bytes {
-        if !data.is_empty() {
-            if let Ok(outgoing_body) = request.body() {
-                if let Ok(stream) = outgoing_body.write() {
-                    let _ = stream.blocking_write_and_flush(&data);
-                    drop(stream);
-                }
-                let _ = OutgoingBody::finish(outgoing_body, None);
-            }
-        } else if let Ok(outgoing_body) = request.body() {
-            let _ = OutgoingBody::finish(outgoing_body, None);
-        }
-    } else if let Ok(outgoing_body) = request.body() {
-        let _ = OutgoingBody::finish(outgoing_body, None);
-    }
+    request
+        .set_method(&parts.method)
+        .map_err(|()| "invalid HTTP method".to_string())?;
+    request
+        .set_scheme(Some(&parts.scheme))
+        .map_err(|()| "invalid HTTP scheme".to_string())?;
+    request
+        .set_authority(Some(parts.authority.as_str()))
+        .map_err(|()| "invalid HTTP authority".to_string())?;
+    request
+        .set_path_with_query(Some(parts.path_with_query.as_str()))
+        .map_err(|()| "invalid HTTP path and query".to_string())?;
 
-    let future_response = outgoing_handler::handle(request, None)
-        .map_err(|e| format!("WASI outgoing-handler failed: {:?}", e))?;
-
-    let pollable = future_response.subscribe();
-    pollable.block();
-    drop(pollable);
-
-    let incoming_response = match future_response.get() {
-        Some(Ok(Ok(resp))) => resp,
-        Some(Ok(Err(err))) => return Err(format!("HTTP request error code: {:?}", err)),
-        Some(Err(())) => return Err("HTTP response already consumed".to_string()),
-        None => return Err("HTTP response timeout".to_string()),
+    let body = parts.body;
+    let upload = async move {
+        let remaining = body_tx.write_all(body).await;
+        drop(body_tx);
+        remaining
     };
 
-    let status = incoming_response.status();
+    let (response, remaining) = join2(client::send(request), upload).await;
+    if !remaining.is_empty() {
+        return Err(format!(
+            "HTTP request body was not fully sent ({} bytes left)",
+            remaining.len()
+        ));
+    }
+    transmitted
+        .await
+        .map_err(|err| format!("HTTP request transmission failed: {err:?}"))?;
+    let response = response.map_err(|err| format!("HTTP request failed: {err:?}"))?;
 
-    let headers_resource = incoming_response.headers();
-    let header_entries = headers_resource.entries();
+    let status = response.get_status_code();
     let mut headers_map = serde_json::Map::new();
-    for (k, v) in header_entries {
-        let val_str = String::from_utf8_lossy(&v).to_string();
-        headers_map.insert(k, serde_json::Value::String(val_str));
+    for (name, value) in response.get_headers().copy_all() {
+        headers_map.insert(
+            name,
+            serde_json::Value::String(String::from_utf8_lossy(&value).to_string()),
+        );
     }
-    drop(headers_resource);
 
-    let body_str = match incoming_response.consume() {
-        Ok(incoming_body) => {
-            let body_bytes = match incoming_body.stream() {
-                Ok(stream) => {
-                    let mut all_bytes = Vec::new();
-                    loop {
-                        match stream.blocking_read(65536) {
-                            Ok(bytes) => {
-                                if bytes.is_empty() {
-                                    break;
-                                }
-                                all_bytes.extend(bytes);
-                            }
-                            Err(StreamError::Closed) => break,
-                            Err(StreamError::LastOperationFailed(_)) => break,
-                        }
-                    }
-                    drop(stream);
-                    all_bytes
-                }
-                Err(_) => Vec::new(),
-            };
-            let _ = IncomingBody::finish(incoming_body);
-            String::from_utf8_lossy(&body_bytes).to_string()
-        }
-        Err(_) => String::new(),
-    };
+    let (res_tx, res_rx) = wit_future::new(|| Ok(()));
+    let (body_reader, trailers) = Response::consume_body(response, res_rx);
+    drop(res_tx);
+    let body_bytes = body_reader.collect().await;
+    // A failed body stream means the bytes above may be truncated; surface it
+    // rather than returning a silently short body.
+    if let Err(err) = trailers.await {
+        return Err(format!("HTTP response body failed: {err:?}"));
+    }
 
-    let result_json = serde_json::json!({
+    Ok(serde_json::json!({
         "status": status,
         "headers": headers_map,
-        "body": body_str,
+        "body": String::from_utf8_lossy(&body_bytes).to_string(),
     })
-    .to_string();
+    .to_string())
+}
 
-    Ok(result_json)
+/// Polls two futures to completion concurrently, yielding both outputs.
+///
+/// `http!` needs this to upload a request body while the host transmits the
+/// request. The component model's `spawn` is not an option here: our async
+/// export executor is Golem's `wit-bindgen` fork, and a task spawned by another
+/// wit-bindgen version is never polled by it.
+fn join2<A, B>(a: A, b: B) -> Join2<A, B>
+where
+    A: core::future::Future,
+    B: core::future::Future,
+    A::Output: Unpin,
+    B::Output: Unpin,
+{
+    Join2 {
+        a: Some(Box::pin(a)),
+        b: Some(Box::pin(b)),
+        out_a: None,
+        out_b: None,
+    }
+}
+
+struct Join2<A, B>
+where
+    A: core::future::Future,
+    B: core::future::Future,
+    A::Output: Unpin,
+    B::Output: Unpin,
+{
+    a: Option<core::pin::Pin<Box<A>>>,
+    b: Option<core::pin::Pin<Box<B>>>,
+    out_a: Option<A::Output>,
+    out_b: Option<B::Output>,
+}
+
+impl<A, B> core::future::Future for Join2<A, B>
+where
+    A: core::future::Future,
+    B: core::future::Future,
+    A::Output: Unpin,
+    B::Output: Unpin,
+{
+    type Output = (A::Output, B::Output);
+
+    fn poll(
+        self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        if this.out_a.is_none() {
+            if let Some(future) = this.a.as_mut() {
+                if let core::task::Poll::Ready(value) = future.as_mut().poll(cx) {
+                    this.out_a = Some(value);
+                    this.a = None;
+                }
+            }
+        }
+        if this.out_b.is_none() {
+            if let Some(future) = this.b.as_mut() {
+                if let core::task::Poll::Ready(value) = future.as_mut().poll(cx) {
+                    this.out_b = Some(value);
+                    this.b = None;
+                }
+            }
+        }
+        match (this.out_a.take(), this.out_b.take()) {
+            (Some(a), Some(b)) => core::task::Poll::Ready((a, b)),
+            (a, b) => {
+                this.out_a = a;
+                this.out_b = b;
+                core::task::Poll::Pending
+            }
+        }
+    }
 }
 
 #[no_mangle]
@@ -1595,30 +1698,58 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_http_request() {
+        // The effect's payload is JSON; a bare URL is accepted too.
+        let parts = parse_http_request(
+            r#"{"url":"http://example.test/a?b=1","method":"post","headers":{"x-token":"t","n":3},"body":"hi"}"#,
+        )
+        .expect("payload should parse");
+        assert!(matches!(parts.method, wasi::http0_3_0::types::Method::Post));
+        assert!(matches!(parts.scheme, wasi::http0_3_0::types::Scheme::Http));
+        assert_eq!(parts.authority, "example.test");
+        assert_eq!(parts.path_with_query, "/a?b=1");
+        assert_eq!(
+            parts.headers,
+            vec![
+                ("n".to_string(), "3".to_string()),
+                ("x-token".to_string(), "t".to_string())
+            ]
+        );
+        assert_eq!(parts.body, b"hi".to_vec());
+
+        let parts = parse_http_request("https://example.test").expect("bare URL should parse");
+        assert!(matches!(parts.method, wasi::http0_3_0::types::Method::Get));
+        assert_eq!(parts.path_with_query, "/");
+        assert!(parts.body.is_empty());
+
+        assert!(parse_http_request("not a url").is_err());
+    }
+
+    #[test]
     fn test_parse_url() {
         let (scheme, auth, path) = parse_url("https://api.example.com/v1/chat?q=test").unwrap();
-        assert!(matches!(scheme, wasi::http0_2_6::types::Scheme::Https));
+        assert!(matches!(scheme, wasi::http0_3_0::types::Scheme::Https));
         assert_eq!(auth, "api.example.com");
         assert_eq!(path, "/v1/chat?q=test");
 
         let (scheme, auth, path) = parse_url("http://localhost:8080").unwrap();
-        assert!(matches!(scheme, wasi::http0_2_6::types::Scheme::Http));
+        assert!(matches!(scheme, wasi::http0_3_0::types::Scheme::Http));
         assert_eq!(auth, "localhost:8080");
         assert_eq!(path, "/");
 
         let (scheme, auth, path) = parse_url("custom://my-host/path").unwrap();
-        assert!(matches!(scheme, wasi::http0_2_6::types::Scheme::Other(s) if s == "custom"));
+        assert!(matches!(scheme, wasi::http0_3_0::types::Scheme::Other(s) if s == "custom"));
         assert_eq!(auth, "my-host");
         assert_eq!(path, "/path");
     }
 
     #[test]
     fn test_parse_method() {
-        assert!(matches!(parse_method("get"), wasi::http0_2_6::types::Method::Get));
-        assert!(matches!(parse_method("POST"), wasi::http0_2_6::types::Method::Post));
-        assert!(matches!(parse_method("put"), wasi::http0_2_6::types::Method::Put));
-        assert!(matches!(parse_method("DELETE"), wasi::http0_2_6::types::Method::Delete));
-        assert!(matches!(parse_method("PATCH"), wasi::http0_2_6::types::Method::Patch));
-        assert!(matches!(parse_method("custom"), wasi::http0_2_6::types::Method::Other(s) if s == "CUSTOM"));
+        assert!(matches!(parse_method("get"), wasi::http0_3_0::types::Method::Get));
+        assert!(matches!(parse_method("POST"), wasi::http0_3_0::types::Method::Post));
+        assert!(matches!(parse_method("put"), wasi::http0_3_0::types::Method::Put));
+        assert!(matches!(parse_method("DELETE"), wasi::http0_3_0::types::Method::Delete));
+        assert!(matches!(parse_method("PATCH"), wasi::http0_3_0::types::Method::Patch));
+        assert!(matches!(parse_method("custom"), wasi::http0_3_0::types::Method::Other(s) if s == "CUSTOM"));
     }
 }

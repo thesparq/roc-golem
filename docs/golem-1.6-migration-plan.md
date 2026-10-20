@@ -37,26 +37,26 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
   `filesystemBindings` mount (subtree and exact) that the runtime serves from
   the agent's durable filesystem without invoking it, with configured file
   response headers and 404s for unmapped paths. `httpApi` + `localServer` are
-  documented in the README; the `site` example and four e2e checks cover it.
+  documented in the README; the `site` example and eight e2e checks cover it.
   Static bindings and an OpenAPI provider need an `http-router` agent type
   (stream-typed request/response), still to do.
-- **Open**: `http!` still targets `wasi:http/outgoing-handler@0.2.6`, which
-  **Golem 1.6.0 no longer provides**. Evidence: the 1.6.0 executor registers
-  `wasmtime_wasi_http::p2` nowhere (`golem-worker-executor/src/wasi_host/mod.rs`
-  registers `durable_host::p3` plus p2 cli/clocks/io/random/sockets only) while
-  `v1.6.0-rc2.1` still registered the p2 HTTP bindings; a component importing
-  them fails worker creation with “component imports instance
+- **Open**: nothing blocking on GA. `http!` moved to WASI p3
+  (`wasi:http/types@0.3.0` + `client@0.3.0`) because **Golem 1.6.0 dropped the p2
+  HTTP interfaces**: the 1.6.0 executor registers `durable_host::p3` plus p2
+  cli/clocks/io/random/sockets, and no p2 HTTP, while `v1.6.0-rc2.1` still
+  registered `wasmtime_wasi_http::p2` — a component importing
+  `wasi:http/types@0.2.6` fails worker creation with “component imports instance
   `wasi:http/types@0.2.6`, but a matching implementation was not found in the
-  linker”. Consequence: the effects example cannot instantiate on 1.6.0, so its
-  two e2e checks are reported as skipped. The migration is to `wasi:http@0.3.0`
-  (`types` + `client.send`) driven from the Roc-facing sync effect through
-  `wit_bindgen::block_on`, using `wasip3`'s `wit_stream`/`wit_future` for the
-  body streams — the shape the Golem Rust SDK uses in
-  `sdks/rust/golem-rust/src/http.rs` at v1.6.0. Note `wit_bindgen::spawn` is
-  unusable there (the fork's export executor and upstream's spawn queue are
-  different versions), so the upload and the send have to be joined rather than
-  spawned.
-
+  linker”. The effect now builds a p3 request, uploads the body through a
+  `wit_stream` while `client::send` transmits it, and collects the response
+  body; `wit_bindgen::block_on` drives it from the synchronous Roc-facing effect,
+  and the upload runs alongside the send through a small two-future join because
+  `wit_bindgen::spawn` cannot be used across the two wit-bindgen versions in play
+  (our async export executor is Golem's fork; `wasip3` brings upstream 0.57.1).
+  Verified end-to-end: `effects: real HTTP call` and the RPC check pass on
+  1.6.0. Still open: the ABI harness cannot drive the effects component at all
+  now (its p3 import is async, and the harness's wasmtime traps on async imports
+  — same gap as the streaming agent), so p3 HTTP is covered by the e2e only.
 - **Toolchain pin, re-confirmed the hard way**: building with a Roc nightly other
   than `nightly-2026-09-19-d025939` produces components that *build* and then
   trap at runtime — the counter's second `handle-message` died in

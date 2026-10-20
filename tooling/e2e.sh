@@ -43,7 +43,6 @@ CLI_EXTRA="${GOLEM_CLI_EXTRA:-}"
 export GOLEM_BUILTIN_LOCAL_URL="${GOLEM_BUILTIN_LOCAL_URL:-http://127.0.0.1:$PORT}"
 
 failures=0
-skips=0
 server_pid=""
 http_pid=""
 
@@ -160,11 +159,6 @@ check_true() { # check_true <label> <actual boolean-ish>
     fi
 }
 
-skip() { # skip <label> <reason>
-    say "SKIP  $1 ($2)"
-    skips=$((skips + 1))
-}
-
 say "==> Invoking agents (agent ids carry the run id: $RUN_ID)"
 counter="counter-agent(\"$RUN_ID\")"
 
@@ -179,14 +173,10 @@ check "ai_tool: greeting" "I am an AI assistant agent" \
 check "streaming: status" "WebSocket is disconnected" \
     "$(invoke "streaming-agent(\"$RUN_ID\")" handle-message '"status"')"
 
-# The effects agent still imports `wasi:http/outgoing-handler@0.2.6`. Golem
-# 1.6.0 dropped the p2 HTTP interfaces (its executor registers WASI p3 only),
-# so the agent cannot even instantiate on a 1.6.0 server. Migrating `http!` to
-# `wasi:http@0.3.0` is tracked in docs/golem-1.6-migration-plan.md; until then
-# the e2e says so out loud instead of reporting a red check nobody can fix by
-# changing this script.
-skip "effects: real HTTP call" "http! still targets the removed p2 HTTP interfaces"
-skip "effects: agent-to-agent RPC" "the effects agent cannot instantiate on 1.6.0"
+check "effects: real HTTP call" "HTTP 200" \
+    "$(invoke "effects-agent(\"http://127.0.0.1:$HTTP_PORT/\")" handle-message '"fetch"')"
+check "effects: agent-to-agent RPC" "RPC reply:" \
+    "$(invoke "effects-agent(\"$RUN_ID\")" handle-message '"rpc"')"
 
 say "==> HTTP mount (file-site agent serving its own filesystem on $API_DOMAIN)"
 site_agent="file-site-agent(\"$RUN_ID\")"
@@ -215,11 +205,7 @@ check "site: first read serves provisioned files" "200" \
 
 say ""
 if [[ "$failures" -eq 0 ]]; then
-    if [[ "$skips" -gt 0 ]]; then
-        say "All end-to-end checks passed ($skips skipped)."
-    else
-        say "All end-to-end checks passed."
-    fi
+    say "All end-to-end checks passed."
 else
     say "$failures end-to-end check(s) failed."
     exit 1

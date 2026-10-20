@@ -7,7 +7,14 @@ world golem-agent {
     import golem:core/types@2.0.0;
     import golem:websocket/client@1.5.0;
     import wasi:clocks/monotonic-clock@0.2.6;
-    import wasi:http/outgoing-handler@0.2.6;
+    // Outgoing HTTP is WASI p3 in Golem 1.6: the p2 interfaces
+    // (`wasi:http/outgoing-handler@0.2.6`) are no longer registered by the
+    // executor, so the `http!` effect goes through `wasi:http/client@0.3.0`.
+    // `wasi:clocks/types@0.3.0` comes along because p3 `request-options` uses
+    // its `duration`.
+    import wasi:clocks/types@0.3.0;
+    import wasi:http/client@0.3.0;
+    import wasi:http/types@0.3.0;
     import wasi:logging/logging;
 
     export golem:agent/guest@2.0.0;
