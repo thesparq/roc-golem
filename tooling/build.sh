@@ -14,6 +14,29 @@ TARGET_HOST_A="$PLATFORM_DIR/targets/wasm32/libhost.a"
 mkdir -p "$BUILD_DIR"
 mkdir -p "$DIST_DIR"
 
+# The platform's hand-written Roc ABI (`host/src/roc_std.rs`, `tooling/glue`)
+# is calibrated against one Roc nightly: the layout of `Str`/`List`/`Try` and
+# the allocator contract move between nightlies, and a mismatched compiler
+# yields components that build fine and then trap at runtime (a `Str` dropped
+# through the wrong deallocator) instead of failing here. Refuse to build with
+# anything else; set ROC_ALLOW_VERSION_MISMATCH=1 to override.
+ROC_TAG="${ROC_TAG:-nightly-2026-09-19-d025939}"
+
+check_roc_version() {
+    local version
+    version="$(roc version 2>/dev/null | head -n 1)"
+    if [[ "$version" == *"${ROC_TAG#nightly-}"* ]]; then
+        return 0
+    fi
+    echo "error: the roc on PATH is '${version:-unknown}', but this platform is" >&2
+    echo "       pinned to $ROC_TAG (see README). Components built with another" >&2
+    echo "       nightly can trap at runtime. Set ROC_ALLOW_VERSION_MISMATCH=1 to" >&2
+    echo "       build anyway." >&2
+    if [[ "${ROC_ALLOW_VERSION_MISMATCH:-0}" != "1" ]]; then
+        exit 1
+    fi
+}
+
 build_platform() {
     echo "============================================================"
     echo " [Phase: Platform Build] Pre-compiling Rust Host"
@@ -39,6 +62,8 @@ build_platform() {
 build_app() {
     local TARGET_APP="${1:-counter}"
     local APP_FILE=""
+
+    check_roc_version
 
     if [[ -f "$TARGET_APP" ]]; then
         APP_FILE="$TARGET_APP"
@@ -144,9 +169,10 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "effects"
+        build_app "site"
         package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
-    counter|ai_tool|streaming_agent|effects)
+    counter|ai_tool|streaming_agent|effects|site)
         build_app "$COMMAND"
         ;;
     all)
@@ -155,13 +181,14 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "effects"
+        build_app "site"
         package_platform "v0.1.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)
         if [[ -f "$COMMAND" ]]; then
             build_app "$COMMAND"
         else
-            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | effects | all]"
+            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | effects | site | all]" >&2
             exit 1
         fi
         ;;

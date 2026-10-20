@@ -27,6 +27,9 @@ Flags:
   matches a request line the HTTP stub received, and `--expect-rpc` matches a
   remote call the agent made. All of them are recorded by the stubs, so effect
   wiring is verified, not just reply text.
+- `--expect-mount PATH` checks the mount path the agent type publishes
+  (`site/{id}`), which is how the site example's `metadata.httpMount` is
+  verified to survive the trip to the registered agent type.
 
 CI runs these checks against all four examples, and also against a debug build of
 the effects example (`roc build --debug`) because the platform has had
@@ -50,11 +53,16 @@ It exits non-zero when any of these fail:
 - an expected log line, WebSocket send, HTTP request or RPC call was never
   recorded.
 
-Current state of the components built from this tree: counter, ai_tool and
+Current state of the components built from this tree: counter, ai_tool, site and
 effects pass every check, including the effects agent's HTTP and RPC calls.
 
-Two toolchain notes found while porting to 1.6:
+Toolchain notes found while porting to 1.6:
 
+- **Build with the pinned Roc nightly** (`nightly-2026-09-19-d025939`). A newer
+  one produced a counter component whose second `handle-message` trapped in
+  `RocStr::drop` → `__rust_dealloc` → `core::panicking::panic` — the hand-written
+  `Str` layout/allocator contract in `host/src/roc_std.rs` tracks that
+  compiler. `tooling/build.sh` now refuses a mismatched `roc`.
 - `Str.trim` in an agent's own code trips the layout-sensitive Roc codegen trap
   (`wasm unreachable`) in the harness — the streaming example's state
   deserializer used it defensively and now parses its compact JSON directly.

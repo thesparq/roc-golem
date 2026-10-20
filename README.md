@@ -137,6 +137,16 @@ roc-golem/
 
 ## 🔨 Build & Deployment Workflow
 
+> [!IMPORTANT]
+> The platform is pinned to one Roc nightly — **`nightly-2026-09-19-d025939`**,
+> the version CI and the release workflow install. The hand-written Roc ABI
+> (`host/src/roc_std.rs`) encodes that compiler's `Str`/`List`/`Try` layout and
+> allocator contract, so another nightly can produce components that *build*
+> and then trap at runtime (a `Str` dropped through the wrong deallocator).
+> `tooling/build.sh` refuses to build with a different `roc` on `PATH`
+> (`ROC_ALLOW_VERSION_MISMATCH=1` overrides it for experiments). Moving the pin
+> means re-deriving the layout facts with `tooling/glue/abi_facts.roc` first.
+
 ### 1. Pre-compile Platform Host
 ```bash
 ./tooling/build.sh platform
@@ -184,9 +194,15 @@ those.
 
 | golem CLI | Local deploy | Notes |
 | --- | --- | --- |
-| 1.6.0-rc2.1 | works | verified end-to-end with these examples on this branch (deploy, invoke, state, tools, HTTP, RPC, and a snapshot-based agent update) |
-| 1.6.0 | expected to work | the GA release; bump the pins in `tooling/e2e.sh`/CI when it ships |
+| 1.6.0 (GA) | works, one gap | verified end-to-end on this branch: deploy, invoke, state, tools, HTTP mounts, snapshots. The `http!` effect still targets the p2 HTTP interfaces 1.6.0 removed — see the migration plan |
+| 1.6.0-rc2.1 | works | earlier pin; the same examples ran, including `http!` (rc2.1 still registered p2 HTTP) |
 | 1.5.9 / 1.5.10 | not compatible | those servers expect `golem:agent/guest@1.5.0`, which this branch no longer exports |
+
+> [!NOTE]
+> The 1.6.0 release splits the download into two binaries: `golem-<target>`
+> (the all-in-one server + CLI, which is what `tooling/e2e.sh` and CI use, and
+> which owns `golem server run`) and `golem-cli-<target>` (client only, smaller,
+> no `server` subcommand).
 
 > [!NOTE]
 > The older `golem component add` / `golem worker add` commands no longer exist in
@@ -198,11 +214,20 @@ those.
 
 **On the 1.6 line** (this branch): the host speaks `golem:agent/guest@2.0.0`
 with async exports, `schema-value-tree` values and a `schema-graph` agent type;
-all four examples deploy and run on a local `1.6.0-rc2.1` server (the e2e job in
-CI does exactly that), and a **snapshot-based agent update** is verified: the
+the examples deploy and run on a local `1.6.0` server (the e2e job in CI does
+exactly that), and a **snapshot-based agent update** is verified: the
 component exports `golem:api/save-snapshot`/`load-snapshot` backed by the state
 JSON, so `golem agent update <id> manual` carries state across incompatible
 revisions (the CLI needs `-Y`; it prompts for confirmation).
+
+**HTTP mounts** are implemented from the app's `metadata.httpMount`: a
+`filesystemBindings` mount publishes files from the agent's own durable
+filesystem on the deployment's domain, and the runtime answers matching
+`GET`/`HEAD` requests without invoking the agent (the `site` example is the
+worked case — see [HTTP mounts](#-http-mounts)). Golem requires every
+constructor parameter to be captured by the mount path, so the capture names
+the agent's identity parameter; the host refuses a mount it cannot bind instead
+of letting the deploy fail later.
 
 The component also exports **`golem:tool/guest`**: the app's declared tools are
 published under CLI-shaped names (`get_count` → `get-count`) and appear in
@@ -263,15 +288,90 @@ Still open:
   code-generation issue rather than a platform one. CI's ABI smoke test is the
   safety net; if it reappears, keep the failing `.wasm` and compare `roc build`
   with and without `--debug`.
-- **Golem 1.6+** expects `golem:agent/guest@2.0.0` (async ABI, new value model),
-  which this platform does not implement; `docs/golem-2.0-migration.md` records
-  what changed and the work it implies.
-- **Local deploy** is verified with golem CLI 1.5.9. 1.5.10 also deployed and
-  ran these examples in review (its earlier reported upload failure did not
-  reproduce), and 1.6.0-rc1+ expects the `golem:agent/guest@2.0.0` protocol
-  (see the deploy section for the version matrix).
+- **`http!` needs the p3 migration**: Golem 1.6.0 dropped the p2 WASI HTTP
+  interfaces (`wasi:http/outgoing-handler@0.2.6`) — its executor registers WASI
+  p3 only — so a component importing them cannot instantiate, which is why the
+  effects example is skipped in the e2e on 1.6.0. The fix is to move `http!` to
+  `wasi:http@0.3.0` (`types` + `client`); `docs/golem-1.6-migration-plan.md`
+  records the evidence and the shape of the change.
+- **Local deploy** is verified with golem CLI 1.6.0 (GA), 1.6.0-rc2.1 and 1.5.9
+  on the `v0.5.x` line; the version matrix is in the deploy section above.
 - `host/src/roc_std.rs` is still hand-written; generated glue (`roc glue`) would
   retire the layout constants — see `tooling/glue/`.
+
+## 🌐 HTTP mounts
+
+An app can publish its agent type on its deployment's domain by declaring
+`metadata.httpMount`. `platform/Types.roc` carries the shape:
+
+```roc
+httpMount: Mount({
+        pathPrefix: ["site", "{id}"],
+        filesystemBindings: [
+                Subtree({ publicPrefix: ["assets"], filesystemRoot: "/assets" }),
+                Exact({ publicPath: ["index.html"], filePath: "/site/index.html" }),
+        ],
+        fileResponseHeaders: [{ name: "referrer-policy", value: "no-referrer" }],
+        corsAllowedPatterns: ["*"],
+}),
+```
+
+- `pathPrefix` segments are URL literals; a `{name}` segment captures the
+  agent's constructor parameter, so the URL selects the instance. Golem
+  requires every constructor parameter to be captured exactly once — a mount
+  that captures zero or several values is rejected at `initialize` with an
+error naming the problem, rather than at deploy time.
+- `filesystemBindings` map public paths onto files in the agent's **durable
+  filesystem**. The runtime serves matching `GET`/`HEAD` requests itself: no
+  method is invoked, and the agent does not have to be running.
+  `Subtree` serves everything under a public prefix from a filesystem root;
+  `Exact` serves one public path from one file. Anything unmapped answers 404.
+- The files come from the manifest's per-agent `files` (initial file system),
+  which `golem deploy` uploads and Golem provisions when the agent starts:
+
+  ```yaml
+  agents:
+    file-site-agent:
+      files:
+        - sourcePath: examples/site/static/hello.txt
+          targetPath: /assets/hello.txt
+  ```
+
+- The mount is reachable only if the manifest declares an HTTP API deployment
+  for it, and requests are routed by `Host`:
+
+  ```yaml
+  localServer:
+    customRequestPort: 9882
+  httpApi:
+    deployments:
+      local:
+        - subdomain: roc-golem
+          agents:
+            file-site-agent: {}
+  ```
+
+  ```shell
+  curl -H 'Host: roc-golem.localhost:9882' \
+    http://127.0.0.1:9882/site/site1/assets/hello.txt
+  ```
+
+  `subdomain` expands to `<subdomain>.localhost:<customRequestPort>` for local
+  servers, so the running server has to bind the port the manifest names (the
+  CLI warns when `--custom-request-port` disagrees).
+
+Not implemented yet, and rejected by the server if declared today: `staticBindings`
+and an `openapiProviderMethod`, both of which Golem only accepts on an
+`http-router` agent type — that kind needs a `handle(request) -> response`
+method whose request/response bodies are `stream<u8>` resources, which this
+platform does not emit yet.
+
+The `site` example is the worked case: `examples/site/main.roc`,
+`examples/site/static/`, and the `site:` checks in `tooling/e2e.sh` (subtree and
+exact bindings, 200/404, the configured response header, and that an id that was
+never created has no files to serve).
+
+---
 
 ## ✨ Effects
 
@@ -285,7 +385,7 @@ apps call them through `pf.Golem`.
 | `setPersistence!` | `golem:api/host` | `PersistNothing` / `PersistStateOnly` / `PersistEverything` |
 | `now!` | `wasi:clocks/monotonic-clock` | monotonic milliseconds |
 | `sleep!` | `wasi:clocks/monotonic-clock` | blocking wait; Golem records it in the oplog, so a resumed agent does not repeat it |
-| `http!` | `wasi:http/outgoing-handler` | request/response as JSON; response is `{status, headers, body}` |
+| `http!` | `wasi:http/outgoing-handler` (p2) | request/response as JSON; response is `{status, headers, body}`. **Not available on Golem 1.6.0**: see the p3 migration note above |
 | `rpc!` | `golem:agent/host` | target is an agent id such as `counter-agent("{}")`; returns the reply text || `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
 
 The linker only keeps the effects an app actually calls, so a component's import
@@ -300,15 +400,17 @@ anything is published:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata, `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded |
-| End-to-end | `GOLEM_CLI=/path/to/golem-1.5.9 ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, a tool call, a real HTTP request to a local web server, and agent-to-agent RPC. No stubs |
+| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, and the `httpMount` metadata mapping |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, a tool call, HTTP mounts served out of an agent's filesystem, and agent-to-agent RPC. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so
 their state starts fresh on every run. It needs a golem CLI whose local server
-works — see the version matrix in the deploy section; CI and the release
-workflow install 1.5.9 for it.
+works — the all-in-one `golem-<target>` binary, not `golem-cli-<target>` — see
+the version matrix in the deploy section; CI and the release workflow install
+`v1.6.0` for it. It reports a `SKIP` line, and a count at the end, for checks
+that cannot run against the pinned server.
 
 The ABI smoke test also runs against a debug build of the effects example, since
 the platform has had build-sensitive ABI bugs before.

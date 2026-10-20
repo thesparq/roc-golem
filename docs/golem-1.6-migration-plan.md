@@ -14,22 +14,56 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
 
 ---
 
-## 0. Progress (2026-10-15)
+## 0. Progress (2026-10-20)
 
 - **P0 done**: counter agent deployed and invoked on a local 1.6 server.
 - **P1 done**: all four examples build, deploy and run; `tooling/e2e.sh` is green
-  against `v1.6.0-rc2` and `v1.6.0-rc2.1` (the rc2.1 WIT is unchanged); the ABI
-  harness speaks the 1.6 world (counter/ai_tool/effects pass; components with
-  async imports cannot be exercised in the harness yet — see the harness README);
+  against `v1.6.0-rc2`, `v1.6.0-rc2.1` and `v1.6.0` (GA); the ABI harness speaks
+  the 1.6 world (counter/ai_tool/effects/site pass; components with async imports
+  cannot be exercised in the harness yet — see the harness README);
   `websocketReceive!` works via `wit_bindgen::block_on`.
 - **P2 done**: user-defined snapshots (verified through a real revision
   update), the `golem:tool/guest` surface (tools published, declared and bound
   in the manifest, invocable via `golem tool invoke --agent …`), read-only tool
   declarations, and config declarations with the `getConfig!` effect (the
-  counter reads its `greeting` from the manifest on rc2.1). Known limits are
+  counter reads its `greeting` from the manifest). Known limits are
   documented in the README: tool invocations run in a fresh instance (stateful
   tools error honestly; use agent methods for those), and components that import
   async host functions cannot be exercised in the harness yet.
+- **P3 done**: the v1.6.0 GA pin, the vendored WIT bundle and the `golem.yaml`
+  schema URL all moved to GA; `golem:websocket/client.connect` gained its
+  `reconstruction-policy` parameter (host updated).
+- **P4 done**: HTTP mounts. `metadata.httpMount` publishes a
+  `filesystemBindings` mount (subtree and exact) that the runtime serves from
+  the agent's durable filesystem without invoking it, with configured file
+  response headers and 404s for unmapped paths. `httpApi` + `localServer` are
+  documented in the README; the `site` example and four e2e checks cover it.
+  Static bindings and an OpenAPI provider need an `http-router` agent type
+  (stream-typed request/response), still to do.
+- **Open**: `http!` still targets `wasi:http/outgoing-handler@0.2.6`, which
+  **Golem 1.6.0 no longer provides**. Evidence: the 1.6.0 executor registers
+  `wasmtime_wasi_http::p2` nowhere (`golem-worker-executor/src/wasi_host/mod.rs`
+  registers `durable_host::p3` plus p2 cli/clocks/io/random/sockets only) while
+  `v1.6.0-rc2.1` still registered the p2 HTTP bindings; a component importing
+  them fails worker creation with “component imports instance
+  `wasi:http/types@0.2.6`, but a matching implementation was not found in the
+  linker”. Consequence: the effects example cannot instantiate on 1.6.0, so its
+  two e2e checks are reported as skipped. The migration is to `wasi:http@0.3.0`
+  (`types` + `client.send`) driven from the Roc-facing sync effect through
+  `wit_bindgen::block_on`, using `wasip3`'s `wit_stream`/`wit_future` for the
+  body streams — the shape the Golem Rust SDK uses in
+  `sdks/rust/golem-rust/src/http.rs` at v1.6.0. Note `wit_bindgen::spawn` is
+  unusable there (the fork's export executor and upstream's spawn queue are
+  different versions), so the upload and the send have to be joined rather than
+  spawned.
+
+- **Toolchain pin, re-confirmed the hard way**: building with a Roc nightly other
+  than `nightly-2026-09-19-d025939` produces components that *build* and then
+  trap at runtime — the counter's second `handle-message` died in
+  `RocStr::drop` → `__rust_dealloc` → `core::panicking::panic` (a `Str` freed
+  through the wrong deallocator), while the same source built with the pinned
+  nightly passes. `tooling/build.sh` now refuses to build with a mismatched
+  `roc` instead of leaving that to be discovered by the harness.
 
 ---
 

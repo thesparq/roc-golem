@@ -38,7 +38,7 @@ agent = defineAgent({
 							state,
 							replies: ["Connect failed: ${err}"],
 						}
-				}
+					}
 
 			"receive" =>
 				if state.connected {
@@ -54,7 +54,7 @@ agent = defineAgent({
 								state,
 								replies: ["Receive failed: ${err}"],
 							}
-					}
+						}
 				} else {
 					{
 						state,
@@ -76,7 +76,7 @@ agent = defineAgent({
 								state,
 								replies: ["Close failed: ${err}"],
 							}
-					}
+						}
 				} else {
 					{
 						state,
@@ -106,14 +106,14 @@ agent = defineAgent({
 								state,
 								replies: ["Send failed: ${err}"],
 							}
-					}
+						}
 				} else {
 					{
 						state,
 						replies: ["Not connected. Send 'connect' first."],
 					}
 				}
-		},
+			},
 
 	handleToolCall!: |state, toolCall|
 		match toolCall.name {
@@ -136,7 +136,7 @@ agent = defineAgent({
 						output: "{\"error\": \"Unknown tool ${toolCall.name}\"}",
 					},
 				}
-		},
+			},
 
 	metadata: {
 		name: "streaming-agent",
@@ -158,6 +158,7 @@ agent = defineAgent({
 			},
 		],
 		config: [],
+		httpMount: None,
 	},
 
 	serializeState: |state| {

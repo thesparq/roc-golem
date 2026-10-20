@@ -49,8 +49,9 @@ wit_bindgen::generate!({
 use exports::golem::agent::guest::{AgentError, AgentType, Guest, Principal};
 use golem::agent::common::{
     AgentConfigDeclaration, AgentConfigSource, AgentConstructor, AgentMethod, AgentMode,
-    AgentTypeKind, CachePolicy, CorsOptions, FieldSource, HttpEndpointDetails, HttpMethod,
-    InputSchema, NamedField, OutputSchema, PathSegment, ReadOnlyConfig, Snapshotting,
+    AgentTypeKind, CachePolicy, CorsOptions, ExactFileMapping, FieldSource, FileMapping,
+    FileResponseHeader, HttpEndpointDetails, HttpMethod, HttpMountDetails, InputSchema, NamedField,
+    OutputSchema, PathSegment, PathVariable, ReadOnlyConfig, Snapshotting, SubtreeFileMapping,
 };
 use golem::core::types::{
     MetadataEnvelope, SchemaGraph, SchemaTypeBody, SchemaTypeNode, SchemaValueNode,
@@ -177,6 +178,257 @@ fn single_param_value_tree(s: &str) -> SchemaValueTree {
     }
 }
 
+/// Parses the app's `httpMount` metadata into the registered agent type's mount
+/// details. Golem binds a constructor parameter through the mount, so a valid
+/// mount captures exactly one path variable — the agent's identity parameter.
+fn parse_http_mount(mount: &serde_json::Value) -> Result<HttpMountDetails, String> {
+    let segments = mount
+        .get("pathPrefix")
+        .and_then(|v| v.as_array())
+        .ok_or("httpMount.pathPrefix must be a list of path segments")?;
+
+    let mut path_prefix = Vec::new();
+    let mut captures = Vec::new();
+    for segment in segments {
+        let segment = segment
+            .as_str()
+            .ok_or("httpMount.pathPrefix must contain only strings")?;
+        match parse_mount_segment(segment)? {
+            PathSegment::PathVariable(variable) => {
+                captures.push(variable.variable_name.clone());
+                path_prefix.push(PathSegment::PathVariable(variable));
+            }
+            literal => path_prefix.push(literal),
+        }
+    }
+
+    // This platform's agents take exactly one constructor parameter, and Golem
+    // requires every constructor parameter to be captured by the mount, so a
+    // mount with any other number of captures cannot be deployed.
+    match captures.as_slice() {
+        [_] => {}
+        [] => {
+            return Err(
+                "httpMount.pathPrefix must capture the agent's constructor parameter, \
+                 for example [\"site\", \"{id}\"]"
+                    .to_string(),
+            );
+        }
+        _ => {
+            return Err(format!(
+                "httpMount.pathPrefix captures {} variables ({}), but a Roc agent has a single \
+                 constructor parameter",
+                captures.len(),
+                captures.join(", ")
+            ));
+        }
+    }
+
+    let filesystem_bindings = parse_file_bindings(mount, "filesystemBindings")?;
+    let file_response_headers = parse_file_response_headers(mount)?;
+    let cors_allowed_patterns = string_list(mount, "corsAllowedPatterns")?;
+
+    let details = HttpMountDetails {
+        path_prefix,
+        auth_details: None,
+        phantom_agent: false,
+        phantom_id_binding: None,
+        cors_options: CorsOptions {
+            allowed_patterns: cors_allowed_patterns,
+        },
+        webhook_suffix: vec![],
+        // Static bindings need a router agent type, which this platform does
+        // not emit yet; filesystem bindings are served from the agent's own
+        // durable filesystem and work on regular durable agents.
+        static_bindings: vec![],
+        filesystem_bindings,
+        file_response_headers,
+        openapi_provider_method: None,
+    };
+    Ok(details)
+}
+
+/// One mount path segment: `{name}` captures the constructor parameter, anything
+/// else is a URL literal.
+fn parse_mount_segment(segment: &str) -> Result<PathSegment, String> {
+    let is_capture = segment.starts_with('{') || segment.ends_with('}');
+    if is_capture {
+        let name = segment
+            .strip_prefix('{')
+            .and_then(|rest| rest.strip_suffix('}'))
+            .ok_or_else(|| {
+                format!("httpMount path segment {segment:?} is not a valid {{name}} capture")
+            })?;
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(format!(
+                "httpMount capture {segment:?} must be a plain name (letters, digits, '-' or '_')"
+            ));
+        }
+        Ok(PathSegment::PathVariable(PathVariable {
+            variable_name: name.to_string(),
+        }))
+    } else if valid_path_segment(segment) {
+        Ok(PathSegment::Literal(segment.to_string()))
+    } else {
+        Err(format!(
+            "httpMount path segment {segment:?} is not a valid URL path segment"
+        ))
+    }
+}
+
+/// Mirrors the server's `valid_decoded_segment`: decoded, non-empty, no `.`/`..`,
+/// no separators or control characters.
+fn valid_path_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment != "."
+        && segment != ".."
+        && !segment
+            .bytes()
+            .any(|byte| byte <= 0x1f || byte == 0x7f || byte == b'/' || byte == b'\\')
+}
+
+/// Mirrors the server's `validate_file_mapping` target rules so a bad mapping
+/// fails at build time instead of as a deploy-time validation error.
+fn valid_file_target(target: &str, allow_root: bool) -> bool {
+    target.starts_with('/')
+        && !target.contains('$')
+        && !target.chars().any(char::is_control)
+        && (target != "/" || allow_root)
+        && (target == "/"
+            || target[1..].split('/').all(valid_path_segment))
+}
+
+fn string_list(value: &serde_json::Value, key: &str) -> Result<Vec<String>, String> {
+    match value.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(vec![]),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| format!("httpMount.{key} must contain only strings"))
+            })
+            .collect(),
+        Some(_) => Err(format!("httpMount.{key} must be a list")),
+    }
+}
+
+fn parse_file_bindings(
+    mount: &serde_json::Value,
+    key: &str,
+) -> Result<Vec<FileMapping>, String> {
+    let mut bindings = Vec::new();
+    for binding in string_list_of_objects(mount, key)? {
+        if let Some(exact) = binding.get("exact").and_then(|v| v.as_object()) {
+            bindings.push(FileMapping::Exact(ExactFileMapping {
+                public_path: segments_from(exact, key, "publicPath")?,
+                file_path: target_from(exact, key, "filePath", false)?,
+            }));
+        } else if let Some(subtree) = binding.get("subtree").and_then(|v| v.as_object()) {
+            bindings.push(FileMapping::Subtree(SubtreeFileMapping {
+                public_prefix: segments_from(subtree, key, "publicPrefix")?,
+                filesystem_root: target_from(subtree, key, "filesystemRoot", true)?,
+            }));
+        } else {
+            return Err(format!(
+                "httpMount.{key} entries must be an `Exact` or a `Subtree` binding"
+            ));
+        }
+    }
+    Ok(bindings)
+}
+
+fn string_list_of_objects<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<Vec<&'a serde_json::Map<String, serde_json::Value>>, String> {
+    match value.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(vec![]),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_object()
+                    .ok_or_else(|| format!("httpMount.{key} must contain only objects"))
+            })
+            .collect(),
+        Some(_) => Err(format!("httpMount.{key} must be a list")),
+    }
+}
+
+fn segments_from(
+    binding: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    field: &str,
+) -> Result<Vec<String>, String> {
+    let list = string_list(&serde_json::Value::Object(binding.clone()), field)?;
+    if list.is_empty() {
+        return Err(format!("httpMount.{key}.{field} must not be empty"));
+    }
+    if let Some(bad) = list.iter().find(|s| !valid_path_segment(s)) {
+        return Err(format!(
+            "httpMount.{key}.{field} contains {bad:?}, which is not a valid path segment"
+        ));
+    }
+    Ok(list)
+}
+
+fn target_from(
+    binding: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    field: &str,
+    allow_root: bool,
+) -> Result<String, String> {
+    let value = binding
+        .get(field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("httpMount.{key}.{field} must be a string"))?;
+    if !valid_file_target(value, allow_root) {
+        return Err(format!(
+            "httpMount.{key}.{field} must be an absolute filesystem path inside the agent's \
+             filesystem (got {value:?})"
+        ));
+    }
+    Ok(value.to_string())
+}
+
+fn parse_file_response_headers(mount: &serde_json::Value) -> Result<Vec<FileResponseHeader>, String> {
+    let mut headers = Vec::new();
+    for header in string_list_of_objects(mount, "fileResponseHeaders")? {
+        let name = header
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or("httpMount.fileResponseHeaders entries need a `name`")?;
+        let value = header
+            .get("value")
+            .and_then(|v| v.as_str())
+            .ok_or("httpMount.fileResponseHeaders entries need a `value`")?;
+        headers.push(FileResponseHeader {
+            name: name.to_string(),
+            value: value.to_string(),
+        });
+    }
+    Ok(headers)
+}
+
+/// The name of the agent's constructor (identity) parameter. A mount binds it
+/// through its path capture, so the capture's name is the parameter's public
+/// name; without a mount the parameter keeps the platform's default name.
+fn constructor_param_name(mount: &Option<HttpMountDetails>) -> String {
+    mount
+        .as_ref()
+        .and_then(|mount| {
+            mount.path_prefix.iter().find_map(|segment| match segment {
+                PathSegment::PathVariable(variable) => Some(variable.variable_name.clone()),
+                _ => None,
+            })
+        })
+        .unwrap_or_else(|| "config".to_string())
+}
+
 fn build_agent_type() -> Result<AgentType, AgentError> {
     let mut roc_out = MaybeUninit::<RocStr>::uninit();
     let meta_json = unsafe {
@@ -215,6 +467,8 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
     });
 
     let mut config_decls = Vec::new();
+    let mut http_mount: Option<HttpMountDetails> = None;
+    let mut mount_error: Option<String> = None;
 
     if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_json) {
         if let Some(n) = meta.get("name").and_then(|v| v.as_str()) {
@@ -292,6 +546,13 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
                 });
             }
         }
+        match meta.get("httpMount") {
+            None | Some(serde_json::Value::Null) => {}
+            Some(mount) => match parse_http_mount(mount) {
+                Ok(details) => http_mount = Some(details),
+                Err(err) => mount_error = Some(err),
+            },
+        }
     }
 
     // Build the result without early returns: errors and success are assembled
@@ -306,6 +567,10 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
             "app metadata is not valid JSON or has no non-empty \"description\" field"
                 .to_string(),
         ))
+    } else if let Some(err) = mount_error {
+        Err(AgentError::InvalidType(format!(
+            "app metadata has an invalid httpMount: {err}"
+        )))
     } else {
         Ok(AgentType {
             type_name: name_str,
@@ -317,12 +582,14 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
                 name: None,
                 description: "Initializes the agent".to_string(),
                 prompt_hint: None,
-                input_schema: InputSchema::Parameters(vec![string_named_field("config")]),
+                input_schema: InputSchema::Parameters(vec![string_named_field(
+                    &constructor_param_name(&http_mount),
+                )]),
             },
             methods,
             dependencies: vec![],
             mode: AgentMode::Durable,
-            http_mount: None,
+            http_mount,
             snapshotting: Snapshotting::Disabled,
             config: config_decls,
         })
@@ -675,7 +942,9 @@ pub unsafe extern "C" fn rocFxWsConnect(
     url: *const RocStr,
 ) {
     let url_str = if url.is_null() { "" } else { (*url).as_str() };
-    match golem::websocket::client::WebsocketConnection::connect(url_str, None) {
+    // Golem 1.6.0 added a third parameter (the connection's reconstruction
+    // policy); `None` keeps the default, which reconnects automatically.
+    match golem::websocket::client::WebsocketConnection::connect(url_str, None, None) {
         Ok(connection) => {
             let handle = ws_store(connection);
             ptr::write(out, RocResult::ok(handle));
@@ -1190,6 +1459,96 @@ mod tests {
             types[0].config[0].source,
             AgentConfigSource::Local
         ));
+    }
+
+    /// The mount metadata decides three things the deploy-time validator
+    /// checks: the path captures that bind the constructor parameter, the
+    /// file mappings, and the response headers. Pin all three.
+    #[test]
+    fn test_parse_http_mount() {
+        let mount: serde_json::Value = serde_json::json!({
+            "pathPrefix": ["site", "{id}"],
+            "filesystemBindings": [
+                {"subtree": {"publicPrefix": ["assets"], "filesystemRoot": "/assets"}},
+                {"exact": {"publicPath": ["index.html"], "filePath": "/index.html"}},
+            ],
+            "fileResponseHeaders": [{"name": "x-frame-options", "value": "DENY"}],
+            "corsAllowedPatterns": ["https://example.com"],
+        });
+
+        let details = parse_http_mount(&mount).expect("mount should parse");
+        // The mount's capture is what names the constructor parameter.
+        assert_eq!(constructor_param_name(&Some(details.clone())), "id");
+        assert_eq!(constructor_param_name(&None), "config");
+        assert_eq!(details.path_prefix.len(), 2);
+        assert!(matches!(
+            &details.path_prefix[0],
+            PathSegment::Literal(literal) if literal == "site"
+        ));
+        assert!(matches!(
+            &details.path_prefix[1],
+            PathSegment::PathVariable(variable) if variable.variable_name == "id"
+        ));
+        assert_eq!(details.filesystem_bindings.len(), 2);
+        assert!(matches!(
+            &details.filesystem_bindings[0],
+            FileMapping::Subtree(subtree)
+                if subtree.public_prefix == vec!["assets".to_string()]
+                    && subtree.filesystem_root == "/assets"
+        ));
+        assert!(matches!(
+            &details.filesystem_bindings[1],
+            FileMapping::Exact(exact)
+                if exact.public_path == vec!["index.html".to_string()]
+                    && exact.file_path == "/index.html"
+        ));
+        assert_eq!(details.file_response_headers.len(), 1);
+        assert_eq!(details.file_response_headers[0].name, "x-frame-options");
+        assert_eq!(
+            details.cors_options.allowed_patterns,
+            vec!["https://example.com".to_string()]
+        );
+        // Static bindings and an OpenAPI provider need a router agent type,
+        // which this platform does not emit yet.
+        assert!(details.static_bindings.is_empty());
+        assert!(details.openapi_provider_method.is_none());
+    }
+
+    #[test]
+    fn test_parse_http_mount_rejects_unbound_mounts() {
+        // Golem binds every constructor parameter through the mount, so a
+        // mount that captures nothing (or more than one value) cannot be
+        // deployed; refuse it with an explanation instead.
+        let no_capture: serde_json::Value = serde_json::json!({
+            "pathPrefix": ["site"],
+            "filesystemBindings": [],
+        });
+        let err = parse_http_mount(&no_capture).expect_err("mount without a capture");
+        assert!(err.contains("must capture"), "unexpected error: {err}");
+
+        let two_captures: serde_json::Value = serde_json::json!({
+            "pathPrefix": ["{a}", "{b}"],
+            "filesystemBindings": [],
+        });
+        let err = parse_http_mount(&two_captures).expect_err("mount with two captures");
+        assert!(err.contains("single"), "unexpected error: {err}");
+
+        let bad_segment: serde_json::Value = serde_json::json!({
+            "pathPrefix": ["site", "{id}"],
+            "filesystemBindings": [{"subtree": {"publicPrefix": ["../etc"], "filesystemRoot": "/assets"}}],
+        });
+        let err = parse_http_mount(&bad_segment).expect_err("bad public segment");
+        assert!(
+            err.contains("not a valid path segment"),
+            "unexpected error: {err}"
+        );
+
+        let bad_target: serde_json::Value = serde_json::json!({
+            "pathPrefix": ["site", "{id}"],
+            "filesystemBindings": [{"exact": {"publicPath": ["a.txt"], "filePath": "a.txt"}}],
+        });
+        let err = parse_http_mount(&bad_target).expect_err("relative file target");
+        assert!(err.contains("absolute"), "unexpected error: {err}");
     }
 
     #[test]

@@ -48,7 +48,7 @@ agent = defineAgent({
 							state,
 							replies: ["HTTP failed: ${err}"],
 						}
-				}
+					}
 			}
 
 			"rpc" =>
@@ -69,14 +69,14 @@ agent = defineAgent({
 							state,
 							replies: ["RPC failed: ${err}"],
 						}
-				}
+					}
 
 			_ =>
 				{
 					state,
 					replies: ["Commands: fetch, rpc"],
 				}
-		},
+			},
 
 	handleToolCall!: |state, toolCall|
 		{
@@ -94,6 +94,7 @@ agent = defineAgent({
 		description: "Calls HTTP endpoints and other agents from a Golem Cloud agent",
 		tools: [],
 		config: [],
+		httpMount: None,
 	},
 
 	serializeState: |state|
@@ -146,7 +147,7 @@ extract_json_str = |json, field|
 								Ok({ before, after: _ }) => Ok(before)
 								Err(_) => Ok(after)
 							}
-					}
+						}
 				Err(_) => Err(NotFound)
 			}
-	}
+		}

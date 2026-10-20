@@ -56,7 +56,7 @@ agent = defineAgent({
 						output: "{\"error\": \"Tool not found\"}",
 					},
 				}
-		}
+			}
 	},
 
 	metadata: {
@@ -92,6 +92,7 @@ agent = defineAgent({
 			},
 		],
 		config: [],
+		httpMount: None,
 	},
 
 	serializeState: |state|

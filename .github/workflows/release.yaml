@@ -108,9 +108,8 @@ jobs:
 
       - name: Install Golem CLI
         env:
-          # Keep in step with .github/workflows/ci.yaml; bump to v1.6.0 when it
-          # ships.
-          GOLEM_VERSION: v1.6.0-rc2.1
+          # Keep in step with .github/workflows/ci.yaml.
+          GOLEM_VERSION: v1.6.0
         run: |
           curl -fSL -o "$HOME/golem-cli" \
             "https://github.com/golemcloud/golem/releases/download/${GOLEM_VERSION}/golem-x86_64-unknown-linux-gnu"

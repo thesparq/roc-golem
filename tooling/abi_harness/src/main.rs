@@ -22,7 +22,25 @@ bindgen!({
 });
 
 use exports::golem::agent::guest::Principal;
+use golem::agent::common::PathSegment;
 use golem::core::types::{SchemaValueNode, SchemaValueTree};
+
+/// Renders a mount's path prefix the way an app author writes it: literal
+/// segments verbatim, captures in braces.
+fn render_mount_path(segments: &[PathSegment]) -> String {
+    segments
+        .iter()
+        .map(|segment| match segment {
+            PathSegment::Literal(literal) => literal.clone(),
+            PathSegment::PathVariable(variable) => format!("{{{}}}", variable.variable_name),
+            PathSegment::RemainingPathVariable(variable) => {
+                format!("{{{}...}}", variable.variable_name)
+            }
+            PathSegment::SystemVariable(variable) => format!("<{variable:?}>"),
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
 /// Dummy host state. The linked component needs a monotonic clock, an empty poll
 /// set, a logging sink and WebSocket connections; the recorded effects are what
@@ -286,6 +304,9 @@ impl golem::websocket::client::HostWebsocketConnection for Ctx {
         &mut self,
         url: String,
         _headers: Option<Vec<(String, String)>>,
+        // Golem 1.6.0 added the connection's reconstruction policy; the stub
+        // reconnects implicitly, so the policy is not modelled here.
+        _reconstruction_policy: Option<golem::websocket::client::ReconstructionPolicy>,
     ) -> Result<
         wasmtime::component::Resource<golem::websocket::client::WebsocketConnection>,
         golem::websocket::client::Error,
@@ -644,6 +665,9 @@ struct Expectation {
     /// should contain.
     tool: Option<String>,
     tool_reply: Option<String>,
+    /// The mount path the agent type should publish, rendered as a URL path
+    /// (`site/{id}`): literal segments verbatim, captures in braces.
+    mount: Option<String>,
 }
 
 fn usage() -> String {
@@ -652,7 +676,7 @@ fn usage() -> String {
          [--message TEXT] [--reply SUBSTRING] [--then-message TEXT] \
          [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING] \
          [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING] \
-         [--tool NAME] [--tool-reply SUBSTRING]",
+         [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH]",
     )
 }
 
@@ -673,6 +697,7 @@ fn parse_args() -> Result<Expectation> {
         expect_rpc: None,
         tool: None,
         tool_reply: None,
+        mount: None,
     };
 
     while let Some(arg) = args.next() {
@@ -692,6 +717,7 @@ fn parse_args() -> Result<Expectation> {
             "--expect-rpc" => expectation.expect_rpc = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
+            "--expect-mount" => expectation.mount = args.next(),
             "-h" | "--help" => bail!("{}", usage()),
             other => {
                 if expectation.component.as_os_str().is_empty() {
@@ -812,11 +838,31 @@ async fn run() -> Result<ExitCode> {
     let methods: Vec<String> = definition.methods.iter().map(|m| m.name.clone()).collect();
     println!("[get-definition] type-name = {:?}", definition.type_name);
     println!("[get-definition] methods   = {:?}", methods);
+    if let Some(mount) = &definition.http_mount {
+        println!(
+            "[get-definition] http-mount = {:?} (filesystem bindings: {}, file response headers: {})",
+            render_mount_path(&mount.path_prefix),
+            mount.filesystem_bindings.len(),
+            mount.file_response_headers.len(),
+        );
+    }
     if let Some(expected) = &expectation.agent_type {
         if &definition.type_name != expected {
             failures.push(format!(
                 "agent type name is {:?}, expected {:?} (the host falls back to \"roc-agent\" when the app's metadata cannot be read)",
                 definition.type_name, expected
+            ));
+        }
+    }
+    if let Some(expected) = &expectation.mount {
+        let actual = definition
+            .http_mount
+            .as_ref()
+            .map(|mount| render_mount_path(&mount.path_prefix));
+        if actual.as_deref() != Some(expected.as_str()) {
+            failures.push(format!(
+                "http mount path is {:?}, expected {:?}",
+                actual, expected
             ));
         }
     }

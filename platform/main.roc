@@ -36,6 +36,9 @@ platform "golem"
 
 import Types exposing [
 	ConfigDeclaration,
+	FileBinding,
+	FileResponseHeader,
+	HttpMountOption,
 	ToolDefinition,
 	ToolParameter,
 	ToolCall,
@@ -101,8 +104,56 @@ main_metadata_for_host = |_| {
 	formatted_config = List.map(meta.config, format_config_declaration)
 	config_json = Str.join_with(formatted_config, ",")
 
-	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}]}"
+	mount_json = format_http_mount(meta.httpMount)
+
+	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}],\"httpMount\":${mount_json}}"
 }
+
+format_http_mount : HttpMountOption -> Str
+format_http_mount = |mount|
+	match mount {
+		None => "null"
+
+		Mount(m) => {
+			prefix_json = format_string_list(m.pathPrefix)
+			bindings_json = format_file_bindings(m.filesystemBindings)
+			headers_json = format_file_response_headers(m.fileResponseHeaders)
+			cors_json = format_string_list(m.corsAllowedPatterns)
+			"{\"pathPrefix\":${prefix_json},\"filesystemBindings\":${bindings_json},\"fileResponseHeaders\":${headers_json},\"corsAllowedPatterns\":${cors_json}}"
+		}
+	}
+
+format_string_list : List(Str) -> Str
+format_string_list = |items| {
+	escaped = List.map(items, format_json_string)
+	"[${Str.join_with(escaped, ",")}]"
+}
+
+format_json_string : Str -> Str
+format_json_string = |item| "\"${escape_json_str(item)}\""
+
+format_file_bindings : List(FileBinding) -> Str
+format_file_bindings = |bindings| {
+	formatted = List.map(bindings, format_file_binding)
+	"[${Str.join_with(formatted, ",")}]"
+}
+
+format_file_binding : FileBinding -> Str
+format_file_binding = |binding|
+	match binding {
+		Exact({ publicPath, filePath }) => "{\"exact\":{\"publicPath\":${format_string_list(publicPath)},\"filePath\":${format_json_string(filePath)}}}"
+
+		Subtree({ publicPrefix, filesystemRoot }) => "{\"subtree\":{\"publicPrefix\":${format_string_list(publicPrefix)},\"filesystemRoot\":${format_json_string(filesystemRoot)}}}"
+	}
+
+format_file_response_headers : List(FileResponseHeader) -> Str
+format_file_response_headers = |headers| {
+	formatted = List.map(headers, format_file_response_header)
+	"[${Str.join_with(formatted, ",")}]"
+}
+
+format_file_response_header : FileResponseHeader -> Str
+format_file_response_header = |header| "{\"name\":${format_json_string(header.name)},\"value\":${format_json_string(header.value)}}"
 
 format_config_declaration : ConfigDeclaration -> Str
 format_config_declaration = |decl| {
