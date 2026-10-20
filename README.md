@@ -586,6 +586,60 @@ what an operation no declared rule matches resolves to — so a `""` from
 
 ---
 
+## 🧭 Oplog and execution control
+
+`golem:api/host` is where an app reaches Golem's own execution: failing an
+invocation it must not continue, naming an external write, forking the agent,
+waiting for the oplog, and resolving component and agent ids. All six effects are
+*synchronous* host calls — no `block_on`, the way the quota and retry interfaces
+are — which is why the ABI harness drives them against stubs as well as the e2e
+running them for real.
+
+| Effect | What it does |
+| --- | --- |
+| `trap! : Str => {}` | fails the invocation with the reason, and never returns. Golem turns the call into a trap, so the failure is permanent rather than a result the app could branch on — a recoverable condition belongs in the app's own error handling. The agent keeps the failed invocation until an operator reverts it, which is why `revert-agent` stays a CLI operation |
+| `idempotencyKey! : {} => Str` | a durable key for an external write, as a UUID string (see below) |
+| `fork! : {} => Try(Str, Str)` | copies the agent at this point in the invocation: both copies continue from here, and each gets its own result — `Ok("original:<phantom-id>")` on the copy the caller is invoking, `Ok("forked:<phantom-id>")` on the new one. The phantom id is the same on both sides and is what the forked copy's agent id carries (`effects-agent("a")[<phantom-id>]`); the copies rejoin through a promise or talk to each other over `rpc!` |
+| `oplogCommit! : U8 => {}` | blocks until the oplog is durable on that many replicas (or on all of them). A replication barrier for this agent's own history — not a transaction, and no guarantee about an external system |
+| `resolveComponentId! : Str => Try(Str, Str)` | the component id (UUID string) of a deployed component, looked up by reference: in Golem OSS the component's name as the manifest declares it (`"roc-golem:counter"`). A reference that names no component comes back as `Err` |
+| `resolveAgentId! : Str, Str => Try(Str, Str)` | `(component reference, agent name)` → `{"componentId": …, "agentId": …}`. The host resolves the reference and attaches the name; whether that agent exists is not checked (that is `resolve-agent-id-strict`, which this platform does not expose) |
+
+### What `idempotencyKey!` is for
+
+Golem treats remote writes as eligible for re-execution: recovery can repeat an
+unfinished body, and an incomplete call can be retried. The peer therefore has to
+make the write duplicate-safe, and `idempotencyKey!` is the key to hand it. Golem
+derives the key from the call's position in the invocation's oplog and records it
+with the invocation's outcome, so:
+
+- two calls in one invocation are two positions and get two different keys;
+- a later invocation is a new sequence — its keys differ from the earlier one's;
+- a replay of the invocation (recovery, or a re-invocation under the same
+  idempotency key) hands the recorded keys back instead of fresh ones, which is
+  what lets the peer recognise the repeated write;
+- a header carrying the key is not a guarantee by itself — the peer has to
+  enforce it.
+
+`examples/effects/main.roc`'s `idempotency` command prints two keys from one
+invocation plus the previous invocation's first key, and the `idempotency:`
+checks in `tooling/e2e.sh` run it against a real server, replay included.
+
+### What 1.6 removed, and why
+
+These are not in the 1.6 host interface on purpose — an app that finds a
+pre-1.6 example using them is looking at something Golem no longer offers:
+
+| 1.5 effect | Why it is gone |
+| --- | --- |
+| `get-oplog-index`, `set-oplog-index`, `mark-begin-operation`, `mark-end-operation` | guests no longer read or move the execution cursor, and they no longer put their own markers in the oplog: durability belongs to the runtime, and recovery repairs an incomplete call at its own `Start` instead of rerunning a group of completed effects |
+| `get-idempotence-mode`, `set-idempotence-mode` | there is no guest switch that declares host calls idempotent. Make writes duplicate-safe at the peer (above), and do not use `is-idempotent` in retry predicates — the host no longer supplies that property |
+
+`update-agent`, `revert-agent` and `get-agent-metadata` do exist in the host
+interface, but they are operator-facing: the CLI performs them (`golem agent
+update`, `golem agent revert`), so this platform does not expose them to apps.
+
+---
+
 ## ✨ Effects
 
 Every effect is declared in `platform/Effect.roc` and wrapped by `platform/Golem.roc`;
@@ -608,6 +662,7 @@ apps call them through `pf.Golem`.
 | `websocketConnect!` / `websocketSend!` / `websocketReceive!` / `websocketClose!` | `golem:websocket/client` | connections are tracked by a `U32` handle returned from `websocketConnect!` |
 | `newQuotaToken!` / `quotaReserve!` / `quotaCommit!` / `quotaSplit!` / `quotaMerge!` | `golem:quota/types` | reserve and commit units of a resource the manifest declares; tokens and reservations are `U32` handles (see [Quotas and retry](#-quotas-and-retry)) |
 | `getRetryPolicies!` / `getRetryPolicy!` / `resolveRetryPolicy!` / `nextRetryDelay!` / `setRetryPolicy!` / `removeRetryPolicy!` | `golem:api/retry` | retry policies and their predicate/policy trees, rendered as JSON text (see [Quotas and retry](#-quotas-and-retry)) |
+| `trap!` / `idempotencyKey!` / `fork!` / `oplogCommit!` / `resolveComponentId!` / `resolveAgentId!` | `golem:api/host` | fail an invocation, name an external write durably, copy the agent, wait for the oplog to reach replicas, and resolve component and agent ids (see [Oplog and execution control](#-oplog-and-execution-control)) |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
@@ -622,8 +677,8 @@ anything is published:
 | Layer | Command | What it proves |
 | --- | --- | --- |
 | Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, and the `httpMount` metadata mapping |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota and retry calls included |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, and retry policies read, resolved and walked. No stubs |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry and oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers) included |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so

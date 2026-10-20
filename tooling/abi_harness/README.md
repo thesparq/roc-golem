@@ -25,9 +25,14 @@ Flags:
 - `--expect-log` matches a line the agent emitted through `logInfo!` etc.,
   `--expect-sent` matches a WebSocket message the agent sent, `--expect-http`
   matches a request line the HTTP stub received, `--expect-rpc` matches a
-  remote call the agent made, and `--expect-quota` / `--expect-retry` match the
-  quota and retry-policy calls the agent made. All of them are recorded by the
-  stubs, so effect wiring is verified, not just reply text.
+  remote call the agent made, and `--expect-quota` / `--expect-retry` /
+  `--expect-host-call` match the quota, retry-policy and `golem:api/host` calls
+  the agent made (`trap`, `oplog-commit`, `resolve-component-id`, …). All of them
+  are recorded by the stubs, so effect wiring is verified, not just reply text.
+- `--expect-trap SUBSTRING` expects the first message to *fail the invocation*,
+  with SUBSTRING in the trap's text, instead of returning a reply: `trap!` never
+  returns, so the reply and tool checks are skipped and nothing else is asked of
+  that store.
 - `--expect-mount PATH` checks the mount path the agent type publishes
   (`site/{id}`), which is how the site example's `metadata.httpMount` is
   verified to survive the trip to the registered agent type.
@@ -51,12 +56,16 @@ It exits non-zero when any of these fail:
 - `initialize` traps or returns an error,
 - `invoke handle-message` traps, returns an error, or returns a reply that does
   not contain the expected text,
-- an expected log line, WebSocket send, HTTP request, RPC call, quota call or
-  retry-policy call was never recorded.
+- an expected log line, WebSocket send, HTTP request, RPC call, quota call,
+  retry-policy call or `golem:api/host` call was never recorded,
+- a message expected to trap (`--expect-trap`) returned a reply or failed some
+  other way instead.
 
 Current state of the components built from this tree: counter, ai_tool, site and
-effects pass every check, including the effects agent's HTTP and RPC calls and
-the counter's quota and retry-policy calls.
+effects pass every check, including the effects agent's HTTP and RPC calls, the
+counter's quota and retry-policy calls, and the counter's execution-control calls
+(a trapped invocation, `oplog-commit`, and both resolvers — the stubs resolve one
+known component reference, `roc-golem:counter`, and nothing else).
 
 Toolchain notes found while porting to 1.6:
 
@@ -98,9 +107,16 @@ interfaces with no Golem runtime present: agent types, the clocks, `wasi:io`,
 `wasi:http` (answered from a canned response while recording the request),
 `golem:agent/host` (RPC calls recorded), the WebSocket client (a recording
 connection), `wasi:logging` (recorded), and `golem:api/retry` /
-`golem:quota/types` (recorded too). Both of the last two are synchronous
-interfaces, which is why they can be driven here at all; a component that
-imports an *async* host function cannot be (see the toolchain notes above).
+`golem:quota/types` / `golem:api/host` (recorded too). Those three are
+synchronous interfaces, which is why they can be driven here at all; a component
+that imports an *async* host function cannot be (see the toolchain notes above).
+
+`golem:api/host`'s `trap` is the one stub that cannot fail the way the real host
+does: the WIT function has no result an error could travel in, and on the
+concurrent path wasmtime lets a panic inside a host call unwind instead of
+turning it into a guest trap. The stub panics and the harness catches that panic
+itself (`--expect-trap`); the e2e run is what verifies that an invocation really
+fails.
 
 `src/stubs.rs` implements the WASI interfaces by hand. wasmtime's own
 `wasi:http` implementation tracks a newer WASI version (`wasi:http@0.2.12`) than

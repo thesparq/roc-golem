@@ -171,4 +171,38 @@ Effect := {}.{
 	removeRetryPolicy! = |name| {
 		Host.rocFxRemoveRetryPolicy!(name)
 	}
+
+	## Oplog and execution control (`golem:api/host`), the part of it an app can
+	## use: no oplog cursor and no idempotence switch survive in Golem 1.6, so
+	## what is left is failing an invocation, naming an external write, forking
+	## the agent, committing the oplog, and resolving component and agent ids.
+	trap! : Str => {}
+	trap! = |reason| {
+		Host.rocFxTrap!(reason)
+	}
+
+	idempotencyKey! : {} => Str
+	idempotencyKey! = |_| {
+		Host.rocFxIdempotencyKey!({})
+	}
+
+	fork! : {} => Try(Str, Str)
+	fork! = |_| {
+		Host.rocFxFork!({})
+	}
+
+	oplogCommit! : U8 => {}
+	oplogCommit! = |replicas| {
+		Host.rocFxOplogCommit!(replicas)
+	}
+
+	resolveAgentId! : Str, Str => Try(Str, Str)
+	resolveAgentId! = |componentReference, agentName| {
+		Host.rocFxResolveAgentId!(componentReference, agentName)
+	}
+
+	resolveComponentId! : Str => Try(Str, Str)
+	resolveComponentId! = |componentReference| {
+		Host.rocFxResolveComponentId!(componentReference)
+	}
 }

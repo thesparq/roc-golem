@@ -56,6 +56,9 @@ struct Ctx {
     quota_calls: Vec<String>,
     /// Retry-policy host calls (`golem:api/retry`) the agent made.
     retry_calls: Vec<String>,
+    /// Oplog and execution-control host calls (`golem:api/host`) the agent made:
+    /// `trap`, `oplog-commit`, the resolvers, the idempotency key …
+    host_api_calls: Vec<String>,
     /// HTTP state used by the `wasi:http` stubs in `stubs.rs`.
     fields_table: Vec<std::collections::HashMap<String, Vec<Vec<u8>>>>,
     requests_table: Vec<StubRequest>,
@@ -821,6 +824,230 @@ impl golem::api::retry::Host for Ctx {
     }
 }
 
+/// The component reference and the component id the `golem:api/host` stubs
+/// resolve, plus the UUID a stubbed idempotency key comes back as. A real server
+/// looks the reference up in the registry; here one name is known and anything
+/// else resolves to nothing, which is what the counter's resolve commands report
+/// back (the positive and the negative case).
+const STUB_COMPONENT_REFERENCE: &str = "roc-golem:counter";
+const STUB_UUID: golem::core::types::Uuid = golem::core::types::Uuid {
+    high_bits: 0x0102_0304_0506_0708,
+    low_bits: 0x090a_0b0c_0d0e_0f10,
+};
+
+fn stub_component_id() -> golem::core::types::ComponentId {
+    golem::core::types::ComponentId { uuid: STUB_UUID }
+}
+
+fn stub_agent_id(agent_id: String) -> golem::core::types::AgentId {
+    golem::core::types::AgentId {
+        component_id: stub_component_id(),
+        agent_id,
+    }
+}
+
+/// The error an operation the harness cannot model reports, so a component that
+/// reaches for one fails visibly instead of being handed invented data.
+fn harness_unavailable(operation: &str) -> golem::api::host::AgentOperationError {
+    golem::api::host::AgentOperationError::BackendError(format!(
+        "{operation} is not available in the ABI harness"
+    ))
+}
+
+/// `golem:api/host`, stubbed. The synchronous calls the examples make are
+/// recorded for `--expect-host-call`; `trap` panics because the WIT function has
+/// no result a host error could travel in, and the harness catches that panic
+/// itself for `--expect-trap` (wasmtime lets a host panic unwind on the
+/// concurrent path instead of turning it into a guest trap). Everything
+/// operator-facing (`update-agent`, `revert-agent`, `fork-agent`,
+/// `get-agent-metadata`) reports `harness-unavailable`, and `fork` — which would
+/// have to copy this store's agent — does too.
+impl golem::api::host::Host for Ctx {
+    fn create_promise(&mut self) -> golem::core::types::PromiseId {
+        self.host_api_calls.push(String::from("create-promise"));
+        golem::core::types::PromiseId {
+            agent_id: stub_agent_id(String::from("stub-agent(\"harness\")")),
+            oplog_idx: 1,
+        }
+    }
+
+    fn get_promise(
+        &mut self,
+        _promise_id: golem::core::types::PromiseId,
+    ) -> wasmtime::component::Resource<golem::api::host::GetPromiseResult> {
+        self.host_api_calls.push(String::from("get-promise"));
+        // The stub promise is already complete; the body is empty and the
+        // rep does not have to name anything.
+        wasmtime::component::Resource::new_own(0)
+    }
+
+    fn complete_promise(
+        &mut self,
+        _promise_id: golem::core::types::PromiseId,
+        _data: Vec<u8>,
+    ) -> bool {
+        self.host_api_calls.push(String::from("complete-promise"));
+        true
+    }
+
+    fn oplog_commit(&mut self, replicas: u8) {
+        self.host_api_calls
+            .push(format!("oplog-commit(replicas={replicas})"));
+    }
+
+    fn trap(&mut self, reason: String) {
+        self.host_api_calls.push(format!("trap(reason={reason})"));
+        panic!("guest-requested trap: {reason}");
+    }
+
+    fn generate_idempotency_key(&mut self) -> golem::core::types::Uuid {
+        self.host_api_calls
+            .push(String::from("generate-idempotency-key"));
+        STUB_UUID
+    }
+
+    fn get_self_metadata(
+        &mut self,
+    ) -> Result<golem::api::host::AgentMetadata, golem::api::host::AgentOperationError> {
+        self.host_api_calls.push(String::from("get-self-metadata"));
+        Ok(golem::api::host::AgentMetadata {
+            agent_id: stub_agent_id(String::from("stub-agent(\"harness\")")),
+            args: Vec::new(),
+            env: Vec::new(),
+            config: Vec::new(),
+            status: golem::api::host::AgentStatus::Idle,
+            component_revision: 1,
+            retry_count: 0,
+            environment_id: golem::api::host::EnvironmentId { uuid: STUB_UUID },
+        })
+    }
+
+    fn get_agent_metadata(
+        &mut self,
+        agent_id: golem::core::types::AgentId,
+    ) -> Option<golem::api::host::AgentMetadata> {
+        self.host_api_calls
+            .push(format!("get-agent-metadata(agent={})", agent_id.agent_id));
+        None
+    }
+
+    fn update_agent(
+        &mut self,
+        _agent_id: golem::core::types::AgentId,
+        _target_version: u64,
+        _mode: golem::api::host::UpdateMode,
+    ) -> Result<(), golem::api::host::AgentOperationError> {
+        self.host_api_calls.push(String::from("update-agent"));
+        Err(harness_unavailable("update-agent"))
+    }
+
+    fn fork_agent(
+        &mut self,
+        _source_agent_id: golem::core::types::AgentId,
+        _target_agent_id: golem::core::types::AgentId,
+        _oplog_idx_cut_off: u64,
+    ) -> Result<(), golem::api::host::AgentOperationError> {
+        self.host_api_calls.push(String::from("fork-agent"));
+        Err(harness_unavailable("fork-agent"))
+    }
+
+    fn revert_agent(
+        &mut self,
+        _agent_id: golem::core::types::AgentId,
+        _revert_target: golem::api::host::RevertAgentTarget,
+    ) -> Result<(), golem::api::host::AgentOperationError> {
+        self.host_api_calls.push(String::from("revert-agent"));
+        Err(harness_unavailable("revert-agent"))
+    }
+
+    fn resolve_component_id(
+        &mut self,
+        component_reference: String,
+    ) -> Option<golem::core::types::ComponentId> {
+        self.host_api_calls.push(format!(
+            "resolve-component-id(component={component_reference})"
+        ));
+        (component_reference == STUB_COMPONENT_REFERENCE).then(stub_component_id)
+    }
+
+    fn resolve_agent_id(
+        &mut self,
+        component_reference: String,
+        agent_id: String,
+    ) -> Option<golem::core::types::AgentId> {
+        self.host_api_calls.push(format!(
+            "resolve-agent-id(component={component_reference}, agent={agent_id})"
+        ));
+        (component_reference == STUB_COMPONENT_REFERENCE).then(|| stub_agent_id(agent_id))
+    }
+
+    fn resolve_agent_id_strict(
+        &mut self,
+        component_reference: String,
+        agent_name: String,
+    ) -> Option<golem::core::types::AgentId> {
+        self.host_api_calls.push(format!(
+            "resolve-agent-id-strict(component={component_reference}, agent={agent_name})"
+        ));
+        (component_reference == STUB_COMPONENT_REFERENCE).then(|| stub_agent_id(agent_name))
+    }
+
+    fn fork(
+        &mut self,
+    ) -> Result<golem::api::host::ForkResult, golem::api::host::AgentOperationError> {
+        self.host_api_calls.push(String::from("fork"));
+        Err(harness_unavailable("fork"))
+    }
+}
+
+impl golem::api::host::HostGetAgents for Ctx {
+    fn new(
+        &mut self,
+        _component_id: golem::core::types::ComponentId,
+        _filter: Option<golem::api::host::AgentAnyFilter>,
+        _precise: bool,
+    ) -> wasmtime::component::Resource<golem::api::host::GetAgents> {
+        wasmtime::component::Resource::new_own(0)
+    }
+
+    fn get_next(
+        &mut self,
+        _self_: wasmtime::component::Resource<golem::api::host::GetAgents>,
+    ) -> Result<
+        Option<Vec<golem::api::host::AgentMetadata>>,
+        golem::api::host::AgentOperationError,
+    > {
+        Ok(None)
+    }
+
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::api::host::GetAgents>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl golem::api::host::HostGetPromiseResult for Ctx {
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<golem::api::host::GetPromiseResult>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+/// `get-promise-result.get` is the one async function in `golem:api/host`; the
+/// stub promise is already complete, so it answers with an empty body.
+impl golem::api::host::HostGetPromiseResultWithStore<Ctx> for Ctx {
+    fn get(
+        _accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        _self_: wasmtime::component::Resource<golem::api::host::GetPromiseResult>,
+    ) -> impl std::future::Future<Output = Vec<u8>> + Send {
+        async move { Vec::new() }
+    }
+}
+
 /// What the component under test is expected to report and do.
 struct Expectation {
     component: PathBuf,
@@ -850,6 +1077,14 @@ struct Expectation {
     /// Substring expected in the retry-policy calls the agent made through the
     /// `golem:api/retry` interface.
     expect_retry: Option<String>,
+    /// Substring expected in the oplog/execution-control calls the agent made
+    /// through `golem:api/host` (`trap`, `oplog-commit`, `resolve-…`).
+    expect_host_call: Option<String>,
+    /// The first message is expected to trap, with the substring in the trap's
+    /// text. The message/reply checks are skipped in that case: a trap is a
+    /// failed invocation, not a reply, and the instance is not asked for
+    /// another one afterwards.
+    expect_trap: Option<String>,
     /// A tool (registered as a method) to invoke, and the substring its result
     /// should contain.
     tool: Option<String>,
@@ -869,6 +1104,7 @@ fn usage() -> String {
          [--then-reply SUBSTRING] [--expect-log SUBSTRING] [--expect-sent SUBSTRING] \
          [--config TEXT] [--expect-http SUBSTRING] [--expect-rpc SUBSTRING] \
          [--expect-quota SUBSTRING] [--expect-retry SUBSTRING] \
+         [--expect-host-call SUBSTRING] [--expect-trap SUBSTRING] \
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
          [--expect-kind regular|http-router]",
     )
@@ -891,6 +1127,8 @@ fn parse_args() -> Result<Expectation> {
         expect_rpc: None,
         expect_quota: None,
         expect_retry: None,
+        expect_host_call: None,
+        expect_trap: None,
         tool: None,
         tool_reply: None,
         mount: None,
@@ -914,6 +1152,8 @@ fn parse_args() -> Result<Expectation> {
             "--expect-rpc" => expectation.expect_rpc = args.next(),
             "--expect-quota" => expectation.expect_quota = args.next(),
             "--expect-retry" => expectation.expect_retry = args.next(),
+            "--expect-host-call" => expectation.expect_host_call = args.next(),
+            "--expect-trap" => expectation.expect_trap = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
             "--expect-mount" => expectation.mount = args.next(),
@@ -1004,6 +1244,7 @@ async fn run() -> Result<ExitCode> {
             rpc_calls: Vec::new(),
             quota_calls: Vec::new(),
             retry_calls: Vec::new(),
+            host_api_calls: Vec::new(),
             fields_table: Vec::new(),
             requests_table: Vec::new(),
             body_slots: Vec::new(),
@@ -1150,10 +1391,72 @@ async fn run() -> Result<ExitCode> {
 
     // 4. Message round-trips. `invoke` returns the app's reply text, so replies
     //    are matched directly; a second call shows whether state survived.
+    //    `--expect-trap` inverts that for one call: `trap!` fails the invocation,
+    //    so what has to match is the trap's text, and there is no reply — nor a
+    //    second call on an instance whose invocation just failed.
     let second_message = expectation
         .then_message
         .clone()
         .unwrap_or_else(|| expectation.message.clone());
+
+    if let Some(expected_reason) = &expectation.expect_trap {
+        // A host-side `trap` is an uncatchable failure by design, and on the
+        // concurrent path wasmtime lets a panic inside a host call unwind
+        // instead of turning it into a guest trap the way it does for a wasm
+        // `unreachable`. The harness therefore catches the panic itself and
+        // reads it as the failed invocation `trap!` produces on a real server;
+        // nothing is asked of this store afterwards.
+        let trap_result = {
+            // The panic is expected and is reported below; the default hook's
+            // "thread 'main' panicked" would read like a failure.
+            let default_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(|_| {}));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                pollster::block_on(store.run_concurrent(async |accessor| {
+                    guest
+                        .call_invoke(
+                            accessor,
+                            String::from("handle-message"),
+                            text_value(&expectation.message),
+                            Principal::Anonymous,
+                        )
+                        .await
+                }))
+            }));
+            std::panic::set_hook(default_hook);
+            result
+        };
+
+        let trapped_with = match trap_result {
+            // The panic message carries the reason the guest asked for.
+            Err(panic) => panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string())),
+            // A guest-side trap is reported by wasmtime as the call's error.
+            Ok(Ok(Err(err))) => Some(format!("{err:?}")),
+            Ok(result) => {
+                failures.push(match result {
+                    Ok(Ok(Ok(value))) => format!(
+                        "expected the invocation to trap, but it returned {:?}",
+                        value.as_ref().and_then(text_of).unwrap_or_default()
+                    ),
+                    _ => format!("expected the invocation to trap, but it could not run: {result:?}"),
+                });
+                None
+            }
+        };
+
+        if let Some(text) = trapped_with {
+            println!("[invoke handle-message] = trap (expected)\n{text}");
+            if !text.contains(expected_reason.as_str()) {
+                failures.push(format!(
+                    "the trap text {text:?} does not contain {expected_reason:?}"
+                ));
+            }
+        }
+    }
+
     for (label, message, expected) in [
         (
             "invoke handle-message",
@@ -1166,7 +1469,7 @@ async fn run() -> Result<ExitCode> {
             expectation.then_reply_contains.clone(),
         ),
     ] {
-        if expected.is_none() {
+        if expected.is_none() || expectation.expect_trap.is_some() {
             continue;
         }
         let invoke_result = store
@@ -1210,8 +1513,11 @@ async fn run() -> Result<ExitCode> {
     }
 
     // 5. Tool calls take a different path through the host (they go to the
-    //    app's `handleToolCall!` and come back as a result payload).
-    if let Some(tool) = &expectation.tool {
+    //    app's `handleToolCall!` and come back as a result payload). A check
+    //    that expects a trap stops here: its invocation failed on purpose, and
+    //    this store is not asked for more work afterwards.
+    if expectation.expect_trap.is_none() {
+        if let Some(tool) = &expectation.tool {
         let tool_result = store
             .run_concurrent(async |accessor| {
                 guest
@@ -1249,6 +1555,7 @@ async fn run() -> Result<ExitCode> {
                 println!("[invoke {tool}] = executor error\n{err:?}");
                 failures.push(format!("tool {} could not run", tool));
             }
+        }
         }
     }
 
@@ -1311,6 +1618,19 @@ async fn run() -> Result<ExitCode> {
                 failures.push(format!(
                     "no retry-policy call contains {:?} (made: {:?})",
                     expected, ctx.retry_calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_host_call {
+            let hit = ctx
+                .host_api_calls
+                .iter()
+                .any(|call| call.contains(expected.as_str()));
+            println!("[host api calls] {:?}", ctx.host_api_calls);
+            if !hit {
+                failures.push(format!(
+                    "no golem:api/host call contains {:?} (made: {:?})",
+                    expected, ctx.host_api_calls
                 ));
             }
         }

@@ -30,4 +30,10 @@ Host :: [].{
 	rocFxNextRetryDelay! : Str, Str, U64, Str => Try(Str, Str)
 	rocFxSetRetryPolicy! : Str => Try({}, Str)
 	rocFxRemoveRetryPolicy! : Str => {}
+	rocFxTrap! : Str => {}
+	rocFxIdempotencyKey! : {} => Str
+	rocFxFork! : {} => Try(Str, Str)
+	rocFxOplogCommit! : U8 => {}
+	rocFxResolveAgentId! : Str, Str => Try(Str, Str)
+	rocFxResolveComponentId! : Str => Try(Str, Str)
 }

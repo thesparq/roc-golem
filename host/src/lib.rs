@@ -1856,6 +1856,134 @@ pub unsafe extern "C" fn rocFxRemoveRetryPolicy(name: RocStr) {
     golem::api::retry::remove_retry_policy(name.as_str());
 }
 
+// Oplog and execution-control effects
+//
+// `golem:api/host` is synchronous, so these effects call it directly. What
+// remains of the 1.5 execution-control surface is small on purpose: Golem 1.6
+// removed the guest-controlled oplog markers (`mark-begin-operation`,
+// `mark-end-operation`), the oplog cursor (`get-oplog-index`,
+// `set-oplog-index`) and the idempotence switch (`get-idempotence-mode`,
+// `set-idempotence-mode`) — see the README's "Oplog and execution control".
+// What is left is for the app: `trap!` to fail an invocation it must not
+// continue, `idempotencyKey!` to make an external write duplicate-safe,
+// `fork!` to copy the agent, `oplogCommit!` to wait for the oplog to reach
+// replicas, and the two resolvers that turn a component reference into the ids
+// `rpc!` works with. The operator-facing operations (`update-agent`,
+// `revert-agent`, `get-agent-metadata`) stay on the CLI.
+
+/// `agent-operation-error` rendered for the effect's error channel, the way
+/// `webhook_error_text` renders `webhook-error`.
+fn agent_operation_error_text(error: golem::api::host::AgentOperationError) -> String {
+    match error {
+        golem::api::host::AgentOperationError::PermissionDenied => String::from("permission-denied"),
+        golem::api::host::AgentOperationError::BackendError(message) => {
+            format!("backend-error: {message}")
+        }
+    }
+}
+
+/// A `fork-result` as `"original:<phantom-id>"` / `"forked:<phantom-id>"`: the
+/// variant says which side of the fork this agent is, and the phantom id — the
+/// same value on both sides — is what the forked copy's agent id carries.
+fn fork_result_text(result: golem::api::host::ForkResult) -> String {
+    let (side, details) = match result {
+        golem::api::host::ForkResult::Original(details) => ("original", details),
+        golem::api::host::ForkResult::Forked(details) => ("forked", details),
+    };
+    format!("{side}:{}", uuid_string(&details.forked_phantom_id))
+}
+
+/// An `agent-id` record as JSON. An app that resolved an agent needs both
+/// halves: the component id (which the agent id string does not carry) and the
+/// agent id string itself.
+fn agent_id_json(id: &golem::core::types::AgentId) -> String {
+    serde_json::json!({
+        "componentId": uuid_string(&id.component_id.uuid),
+        "agentId": id.agent_id,
+    })
+    .to_string()
+}
+
+/// What the resolve effects report for a reference that named no component: the
+/// app asked for something that does not exist, which is its mistake to see —
+/// the way a malformed agent id is for `parseAgentId!`.
+fn unresolved_component_text(reference: &str) -> String {
+    format!("no component named {reference:?}")
+}
+
+/// `trap!`: fails the current invocation with `reason`, and never returns. The
+/// host turns the call into a trap, so the runtime reports it as an invocation
+/// failure instead of a result the app could branch on; Golem treats a trap as
+/// permanent, so a recoverable failure belongs in the app's own error handling.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxTrap(reason: RocStr) {
+    // The argument is owned by this function, and a real server traps inside this
+    // call, so execution never returns here and the string is not released — the
+    // invocation is over, and the runtime's copy of the reason is what the CLI
+    // reports as the failure.
+    golem::api::host::trap(reason.as_str());
+}
+
+/// `idempotencyKey!`: a durable key for an external write. Golem derives it from
+/// the position of this call in the invocation's oplog, so a replay of the
+/// invocation hands back the key the failed attempt already used — which is
+/// what makes a retried write duplicate-safe at the peer the write goes to. The
+/// peer has to enforce the key: an accompanying header alone is not a guarantee.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxIdempotencyKey() -> RocStr {
+    RocStr::from_str(&uuid_string(&golem::api::host::generate_idempotency_key()))
+}
+
+/// `fork!`: copies the current agent at this point in the invocation. Both
+/// sides continue, and each gets its own `fork-result`; the forked copy runs
+/// under the same agent id with the returned phantom id, and the invocation the
+/// caller is waiting for is the original's.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxFork() -> RocResult<RocStr, RocStr> {
+    match golem::api::host::fork() {
+        Ok(result) => RocResult::ok(RocStr::from_str(&fork_result_text(result))),
+        Err(err) => RocResult::err(RocStr::from_str(&agent_operation_error_text(err))),
+    }
+}
+
+/// `oplogCommit!`: blocks until the oplog is durable on `replicas` replicas (or
+/// on all of them, when `replicas` is higher than the deployment has). It is a
+/// replication barrier, not a transaction: it commits nothing about an external
+/// system, and it undoes nothing either.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxOplogCommit(replicas: u8) {
+    golem::api::host::oplog_commit(replicas);
+}
+
+/// `resolveComponentId!`: the component id of a deployed component, looked up by
+/// reference (in Golem OSS a component's name, as the manifest declares it).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxResolveComponentId(
+    component_reference: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    let reference = component_reference.as_str();
+    match golem::api::host::resolve_component_id(reference) {
+        Some(component_id) => RocResult::ok(RocStr::from_str(&uuid_string(&component_id.uuid))),
+        None => RocResult::err(RocStr::from_str(&unresolved_component_text(reference))),
+    }
+}
+
+/// `resolveAgentId!`: the agent id record for `agent_name` in the referenced
+/// component, as JSON (`{"componentId": …, "agentId": …}`). The host resolves
+/// the reference and attaches the name; whether that agent exists is what
+/// `resolve-agent-id-strict` would check, and this platform does not expose it.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxResolveAgentId(
+    component_reference: RocStr,
+    agent_name: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    let reference = component_reference.as_str();
+    match golem::api::host::resolve_agent_id(reference, agent_name.as_str()) {
+        Some(agent_id) => RocResult::ok(RocStr::from_str(&agent_id_json(&agent_id))),
+        None => RocResult::err(RocStr::from_str(&unresolved_component_text(reference))),
+    }
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
@@ -2733,6 +2861,81 @@ mod tests {
             }),
             "quota reservation failed (retry after 1.5s)"
         );
+    }
+
+    /// A fork result renders as `original:<phantom-id>` / `forked:<phantom-id>`
+    /// from the record's phantom id — the same id on both sides of the fork, so
+    /// an app can tell which branch it is on while still naming the copy.
+    #[test]
+    fn test_fork_result_text() {
+        use golem::api::host::{ForkDetails, ForkResult};
+
+        let details = ForkDetails {
+            forked_phantom_id: test_uuid(),
+        };
+        assert_eq!(
+            fork_result_text(ForkResult::Original(details.clone())),
+            "original:01020304-0506-0708-090a-0b0c0d0e0f10"
+        );
+        assert_eq!(
+            fork_result_text(ForkResult::Forked(details)),
+            "forked:01020304-0506-0708-090a-0b0c0d0e0f10"
+        );
+    }
+
+    /// The agent id `resolveAgentId!` returns is handed to Roc as JSON, because
+    /// the two halves an app needs are both there: the agent id string (with its
+    /// quotes, which have to survive) and the component id the string does not
+    /// carry.
+    #[test]
+    fn test_agent_id_json() {
+        let id = golem::core::types::AgentId {
+            component_id: golem::core::types::ComponentId {
+                uuid: test_uuid(),
+            },
+            agent_id: String::from("counter-agent(\"c-1\")"),
+        };
+
+        let json: serde_json::Value =
+            serde_json::from_str(&agent_id_json(&id)).expect("the agent id must be valid JSON");
+        assert_eq!(json["componentId"], "01020304-0506-0708-090a-0b0c0d0e0f10");
+        assert_eq!(json["agentId"], "counter-agent(\"c-1\")");
+    }
+
+    /// `agent-operation-error` renders for the effect's error channel, the way
+    /// `webhook-error` does for the webhook effects.
+    #[test]
+    fn test_agent_operation_error_text() {
+        use golem::api::host::AgentOperationError;
+
+        assert_eq!(
+            agent_operation_error_text(AgentOperationError::PermissionDenied),
+            "permission-denied"
+        );
+        assert_eq!(
+            agent_operation_error_text(AgentOperationError::BackendError(
+                "shard lost".to_string()
+            )),
+            "backend-error: shard lost"
+        );
+    }
+
+    /// A reference that named no component is reported instead of looking like
+    /// an empty result; the text names the reference the app asked for.
+    #[test]
+    fn test_unresolved_component_text() {
+        assert_eq!(
+            unresolved_component_text("roc-golem:nope"),
+            "no component named \"roc-golem:nope\""
+        );
+    }
+
+    /// The UUID the agent-id and fork-result tests share.
+    fn test_uuid() -> golem::core::types::Uuid {
+        golem::core::types::Uuid {
+            high_bits: 0x0102_0304_0506_0708,
+            low_bits: 0x090a_0b0c_0d0e_0f10,
+        }
     }
 
     /// A handle this instance never handed out is reported, not passed to the
