@@ -22,8 +22,11 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
   the 1.6 world (counter/ai_tool/effects/site pass; components with async imports
   cannot be exercised in the harness yet — see the harness README);
   `websocketReceive!` works via `wit_bindgen::block_on`.
-- **P2 done**: user-defined snapshots (verified through a real revision
-  update), the `golem:tool/guest` surface (tools published, declared and bound
+- **P2 done**: user-defined snapshots — now covered by the e2e
+  (`examples/counter_v2` adds a tool and a state field, so the revision is
+  incompatible; the e2e deploys it as the same component, updates an existing
+  agent with `agent update … manual`, and checks that the state crossed and that
+  the new revision migrated the older state format it was handed), the `golem:tool/guest` surface (tools published, declared and bound
   in the manifest, invocable via `golem tool invoke --agent …`), read-only tool
   declarations, and config declarations with the `getConfig!` effect (the
   counter reads its `greeting` from the manifest). Known limits are

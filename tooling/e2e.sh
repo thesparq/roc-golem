@@ -235,6 +235,64 @@ check "router: unmapped path answers 404" "404" \
 check "router: openapi provider reaches the deployment spec" "The uploaded index page" \
     "$(fetch "/openapi.yaml")"
 
+say "==> Snapshot-based agent update (incompatible revision)"
+# `counter_v2` adds a tool and a state field, so the agent type changes: Golem
+# leaves an existing agent on its old revision, and `update … manual` carries the
+# state across through this platform's save/load-snapshot exports. It is deployed
+# from a manifest derived from this one, so it is the same component and agent
+# type — just a later, incompatible revision.
+update_agent="counter-agent(\"$RUN_ID-update\")"
+invoke "$update_agent" handle-message '"increment"' >/dev/null
+invoke "$update_agent" handle-message '"increment"' >/dev/null
+check "update: state before the revision change" "Current count is 2" \
+    "$(invoke "$update_agent" handle-message '"get"')"
+
+v2_manifest="$WORK_DIR/golem_v2.yaml"
+python3 - "$MANIFEST" "$v2_manifest" <<'PY'
+import os
+import sys
+
+import yaml
+
+source, target = sys.argv[1], sys.argv[2]
+root = os.path.dirname(os.path.abspath(source))
+app = yaml.safe_load(open(source))
+
+# The derived manifest lives outside the app, so every path it carries has to be
+# absolute: component directories (build commands run in them), the initial-file
+# sources, and the counter's wasm.
+for component in app["components"].values():
+    component["dir"] = os.path.join(root, component["dir"])
+for agent in app["agents"].values():
+    for entry in agent.get("files") or []:
+        entry["sourcePath"] = os.path.join(root, entry["sourcePath"])
+
+component = app["components"]["roc-golem:counter"]
+component["componentWasm"] = "../../build/counter_v2_agent.wasm"
+component["build"] = [{"command": "../../tooling/build.sh counter_v2"}]
+app["tools"]["set-note"] = {"component": "roc-golem:counter"}
+app["agents"]["counter-agent"]["tools"]["set-note"] = {}
+yaml.safe_dump(app, open(target, "w"), sort_keys=False)
+PY
+v2_deploy="$("$CLI" $CLI_EXTRA -L -A "$v2_manifest" deploy --yes 2>&1 || true)"
+check_true "update: the incompatible revision deployed" \
+    "$(grep -qE 'Finished deploying|no changes required' <<<"$v2_deploy" && echo true || echo false)"
+
+update_output="$("$CLI" $CLI_EXTRA -L -A "$MANIFEST" -Y agent update "$update_agent" manual 2>&1 || true)"
+check_true "update: snapshot-based update applied" \
+    "$(grep -qiE 'updated|succeeded|finished' <<<"$update_output" && echo true || echo false)"
+check "update: state carried across the incompatible revision" "Current count is 2" \
+    "$(invoke "$update_agent" handle-message '"get"')"
+# The snapshot hands the *older* revision's state JSON across unchanged, so the
+# new revision migrates it — which is exactly what the fixture demonstrates.
+check "update: the new revision migrated the carried state" "Note is migrated" \
+    "$(invoke "$update_agent" handle-message '"note"')"
+check "update: a fresh agent on the new revision has its own default" "Note is v2" \
+    "$(invoke "counter-agent(\"$RUN_ID-update-fresh\")" handle-message '"note"')"
+
+# Leave the deployment on the app's own component revision.
+"$CLI" $CLI_EXTRA -L -A "$MANIFEST" deploy --yes >/dev/null 2>&1 || true
+
 say ""
 if [[ "$failures" -eq 0 ]]; then
     say "All end-to-end checks passed."
