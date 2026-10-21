@@ -3534,44 +3534,44 @@ struct Expectation {
     then_message: Option<String>,
     then_reply_contains: Vec<String>,
     /// Substring expected in a log line the agent emitted.
-    expect_log: Option<String>,
+    expect_log: Vec<String>,
     /// Substring expected in a WebSocket message the agent sent.
-    expect_sent: Option<String>,
+    expect_sent: Vec<String>,
     /// Agent config passed to `initialize`; defaults to the stub HTTP server URL
     /// when `--http-stub` is set, otherwise `{}`.
     config: Option<String>,
     /// Substring expected in a request line the stub HTTP server received.
-    expect_http: Option<String>,
+    expect_http: Vec<String>,
     /// Substring expected in the remote calls the agent made through `rpc!`.
-    expect_rpc: Option<String>,
+    expect_rpc: Vec<String>,
     /// Substring expected in the quota calls (`new-token`, `reserve`, …) the
     /// agent made through the `golem:quota/types` interface.
-    expect_quota: Option<String>,
+    expect_quota: Vec<String>,
     /// Substring expected in the retry-policy calls the agent made through the
     /// `golem:api/retry` interface.
-    expect_retry: Option<String>,
+    expect_retry: Vec<String>,
     /// Substring expected in the oplog/execution-control calls the agent made
     /// through `golem:api/host` (`trap`, `oplog-commit`, `resolve-…`).
-    expect_host_call: Option<String>,
+    expect_host_call: Vec<String>,
     /// Substring expected in the key-value calls the agent made through
     /// `wasi:keyvalue` (`open-bucket`, `set`, `get`, …).
-    expect_kv: Option<String>,
+    expect_kv: Vec<String>,
     /// Substring expected in the blobstore calls the agent made through
     /// `wasi:blobstore` (`create-container`, `write-data`, …).
-    expect_blob: Option<String>,
+    expect_blob: Vec<String>,
     /// Substring expected in the filesystem calls the agent made through
     /// `wasi:filesystem@0.2.6` (`open-at`, `write`, `read-directory`, …).
-    expect_fs: Option<String>,
+    expect_fs: Vec<String>,
     /// Substring expected in the database calls the agent made through
     /// `golem:rdbms` (`postgres open`, `postgres execute`, `mysql query`, …).
-    expect_db: Option<String>,
+    expect_db: Vec<String>,
     /// Substring expected in the permission calls the agent made through
     /// `golem:permissions` (`self-wallet`, `inspect-card`, `derive`, …).
-    expect_permission: Option<String>,
+    expect_permission: Vec<String>,
     /// Substring expected in the external-durable-stream calls the agent made
     /// through `golem:agent/durable-streams` (`reader(…)`, `read(…)`,
     /// `append(…)`, `drop(…)`).
-    expect_stream: Option<String>,
+    expect_stream: Vec<String>,
     /// The first message is expected to trap, with the substring in the trap's
     /// text. The message/reply checks are skipped in that case: a trap is a
     /// failed invocation, not a reply, and the instance is not asked for
@@ -3589,8 +3589,8 @@ struct Expectation {
     tool_stdin: Option<String>,
     /// Substrings expected in what the component wrote through the stdout /
     /// stderr writers.
-    expect_tool_stdout: Option<String>,
-    expect_tool_stderr: Option<String>,
+    expect_tool_stdout: Vec<String>,
+    expect_tool_stderr: Vec<String>,
     /// The mount path the agent type should publish, rendered as a URL path
     /// (`site/{id}`): literal segments verbatim, captures in braces.
     mount: Option<String>,
@@ -3628,7 +3628,9 @@ fn usage() -> String {
          [--expect-tool-stdout SUBSTRING] [--expect-tool-stderr SUBSTRING] \
          [--multimodal ENVELOPE] [--expect-multimodal SUBSTRING] \
          [--multimodal-shape-mismatch] [--expect-multimodal-error SUBSTRING] \
-         [--expect-kind regular|http-router]",
+         [--expect-kind regular|http-router] \
+         Every --expect-… flag may be given more than once, and each occurrence \
+         must match: repeating one asserts several substrings, not just the last.",
     )
 }
 
@@ -3642,27 +3644,27 @@ fn parse_args() -> Result<Expectation> {
         reply_contains: Vec::new(),
         then_message: None,
         then_reply_contains: Vec::new(),
-        expect_log: None,
-        expect_sent: None,
+        expect_log: Vec::new(),
+        expect_sent: Vec::new(),
         config: None,
-        expect_http: None,
-        expect_rpc: None,
-        expect_quota: None,
-        expect_retry: None,
-        expect_host_call: None,
-        expect_kv: None,
-        expect_blob: None,
-        expect_fs: None,
-        expect_db: None,
-        expect_permission: None,
-        expect_stream: None,
+        expect_http: Vec::new(),
+        expect_rpc: Vec::new(),
+        expect_quota: Vec::new(),
+        expect_retry: Vec::new(),
+        expect_host_call: Vec::new(),
+        expect_kv: Vec::new(),
+        expect_blob: Vec::new(),
+        expect_fs: Vec::new(),
+        expect_db: Vec::new(),
+        expect_permission: Vec::new(),
+        expect_stream: Vec::new(),
         expect_trap: None,
         tool: None,
         tool_reply: None,
         tool_stream: None,
         tool_stdin: None,
-        expect_tool_stdout: None,
-        expect_tool_stderr: None,
+        expect_tool_stdout: Vec::new(),
+        expect_tool_stderr: Vec::new(),
         mount: None,
         kind: None,
         multimodal: None,
@@ -3685,27 +3687,57 @@ fn parse_args() -> Result<Expectation> {
             "--then-reply" => expectation
                 .then_reply_contains
                 .push(args.next().context("--then-reply needs a value")?),
-            "--expect-log" => expectation.expect_log = args.next(),
-            "--expect-sent" => expectation.expect_sent = args.next(),
+            "--expect-log" => expectation
+                .expect_log
+                .push(args.next().context("--expect-log needs a value")?),
+            "--expect-sent" => expectation
+                .expect_sent
+                .push(args.next().context("--expect-sent needs a value")?),
             "--config" => expectation.config = args.next(),
-            "--expect-http" => expectation.expect_http = args.next(),
-            "--expect-rpc" => expectation.expect_rpc = args.next(),
-            "--expect-quota" => expectation.expect_quota = args.next(),
-            "--expect-retry" => expectation.expect_retry = args.next(),
-            "--expect-host-call" => expectation.expect_host_call = args.next(),
-            "--expect-kv" => expectation.expect_kv = args.next(),
-            "--expect-blob" => expectation.expect_blob = args.next(),
-            "--expect-fs" => expectation.expect_fs = args.next(),
-            "--expect-db" => expectation.expect_db = args.next(),
-            "--expect-permission" => expectation.expect_permission = args.next(),
-            "--expect-stream" => expectation.expect_stream = args.next(),
+            "--expect-http" => expectation
+                .expect_http
+                .push(args.next().context("--expect-http needs a value")?),
+            "--expect-rpc" => expectation
+                .expect_rpc
+                .push(args.next().context("--expect-rpc needs a value")?),
+            "--expect-quota" => expectation
+                .expect_quota
+                .push(args.next().context("--expect-quota needs a value")?),
+            "--expect-retry" => expectation
+                .expect_retry
+                .push(args.next().context("--expect-retry needs a value")?),
+            "--expect-host-call" => expectation
+                .expect_host_call
+                .push(args.next().context("--expect-host-call needs a value")?),
+            "--expect-kv" => expectation
+                .expect_kv
+                .push(args.next().context("--expect-kv needs a value")?),
+            "--expect-blob" => expectation
+                .expect_blob
+                .push(args.next().context("--expect-blob needs a value")?),
+            "--expect-fs" => expectation
+                .expect_fs
+                .push(args.next().context("--expect-fs needs a value")?),
+            "--expect-db" => expectation
+                .expect_db
+                .push(args.next().context("--expect-db needs a value")?),
+            "--expect-permission" => expectation
+                .expect_permission
+                .push(args.next().context("--expect-permission needs a value")?),
+            "--expect-stream" => expectation
+                .expect_stream
+                .push(args.next().context("--expect-stream needs a value")?),
             "--expect-trap" => expectation.expect_trap = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
             "--tool-stream" => expectation.tool_stream = args.next(),
             "--tool-stdin" => expectation.tool_stdin = args.next(),
-            "--expect-tool-stdout" => expectation.expect_tool_stdout = args.next(),
-            "--expect-tool-stderr" => expectation.expect_tool_stderr = args.next(),
+            "--expect-tool-stdout" => expectation
+                .expect_tool_stdout
+                .push(args.next().context("--expect-tool-stdout needs a value")?),
+            "--expect-tool-stderr" => expectation
+                .expect_tool_stderr
+                .push(args.next().context("--expect-tool-stderr needs a value")?),
             "--expect-mount" => expectation.mount = args.next(),
             "--expect-kind" => expectation.kind = args.next(),
             "--multimodal" => {
@@ -4405,7 +4437,7 @@ async fn run() -> Result<ExitCode> {
                         capture.terminal
                     ));
                 }
-                if let Some(expected) = expected {
+                for expected in expected {
                     if !text.contains(expected.as_str()) {
                         failures.push(format!(
                             "tool {tool}: {channel} {:?} does not contain {:?}",
@@ -4499,7 +4531,7 @@ async fn run() -> Result<ExitCode> {
     //    reply text.
     {
         let ctx = store.data();
-        if let Some(expected) = &expectation.expect_log {
+        for expected in &expectation.expect_log {
             let hit = ctx.logs.iter().any(|line| line.contains(expected.as_str()));
             println!("[logs] {:?}", ctx.logs);
             if !hit {
@@ -4509,7 +4541,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_http {
+        for expected in &expectation.expect_http {
             let requests = ctx.http_request_lines.clone();
             let hit = requests.iter().any(|line| line.contains(expected.as_str()));
             println!("[http requests] {:?}", requests);
@@ -4520,7 +4552,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_rpc {
+        for expected in &expectation.expect_rpc {
             let hit = ctx.rpc_calls.iter().any(|call| call.contains(expected.as_str()));
             println!("[rpc calls] {:?}", ctx.rpc_calls);
             if !hit {
@@ -4530,7 +4562,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_quota {
+        for expected in &expectation.expect_quota {
             let hit = ctx
                 .quota_calls
                 .iter()
@@ -4543,7 +4575,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_retry {
+        for expected in &expectation.expect_retry {
             let hit = ctx
                 .retry_calls
                 .iter()
@@ -4556,7 +4588,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_host_call {
+        for expected in &expectation.expect_host_call {
             let hit = ctx
                 .host_api_calls
                 .iter()
@@ -4569,7 +4601,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_kv {
+        for expected in &expectation.expect_kv {
             let calls = ctx.kv_calls.clone();
             let hit = calls.iter().any(|call| call.contains(expected.as_str()));
             println!("[key-value calls] {:?}", calls);
@@ -4580,7 +4612,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_blob {
+        for expected in &expectation.expect_blob {
             let calls = ctx.blob_calls.clone();
             let hit = calls.iter().any(|call| call.contains(expected.as_str()));
             println!("[blobstore calls] {:?}", calls);
@@ -4591,7 +4623,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_fs {
+        for expected in &expectation.expect_fs {
             let calls = ctx.fs_calls.clone();
             let hit = calls.iter().any(|call| call.contains(expected.as_str()));
             println!("[filesystem calls] {:?}", calls);
@@ -4602,7 +4634,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_db {
+        for expected in &expectation.expect_db {
             let calls = ctx.db_calls.clone();
             let hit = calls.iter().any(|call| call.contains(expected.as_str()));
             println!("[database calls] {:?}", calls);
@@ -4613,7 +4645,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_permission {
+        for expected in &expectation.expect_permission {
             let calls = ctx.permission_calls.clone();
             let hit = calls.iter().any(|call| call.contains(expected.as_str()));
             println!("[permission calls] {:?}", calls);
@@ -4624,7 +4656,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_stream {
+        for expected in &expectation.expect_stream {
             let calls = ctx.durable_stream_calls.clone();
             let hit = calls.iter().any(|call| call.contains(expected.as_str()));
             println!("[durable stream calls] {:?}", calls);
@@ -4635,7 +4667,7 @@ async fn run() -> Result<ExitCode> {
                 ));
             }
         }
-        if let Some(expected) = &expectation.expect_sent {
+        for expected in &expectation.expect_sent {
             let hit = ctx.sent.iter().any(|msg| msg.contains(expected.as_str()));
             println!("[websocket sent] {:?}", ctx.sent);
             if !hit {

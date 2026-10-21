@@ -52,7 +52,10 @@ Flags:
   `writer(…)`, `read(…)`, `append(…)`, and the `drop(…)` a
   `durableStreamRelease!` performs). All of
   them are recorded by the stubs, so effect wiring is verified, not just reply
-  text — and the two stores, the filesystem, the database and the permission
+  text. Every `--expect-…` flag may be given **more than once** and each
+  occurrence has to match, so one check can assert several calls of the same
+  kind (`--expect-permission "self-wallet()" --expect-permission "inspect-card(…)"`);
+  a repeated flag asserts all of them, not just the last. The two stores, the filesystem, the database and the permission
   cards are stubbed with a
   small store of their own (a relational one for the database: the statements
   the counter's `db` command sends against a tiny store of committed rows and
