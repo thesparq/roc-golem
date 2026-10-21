@@ -65,11 +65,55 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    platform has demonstrated it can deliver), or executor-side instrumentation
    of the `wrap`/pipe path. The platform logs a warning when an app's body is
    dropped, so nothing changes for an app once either lands.
-2. **Durable streams** (`golem:agent/durable-streams`): append/read into host
-   storage, streaming method inputs/outputs, and the HTTP streaming endpoints the
-   SDKs derive from them. Our platform's methods are string-in/string-out.
-   Cost: large — needs stream-typed schema values on both sides plus a Roc-facing
-   API.
+2. **Durable streams** — **three slices, one of them worth doing now.** The item
+   is not one feature: the SDKs' "durable streams" is (a) reading and writing
+   *external* services that speak the Durable Streams protocol, (b) agent methods
+   whose parameters or results are streams, and (c) the HTTP streaming endpoints
+   derived from those methods. What this platform can do about each:
+
+   - **(a) External durable streams — the slice to do.**
+     `golem:agent/durable-streams@2.0.0` is vendored
+     (`wit/deps/golem-agent/durable-streams.wit`) and not yet imported. The host
+     owns HTTP, framing and authentication; the guest gets a
+     `durable-stream-reader` (one protocol attempt: a URL, a checkpoint, a mode —
+     json or bytes — a transport — catch-up, long-poll or SSE — a deadline, and
+     optional `secret` auth) and a `durable-stream-writer` (a URL, a content
+     type, a producer id and epoch, a deadline, and `append` with a payload,
+     sequence and close flag). Both are `async`, so the effects drive them with
+     `wit_bindgen::block_on` the way `http!` does, and both are resources, so they
+     travel as `U32` handles like the WebSocket, quota and database ones.
+     Structured values (batches, checkpoints, append receipts, errors) travel as
+     JSON in the WIT's camelCase shape — the `retry_json` / `rdbms_json` /
+     `permissions_json` convention. **Nothing here depends on item 1's blocker:**
+     no bytes cross a component-model stream, the host does the HTTP.
+     - *Testing.* The ABI harness can stub the interface and assert the JSON the
+       effects produce (async host imports work there now — see item 11's note),
+       including one error case. For the e2e there is a **real local service to
+       point at**: the protocol has a reference implementation
+       (`github.com/durable-streams/durable-streams`; the Node package
+       `@durable-streams/server`, or the Caddy-based `durable-streams-server dev`
+       which listens on `http://127.0.0.1:4437/v1/stream/*` with in-memory
+       storage). So the check can create a stream, append through the effect, read
+       it back through the effect and see the checkpoint advance — the same shape
+       as the effects agent's local HTTP server.
+   - **(b) Streaming method inputs — feasible, low value for this surface.** A
+     method whose parameter is a stream receives a **host-created** stream, which
+     this platform has already proven it can read (the router's request body is
+     exactly that, and the e2e covers it). What it buys an app is durable,
+     resumable transport — the runtime keeps the session and a CLI client can
+     reconnect from a checkpoint — but the app still receives one buffered JSON
+     string, because that is this platform's method surface. Worth doing only if
+     an app needs larger-than-memory inputs or resumable uploads; it is another
+     declared method plus hook (the `handleRequest!` / `handleMultimodal!` kind of
+     break), and the HTTP shape needs the durable-session route options
+     (`HttpEndpointDetails.durable_streams`) exposed, which this platform does not
+     build today.
+   - **(c) Streaming method outputs and the derived HTTP endpoints — blocked.** A
+     method *result* or an HTTP response *body* that is a stream is a
+     **guest-created** stream in a returned value tree, which Golem 1.6.0 never
+     delivers: measured here, and filed as
+     [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291).
+     Both halves wait on that.
 3. ~~**Agent-to-agent calls beyond invoke-and-await**~~ — **done**: effects
    `rpcFireAndForget!` (`invoke`), `rpcSchedule!` (`schedule-invocation`),
    `rpcScheduleCancelable!` + `rpcCancel!` (cancelable scheduling), and
