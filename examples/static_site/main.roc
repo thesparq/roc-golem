@@ -25,11 +25,15 @@ agent = defineAgent({
 	handleMessage!: |state, _message| { state, replies: [] },
 
 	# Every request the static bindings do not match lands here, with the body
-	# already buffered by the host.
+	# already buffered by the host. A router owns its statuses: 204 for the
+	# bodyless case, 404 for a path this app does not serve, and a computed
+	# answer for everything else.
 	handleRequest!: |state, request|
 		if request.path == "/static/ping" {
 			# No body: the host skips the response stream write entirely.
 			{ state, response: { status: 204, headers: [], body: "" } }
+		} else if request.path == "/static/missing" {
+			{ state, response: { status: 404, headers: [], body: "" } }
 		} else {
 			{
 				state,

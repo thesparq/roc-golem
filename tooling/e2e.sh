@@ -653,7 +653,11 @@ check "router: exact binding serves an uploaded file" "Served by the router" \
     "$(fetch "/static/index.html")"
 check_true "router: uploaded files carry an immutable ETag" \
     "$(fetch_headers "/static/assets/hello.txt" | grep -qi '^etag: "blake3-' && echo true || echo false)"
-check "router: unmapped path answers 404" "404" \
+# A router with a handler owns the misses: the mount's file mappings are tried
+# first, and a path none of them match is handed to `handleRequest!` instead of
+# answering 404 (a router without a handler still 404s, as it did before the
+# handler existed; the example's own 404 is checked below).
+check "router: an unmatched file path reaches the handler" "200" \
     "$(fetch_status "/static/assets/missing.txt")"
 # The router's OpenAPI provider method supplies the document for the mount, and
 # Golem rebases its paths under the mount prefix.
@@ -666,10 +670,12 @@ check "router: openapi provider reaches the deployment spec" "The uploaded index
 # bodyless answer (204 here) is complete.
 check "router: dynamic handler answers a bodyless response" "204" \
     "$(fetch_status "/static/ping")"
-check "router: dynamic handler's status reaches the client" "200" \
+check "router: dynamic handler owns its statuses" "404" \
+    "$(fetch_status "/static/missing")"
+check "router: an unmatched path reaches the handler" "200" \
     "$(fetch_status "/static/unmatched")"
-check_true "router: dynamic handler's headers reach the client" \
-    "$(fetch_headers "/static/unmatched" | grep -qi '^content-type: text/plain' && echo true || echo false)"
+check "router: dynamic handler's headers reach the client" "content-type: text/plain" \
+    "$(fetch_headers "/static/unmatched")"
 # A *non-empty* response body does not arrive on Golem 1.6.0: the guest-created
 # stream the body travels in is never delivered to the invocation session, while
 # the same value-tree slot works for a stream the runtime created itself (see
