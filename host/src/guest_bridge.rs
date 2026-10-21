@@ -85,6 +85,7 @@ pub unsafe extern "C" fn main_handle_tool_call_for_host_1_exposed_generic(
     let mut tool_name = String::from("default");
     let mut call_id = String::from("call-1");
     let mut args = String::from("{}");
+    let mut stdin_text = String::new();
 
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(call_str) {
         if let Some(n) = parsed.get("name").and_then(|v| v.as_str()) {
@@ -96,20 +97,30 @@ pub unsafe extern "C" fn main_handle_tool_call_for_host_1_exposed_generic(
         if let Some(a) = parsed.get("arguments").and_then(|v| v.as_str()) {
             args = a.into();
         }
+        if let Some(s) = parsed.get("stdin").and_then(|v| v.as_str()) {
+            stdin_text = s.into();
+        }
     }
 
     let parsed_state = serde_json::from_str::<serde_json::Value>(state_str)
         .unwrap_or_else(|_| serde_json::json!({}));
 
-    let (next_state_json, output, success) = match tool_name.as_str() {
+    // The stdout/stderr columns mirror what the real platform's apps answer
+    // with (`ToolResult.stdout` / `.stderr`); `echo` is the stub's tool that
+    // uses the streams.
+    let (next_state_json, output, stdout, stderr, success) = match tool_name.as_str() {
         "calculator" => (
             parsed_state,
             String::from("{\"result\": 42}"),
+            String::new(),
+            String::new(),
             true,
         ),
         "echo" => (
             parsed_state,
             serde_json::json!({ "echo": args }).to_string(),
+            stdin_text.clone(),
+            format!("echo tool: read {} bytes of stdin", stdin_text.len()),
             true,
         ),
         "get_count" => {
@@ -120,17 +131,23 @@ pub unsafe extern "C" fn main_handle_tool_call_for_host_1_exposed_generic(
             (
                 parsed_state,
                 serde_json::json!({ "count": count }).to_string(),
+                String::new(),
+                String::new(),
                 true,
             )
         }
         "stream_message" => (
             parsed_state,
             String::from("{\"status\": \"stream_active\"}"),
+            String::new(),
+            String::new(),
             true,
         ),
         _ => (
             parsed_state,
             serde_json::json!({ "error": format!("Unknown tool {}", tool_name) }).to_string(),
+            String::new(),
+            String::new(),
             false,
         ),
     };
@@ -140,6 +157,8 @@ pub unsafe extern "C" fn main_handle_tool_call_for_host_1_exposed_generic(
         "state": next_state_json,
         "success": success,
         "output": output,
+        "stdout": stdout,
+        "stderr": stderr,
     });
     let payload_str = payload_val.to_string();
     ptr::write(out, RocResult::ok(RocStr::from_str(&payload_str)));

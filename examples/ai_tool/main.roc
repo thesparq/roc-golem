@@ -35,9 +35,15 @@ agent = defineAgent({
 						id: toolCall.id,
 						success: True,
 						output: "{\"result\": 42}",
+						stdout: "",
+						stderr: "",
 					},
 				}
 
+			# `echo` is the example's tool with streams: whatever the caller pipes
+			# in (`golem tool invoke --stdin`) comes back out on stdout, and stderr
+			# reports how much of it arrived. Both are written once this hook has
+			# returned (see the README's tool streams section).
 			"echo" => {
 				escapedArgs =
 					toolCall.arguments
@@ -49,6 +55,8 @@ agent = defineAgent({
 						id: toolCall.id,
 						success: True,
 						output: "{\"echo\": \"${escapedArgs}\"}",
+						stdout: toolCall.stdin,
+						stderr: "echo tool: read ${U64.to_str(Str.count_utf8_bytes(toolCall.stdin))} bytes of stdin",
 					},
 				}
 			}
@@ -60,9 +68,11 @@ agent = defineAgent({
 						id: toolCall.id,
 						success: False,
 						output: "{\"error\": \"Tool not found\"}",
+						stdout: "",
+						stderr: "",
 					},
 				}
-			}
+		}
 	},
 
 	metadata: {

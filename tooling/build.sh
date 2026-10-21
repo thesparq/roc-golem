@@ -20,7 +20,7 @@ mkdir -p "$DIST_DIR"
 # yields components that build fine and then trap at runtime (a `Str` dropped
 # through the wrong deallocator) instead of failing here. Refuse to build with
 # anything else; set ROC_ALLOW_VERSION_MISMATCH=1 to override.
-ROC_TAG="${ROC_TAG:-nightly-2026-09-19-d025939}"
+ROC_TAG="${ROC_TAG:-nightly-2026-10-19-601b54c}"
 
 check_roc_version() {
     local version
@@ -173,7 +173,9 @@ case "$COMMAND" in
         build_app "static_site"
         package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
-    counter|ai_tool|streaming_agent|effects|site|static_site)
+    # `counter_v2` is the e2e's snapshot-update fixture: it is deployed from a
+    # derived manifest as the same component, never as part of `all`/`release`.
+    counter|ai_tool|streaming_agent|effects|site|static_site|counter_v2)
         build_app "$COMMAND"
         ;;
     all)
@@ -190,7 +192,7 @@ case "$COMMAND" in
         if [[ -f "$COMMAND" ]]; then
             build_app "$COMMAND"
         else
-            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | effects | site | static_site | all]" >&2
+            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | effects | site | static_site | counter_v2 | all]" >&2
             exit 1
         fi
         ;;

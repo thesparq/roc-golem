@@ -2,11 +2,40 @@ package golem:agent-platform;
 
 world golem-agent {
     import golem:api/host@1.5.0;
+    // Retry policies: `golem:api/retry` is synchronous (no `block_on`), and the
+    // platform's `getRetryPolicies!` / `nextRetryDelay!` … effects call it
+    // directly.
+    import golem:api/retry@1.5.0;
     import golem:agent/common@2.0.0;
     import golem:agent/host@2.0.0;
     import golem:core/types@2.0.0;
+    // Resource quotas: `golem:quota/types` is synchronous too; its
+    // `quota-token` resource comes from `golem:core/types` above.
+    import golem:quota/types@1.5.0;
     import golem:websocket/client@1.5.0;
+    // The two shared stores: `wasi:blobstore` (containers of named objects) and
+    // `wasi:keyvalue` (buckets of key-value pairs). Both interfaces are
+    // synchronous, so the effects call them directly; the blobstore's
+    // `list-objects` answers with a `stream<object-name>`, which the host drains
+    // itself (`blobList!` hands the app a JSON array). `wasi:keyvalue/cache` is
+    // deliberately not imported: its results are async, and the `eventual`
+    // interface covers the same data.
+    import wasi:blobstore/blobstore;
+    import wasi:blobstore/container;
+    import wasi:blobstore/types;
+    // The agent's own filesystem, as Golem 1.6 registers it: the p2 revision
+    // (`wasi:filesystem@0.2.6`), whose descriptor operations are synchronous,
+    // next to the p3 one (`wasi:filesystem@0.3.0`, the MoonBit SDK's) whose
+    // streams this platform does not carry yet. The `readFile!`-family effects
+    // call the p2 shape directly.
+    import wasi:filesystem/preopens@0.2.6;
+    import wasi:filesystem/types@0.2.6;
     import wasi:clocks/monotonic-clock@0.2.6;
+    // Scheduling a call for a later time takes an absolute `instant`, so the
+    // host reads the wall clock to turn a delay into one. `golem:agent/host`
+    // already names this interface (it is where its `datetime` comes from);
+    // importing it is what makes the clock readable from the guest.
+    import wasi:clocks/system-clock@0.3.0;
     // Outgoing HTTP is WASI p3 in Golem 1.6: the p2 interfaces
     // (`wasi:http/outgoing-handler@0.2.6`) are no longer registered by the
     // executor, so the `http!` effect goes through `wasi:http/client@0.3.0`.
@@ -15,6 +44,18 @@ world golem-agent {
     import wasi:clocks/types@0.3.0;
     import wasi:http/client@0.3.0;
     import wasi:http/types@0.3.0;
+    import wasi:keyvalue/eventual@0.1.0;
+    import wasi:keyvalue/types@0.1.0;
+    import wasi:keyvalue/wasi-keyvalue-error@0.1.0;
+    // Databases: the three `golem:rdbms` interfaces Golem 1.6 registers, one
+    // per engine. Each is synchronous (a plain call, no `block_on`), and each
+    // carries its own `db-value`/`db-column-type` vocabulary — the platform
+    // mirrors all three as JSON (see `host/src/rdbms_json.rs`). `query-stream`
+    // is part of the interfaces but not exposed as an effect yet.
+    import golem:rdbms/ignite2@1.5.0;
+    import golem:rdbms/mysql@1.5.0;
+    import golem:rdbms/postgres@1.5.0;
+    import golem:rdbms/types@1.5.0;
     import wasi:logging/logging;
 
     export golem:agent/guest@2.0.0;

@@ -22,8 +22,11 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
   the 1.6 world (counter/ai_tool/effects/site pass; components with async imports
   cannot be exercised in the harness yet — see the harness README);
   `websocketReceive!` works via `wit_bindgen::block_on`.
-- **P2 done**: user-defined snapshots (verified through a real revision
-  update), the `golem:tool/guest` surface (tools published, declared and bound
+- **P2 done**: user-defined snapshots — now covered by the e2e
+  (`examples/counter_v2` adds a tool and a state field, so the revision is
+  incompatible; the e2e deploys it as the same component, updates an existing
+  agent with `agent update … manual`, and checks that the state crossed and that
+  the new revision migrated the older state format it was handed), the `golem:tool/guest` surface (tools published, declared and bound
   in the manifest, invocable via `golem tool invoke --agent …`), read-only tool
   declarations, and config declarations with the `getConfig!` effect (the
   counter reads its `greeting` from the manifest). Known limits are
@@ -50,10 +53,18 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
     `--expect-mount`/`--expect-kind` checks in the ABI harness, and by thirteen
     e2e checks (200/404, both binding kinds, response headers, the ETag, and the
     merged spec).
-  - Still to do: the **dynamic** handler (`handle(request) -> response`), whose
-    bodies are `stream<u8>` values: that needs stream-typed schema values and
-    the host reading/writing bodies, which the synchronous Roc-facing effects do
-    not model yet.
+  - Still to do: the **dynamic** handler (`handle(request) -> response`). The
+    request half works on `wip/router-handler` (schema graph, the `handle`
+    method, decoding the request, draining its body stream, calling the app and
+    returning a response tree), and the *response body* is the blocker. Three
+    candidate fixes are ruled out there, with evidence, in
+    `docs/router-handler-status.md`: writing before the stream transfer
+    deadlocks (504), `spawn_local` is dropped when the export's task ends, and a
+    probe router built with the official Rust SDK (`golem-rust v3.0.0`) *does*
+    deliver a body — so the difference is the SDK's export machinery delivering
+    the response head before the body is written (`task.return`-then-continue),
+    which the fork's generated export (a plain async fn) does not express.
+    Adopting that shape is export-machinery work, not handler work.
 - **Open**: nothing blocking on GA. `http!` moved to WASI p3
   (`wasi:http/types@0.3.0` + `client@0.3.0`) because **Golem 1.6.0 dropped the p2
   HTTP interfaces**: the 1.6.0 executor registers `durable_host::p3` plus p2
@@ -91,7 +102,7 @@ Local copies of the key 1.6 WIT files: `~/.cache/golem-rc2/wit/{agent,core,tool}
   layout, a seamless slice's release and constant strings. The counter now also
   passes the harness built with the newer nightly.
 - **Toolchain pin**: `tooling/build.sh` still refuses a `roc` other than
-  `nightly-2026-09-19-d025939` (`ROC_ALLOW_VERSION_MISMATCH=1` overrides). The
+  `nightly-2026-10-19-601b54c` (`ROC_ALLOW_VERSION_MISMATCH=1` overrides). The
   allocator contract is compiler-independent now, but the emitted *layout facts*
   (sizes, offsets, `Try` discriminants) are still verified against that one
   nightly by `tooling/glue/abi_facts.roc`.

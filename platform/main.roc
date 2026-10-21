@@ -8,25 +8,76 @@ platform "golem"
 	]
 	packages {}
 	provides {
-		"main_init_for_host_1_exposed_generic": main_init_for_host!,
 		"main_handle_message_for_host_1_exposed_generic": main_handle_message_for_host!,
-		"main_handle_tool_call_for_host_1_exposed_generic": main_handle_tool_call_for_host!,
 		"main_handle_request_for_host_1_exposed_generic": main_handle_request_for_host!,
+		"main_handle_tool_call_for_host_1_exposed_generic": main_handle_tool_call_for_host!,
+		"main_init_for_host_1_exposed_generic": main_init_for_host!,
 		"main_metadata_for_host_1_exposed_generic": main_metadata_for_host,
 	}
 	hosted {
-		"rocFxLog": Host.rocFxLog!,
-		"rocFxGetWorkerId": Host.rocFxGetWorkerId!,
-		"rocFxRpcInvoke": Host.rocFxRpcInvoke!,
-		"rocFxSetPersistence": Host.rocFxSetPersistence!,
-		"rocFxHttpRequest": Host.rocFxHttpRequest!,
-		"rocFxWsConnect": Host.rocFxWsConnect!,
-		"rocFxWsSend": Host.rocFxWsSend!,
-		"rocFxWsReceive": Host.rocFxWsReceive!,
-		"rocFxWsClose": Host.rocFxWsClose!,
-		"rocFxSleepMillis": Host.rocFxSleepMillis!,
-		"rocFxNowMillis": Host.rocFxNowMillis!,
+		"rocFxAppendFile": Host.rocFxAppendFile!,
+		"rocFxAwaitWebhook": Host.rocFxAwaitWebhook!,
+		"rocFxBlobCreateContainer": Host.rocFxBlobCreateContainer!,
+		"rocFxBlobDelete": Host.rocFxBlobDelete!,
+		"rocFxBlobGet": Host.rocFxBlobGet!,
+		"rocFxBlobHas": Host.rocFxBlobHas!,
+		"rocFxBlobList": Host.rocFxBlobList!,
+		"rocFxBlobPut": Host.rocFxBlobPut!,
+		"rocFxCreateWebhook": Host.rocFxCreateWebhook!,
+		"rocFxDbBegin": Host.rocFxDbBegin!,
+		"rocFxDbCommit": Host.rocFxDbCommit!,
+		"rocFxDbExecute": Host.rocFxDbExecute!,
+		"rocFxDbOpen": Host.rocFxDbOpen!,
+		"rocFxDbOpenIgnite": Host.rocFxDbOpenIgnite!,
+		"rocFxDbOpenMysql": Host.rocFxDbOpenMysql!,
+		"rocFxDbQuery": Host.rocFxDbQuery!,
+		"rocFxDbRollback": Host.rocFxDbRollback!,
+		"rocFxDeleteFile": Host.rocFxDeleteFile!,
+		"rocFxFileExists": Host.rocFxFileExists!,
+		"rocFxFileSize": Host.rocFxFileSize!,
+		"rocFxFork": Host.rocFxFork!,
 		"rocFxGetConfig": Host.rocFxGetConfig!,
+		"rocFxGetRetryPolicies": Host.rocFxGetRetryPolicies!,
+		"rocFxGetRetryPolicy": Host.rocFxGetRetryPolicy!,
+		"rocFxGetWorkerId": Host.rocFxGetWorkerId!,
+		"rocFxHttpRequest": Host.rocFxHttpRequest!,
+		"rocFxIdempotencyKey": Host.rocFxIdempotencyKey!,
+		"rocFxKvDelete": Host.rocFxKvDelete!,
+		"rocFxKvExists": Host.rocFxKvExists!,
+		"rocFxKvGet": Host.rocFxKvGet!,
+		"rocFxKvSet": Host.rocFxKvSet!,
+		"rocFxListDir": Host.rocFxListDir!,
+		"rocFxLog": Host.rocFxLog!,
+		"rocFxMakeAgentId": Host.rocFxMakeAgentId!,
+		"rocFxMakeDir": Host.rocFxMakeDir!,
+		"rocFxNewQuotaToken": Host.rocFxNewQuotaToken!,
+		"rocFxNextRetryDelay": Host.rocFxNextRetryDelay!,
+		"rocFxNowMillis": Host.rocFxNowMillis!,
+		"rocFxOplogCommit": Host.rocFxOplogCommit!,
+		"rocFxParseAgentId": Host.rocFxParseAgentId!,
+		"rocFxQuotaCommit": Host.rocFxQuotaCommit!,
+		"rocFxQuotaMerge": Host.rocFxQuotaMerge!,
+		"rocFxQuotaReserve": Host.rocFxQuotaReserve!,
+		"rocFxQuotaSplit": Host.rocFxQuotaSplit!,
+		"rocFxReadFile": Host.rocFxReadFile!,
+		"rocFxRemoveRetryPolicy": Host.rocFxRemoveRetryPolicy!,
+		"rocFxResolveAgentId": Host.rocFxResolveAgentId!,
+		"rocFxResolveComponentId": Host.rocFxResolveComponentId!,
+		"rocFxResolveRetryPolicy": Host.rocFxResolveRetryPolicy!,
+		"rocFxRpcCancel": Host.rocFxRpcCancel!,
+		"rocFxRpcFireAndForget": Host.rocFxRpcFireAndForget!,
+		"rocFxRpcInvoke": Host.rocFxRpcInvoke!,
+		"rocFxRpcSchedule": Host.rocFxRpcSchedule!,
+		"rocFxRpcScheduleCancelable": Host.rocFxRpcScheduleCancelable!,
+		"rocFxSetPersistence": Host.rocFxSetPersistence!,
+		"rocFxSetRetryPolicy": Host.rocFxSetRetryPolicy!,
+		"rocFxSleepMillis": Host.rocFxSleepMillis!,
+		"rocFxTrap": Host.rocFxTrap!,
+		"rocFxWriteFile": Host.rocFxWriteFile!,
+		"rocFxWsClose": Host.rocFxWsClose!,
+		"rocFxWsConnect": Host.rocFxWsConnect!,
+		"rocFxWsReceive": Host.rocFxWsReceive!,
+		"rocFxWsSend": Host.rocFxWsSend!,
 	}
 	targets: {
 		wasm32: {
@@ -45,9 +96,9 @@ import Types exposing [
 	HttpMountOption,
 	HttpResponse,
 	OpenApiProvider,
+	ToolCall,
 	ToolDefinition,
 	ToolParameter,
-	ToolCall,
 ]
 import Golem
 import Host
@@ -91,7 +142,12 @@ main_handle_tool_call_for_host! = |state_json, tool_call_json| {
 				False => "false"
 			}
 			escaped_output = escape_json_str(res.result.output)
-			Ok("{\"state\":${next_state_json},\"success\":${success_str},\"output\":\"${escaped_output}\"}")
+			# The tool's stdout/stderr travel next to the payload: the host writes
+			# them through the streams the caller attached (`golem tool invoke
+			# --stdout` / `--stderr`).
+			escaped_stdout = escape_json_str(res.result.stdout)
+			escaped_stderr = escape_json_str(res.result.stderr)
+			Ok("{\"state\":${next_state_json},\"success\":${success_str},\"output\":\"${escaped_output}\",\"stdout\":\"${escaped_stdout}\",\"stderr\":\"${escaped_stderr}\"}")
 		}
 	}
 }
@@ -292,7 +348,11 @@ parse_tool_call = |raw_json| {
 		Ok(v) => v
 		Err(_) => "{}"
 	}
-	{ id, name, arguments }
+	stdin = match extract_json_field(raw_json, "stdin") {
+		Ok(v) => v
+		Err(_) => ""
+	}
+	{ id, name, arguments, stdin }
 }
 
 extract_json_field : Str, Str -> Try(Str, [NotFound])

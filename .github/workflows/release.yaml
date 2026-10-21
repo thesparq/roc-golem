@@ -41,7 +41,7 @@ jobs:
         env:
           # Keep in step with .github/workflows/ci.yaml: the hand-written ABI in
           # `host/src/roc_std.rs` is tied to this compiler version.
-          ROC_TAG: nightly-2026-09-19-d025939
+          ROC_TAG: nightly-2026-10-19-601b54c
         run: |
           ROC_VERSION="${ROC_TAG#nightly-}"
           mkdir -p "$HOME/roc"
@@ -82,14 +82,141 @@ jobs:
             --then-reply "Counter incremented to 2" \
             --tool get_count --tool-reply '{"count": 2}'
 
+          # The quota and retry effects are synchronous host imports, so the
+          # harness can drive them (unlike the effects agent's async HTTP
+          # import): the stubs record what the component asked the host for,
+          # including the retry continuation the app threaded through the JSON
+          # round trip.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "quota 6" --reply "Committed 6 units" \
+            --expect-quota "commit(used=6)" \
+            --then-message retry --then-reply '"countBox"' \
+            --expect-retry "state=3 bytes"
+
+          # The `golem:api/host` execution-control effects are synchronous too:
+          # the resolve stubs answer with a known component id (which the app's
+          # reply has to carry back), `oplog-commit` is recorded, and a `trap`
+          # fails the invocation — the one failure the harness reports as a trap.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message 'resolve-agent-id roc-golem:counter counter-agent("c-1")' \
+            --reply '"componentId":"01020304-0506-0708-090a-0b0c0d0e0f10"' \
+            --then-message 'resolve-component-id roc-golem:counter' \
+            --then-reply 'Resolved component: 01020304-0506-0708-090a-0b0c0d0e0f10' \
+            --expect-host-call 'resolve-agent-id(component=roc-golem:counter, agent=counter-agent("c-1"))'
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --message "oplog-commit 2" --reply "Committed the oplog to 2 replicas" \
+            --expect-host-call "oplog-commit(replicas=2)"
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --message "trap harness trap reason" \
+            --expect-trap "harness trap reason" \
+            --expect-host-call "trap(reason=harness trap reason)"
+
+          # The key-value and blobstore effects, against the harness's own
+          # small store for each: the round-trip replies only come back correct
+          # if the values really went in and out of it (the blobstore's
+          # `list-objects` stream included).
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "kv harness-bucket harness-key hello kv" \
+            --reply "kv set=ok get=hello kv exists=true delete=ok exists-after=false missing=null" \
+            --expect-kv "set(bucket=harness-bucket, key=harness-key, 8 bytes)" \
+            --then-message "blob harness-blob obj.txt hello blob" \
+            --then-reply 'blob create=ok put=ok get=hello blob has=true list=["obj.txt"] delete=ok has-after=false' \
+            --expect-blob "write-data(container=harness-blob, object=obj.txt, 10 bytes)"
+
+          # The agent's own filesystem (`wasi:filesystem@0.2.6`) is synchronous
+          # too, and the harness keeps an in-memory tree of its own: the file the
+          # first message writes has to come back out of that tree in the second
+          # — the later invocation reads what the earlier one wrote — and the
+          # listing is the JSON array the effect promises.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "fs write notes.txt hello fs" --reply "fs wrote notes.txt" \
+            --then-message "fs read notes.txt" --then-reply "fs read: hello fs" \
+            --expect-fs "write(path=notes.txt, 8 bytes)"
+
+          # `fileSize!` is the one effect whose result is `Try(U64, Str)`, the
+          # tag-union shape the hand-written ABI spells out itself
+          # (`RocU64Result`): a wrong layout would surface here as a size that
+          # is not the one the write put in.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "fs write notes.txt hello fs" --reply "fs wrote notes.txt" \
+            --then-message "fs size notes.txt" --then-reply "fs size: 8" \
+            --expect-fs "stat-at(path=notes.txt)"
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "fs mkdir notes" --reply "fs made dir notes" \
+            --then-message "fs list /" \
+            --then-reply 'fs list: [{"name":"notes","type":"dir"}]' \
+            --expect-fs "create-directory-at(path=notes)"
+
+          # The database effects (`golem:rdbms`) are synchronous host imports
+          # too, and the harness keeps a small relational store of its own: the
+          # round trip's create/insert/select/count and its rolled-back and
+          # committed transactions only come back correct if the params really
+          # went into that store and the results came back out, and the recorded
+          # calls show which host functions ran.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "db open postgresql://roc@127.0.0.1:5432/roc" \
+            --reply "db opened handle 1" \
+            --expect-db "postgres open(address=postgresql://roc@127.0.0.1:5432/roc)" \
+            --then-message "db roundtrip harness_db postgresql://roc@127.0.0.1:5432/roc" \
+            --then-reply 'select1={"columns":[{"dbType":{"tag":"int4"},"dbTypeName":"INT4","name":"id","ordinal":0},{"dbType":{"tag":"text"},"dbTypeName":"TEXT","name":"note","ordinal":1}],"rows":[[{"tag":"int4","value":1},{"tag":"text","value":"hello db"}]]}' \
+            --expect-db 'postgres execute(statement=INSERT INTO harness_db (id, note) VALUES ($1, $2), params=[int4(1), text("hello db")])'
+
+          # The same round trip, checking the transaction semantics: the
+          # rolled-back row leaves the count alone, the committed one moves it.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "db open postgresql://roc@127.0.0.1:5432/roc" \
+            --reply "db opened handle 1" \
+            --then-message "db roundtrip harness_db postgresql://roc@127.0.0.1:5432/roc" \
+            --then-reply 'count2={"columns":[{"dbType":{"tag":"int8"},"dbTypeName":"INT8","name":"count","ordinal":0}],"rows":[[{"tag":"int8","value":1}]]} begin=ok txn-insert=1 commit=ok count3={"columns":[{"dbType":{"tag":"int8"},"dbTypeName":"INT8","name":"count","ordinal":0}],"rows":[[{"tag":"int8","value":2}]]}' \
+            --expect-db "postgres commit"
+
+          # MySQL and Ignite have their own interfaces and their own `open`s;
+          # the stub records which one the component called.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --message "db open-mysql mysql://root@127.0.0.1:3306/roc" \
+            --reply "db mysql opened handle 1" \
+            --expect-db "mysql open(address=mysql://root@127.0.0.1:3306/roc)" \
+            --then-message "db open-ignite ignite://127.0.0.1:10800" \
+            --then-reply "db ignite opened handle 2" \
+            --expect-db "ignite open(address=ignite://127.0.0.1:10800)"
+
+          # An address Golem cannot parse is the effect's `Err` (the interface's
+          # `connection-failure` variant), not a trap.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --message "db open not-a-database-url" \
+            --reply "db open failed: connection-failure"
+
+          # The tool export itself (`golem:tool/guest.invoke`, the surface
+          # `golem tool invoke` drives) carries its stdin/stdout/stderr as
+          # component-model streams, so the harness supplies the stdin bytes
+          # and captures what the component writes through the two writers.
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
             --message hello --reply "AI assistant" \
-            --tool calculator --tool-reply '{"result": 42}'
+            --tool calculator --tool-reply '{"result": 42}' \
+            --tool-stream echo --tool-stdin "harness stdin bytes" \
+            --expect-tool-stdout "harness stdin bytes" \
+            --expect-tool-stderr "read 19 bytes of stdin"
 
-          # The streaming agent imports an async host function, which traps
-          # inside the harness's wasmtime (see tooling/abi_harness/README.md);
-          # the e2e step below is the authoritative check for it.
+          # The streaming agent is not driven here: the harness can run its
+          # async `websocket/client.receive` import (see
+          # tooling/abi_harness/README.md), but the e2e job below is what runs
+          # this component against a real server on every change.
           # check "$HARNESS" build/streaming_agent_agent.wasm \
           #   --type streaming-agent --method stream_message \
           #   --message connect --reply "Connected with handle" \
@@ -97,12 +224,11 @@ jobs:
           #   --then-message hello --then-reply "Sent: hello" \
           #   --expect-sent hello
 
-          # The effects agent now imports an async host function too
-          # (`wasi:http/client.send`, the p3 replacement for the p2 interfaces
-          # Golem 1.6.0 dropped), which traps inside the harness's wasmtime for
-          # the same reason the streaming agent does (see
-          # tooling/abi_harness/README.md). The e2e step below is the
-          # authoritative check for it.
+          # The effects agent cannot be instantiated by the harness at all: it
+          # imports p3 `wasi:http/client@0.3.0` (`wasi:http/client.send`, the
+          # replacement for the p2 interfaces Golem 1.6.0 dropped) and the
+          # harness world implements no p3 HTTP interface. The e2e step below is
+          # its authoritative check.
           # check "$HARNESS" build/effects_agent.wasm \
           #   --type effects-agent --config "http://example.test/" \
           #   --message fetch --reply "HTTP 200" \

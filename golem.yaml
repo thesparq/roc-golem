@@ -18,9 +18,14 @@ environments:
     server: cloud
 
 # The file-site agent publishes its mount on the local server's HTTP API
-# listener. The CLI expands `subdomain` to `roc-golem.localhost:<port>` using
+# listener, and the CLI expands `subdomain` to `roc-golem.localhost:<port>` using
 # this port, so a server started with a different `--custom-request-port` will
 # not be reachable under that domain (the CLI warns when they differ).
+#
+# `effects-agent` is listed too: Golem only lets agent types deployed through an
+# HTTP API create webhooks, and its mount is what gives the webhook callback
+# route a place to live. Its callback URLs come out under `/webhooks/` (the
+# deployment's default `webhookUrl` prefix) followed by the agent type name.
 localServer:
   customRequestPort: 9882
 
@@ -31,6 +36,7 @@ httpApi:
         agents:
           file-site-agent: {}
           static-site-agent: {}
+          effects-agent: {}
 
 tools:
   # The tool surface (`golem:tool/guest`) exposes each app tool under its
@@ -44,6 +50,42 @@ tools:
   stream-message:
     component: roc-golem:streaming-agent
 
+# The quota resource the counter's `quota` command reserves from, and the retry
+# policy its `retry` command resolves. Both are environment-level objects the CLI
+# creates during deployment, so the names here are the names the agent uses in
+# `newQuotaToken!` and sees in `getRetryPolicies!` (see the README's "Quotas and
+# retry" section).
+#
+# The resource holds ten requests and rejects rather than waits, so one `quota 6`
+# fits and the next one is answered with `quota reservation failed`; the capacity
+# is shared by the whole environment, which is why the e2e section that exercises
+# it expects a fresh data directory.
+resourceDefaults:
+  local:
+    example-requests:
+      limit:
+        type: Capacity
+        value: 10
+      enforcementAction: reject
+      unit: request
+      units: requests
+
+# The counter resolves a policy for `send` operations; this rule matches that
+# verb and retries twice with a fixed 100ms delay in between.
+retryPolicyDefaults:
+  local:
+    send-retries:
+      priority: 100
+      predicate:
+        propEq:
+          property: "verb"
+          value: "send"
+      policy:
+        countBox:
+          maxRetries: 2
+          inner:
+            periodic: "100ms"
+
 agents:
   # Bind each tool to the agent type that exposes it, so the tool protocol
   # (and `golem tool invoke`) can route calls.
@@ -52,6 +94,13 @@ agents:
       greeting: "hello from the manifest"
     tools:
       get-count: {}
+    # One initial file, so the counter's `fs` commands can read a file the
+    # manifest provisioned — the guest-side counterpart of the site example's
+    # served files. `golem deploy` uploads it and Golem puts it in the agent's
+    # filesystem before the agent starts.
+    files:
+      - sourcePath: examples/counter/seed/hello.txt
+        targetPath: /seed/hello.txt
   ai-tool-agent:
     tools:
       calculator: {}

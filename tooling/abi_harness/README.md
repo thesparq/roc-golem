@@ -20,13 +20,38 @@ Flags:
   which is how state persistence and multi-step flows are checked.
 - `--tool NAME` / `--tool-reply SUBSTRING` invoke a registered tool (which the
   host routes through the app's `handleToolCall!`) and check its result.
+- `--tool-stream NAME` / `--tool-stdin TEXT` invoke `golem:tool/guest.invoke`
+  itself — the export `golem tool invoke` drives — with the stdin text supplied
+  as one stream chunk and both output writers attached, and
+  `--expect-tool-stdout SUBSTRING` / `--expect-tool-stderr SUBSTRING` check what
+  the component wrote through them. The writers record their terminal as well,
+  so a component that leaves one open fails the check (`abandoned`).
 - `--config` is the agent config handed to `initialize` (the effects example
   takes its base URL from it).
 - `--expect-log` matches a line the agent emitted through `logInfo!` etc.,
   `--expect-sent` matches a WebSocket message the agent sent, `--expect-http`
-  matches a request line the HTTP stub received, and `--expect-rpc` matches a
-  remote call the agent made. All of them are recorded by the stubs, so effect
-  wiring is verified, not just reply text.
+  matches a request line the HTTP stub received, `--expect-rpc` matches a
+  remote call the agent made, and `--expect-quota` / `--expect-retry` /
+  `--expect-host-call` match the quota, retry-policy and `golem:api/host` calls
+  the agent made (`trap`, `oplog-commit`, `resolve-component-id`, …).
+  `--expect-kv` and `--expect-blob` do the same for the key-value
+  (`wasi:keyvalue`: `open-bucket`, `set`, `get`, `delete`, `exists`) and
+  blobstore (`wasi:blobstore`: `create-container`, `write-data`, `list-objects`,
+  …) calls, `--expect-fs` for the agent's filesystem
+  (`wasi:filesystem@0.2.6`: `open-at`, `write`, `read-directory`, …), and
+  `--expect-db` for the databases (`golem:rdbms`: `postgres open`,
+  `postgres execute(statement=…, params=…)`, `mysql query`, …). All of
+  them are recorded by the stubs, so effect wiring is verified, not just reply
+  text — and the two stores, the filesystem and the database are stubbed with a
+  small store of their own (a relational one for the database: the statements
+  the counter's `db` command sends against a tiny store of committed rows and
+  one copy per open transaction), so a round trip the component drives has to
+  come back out of it changed (for the filesystem that includes *across* the two
+  messages, which is what makes the read a real read).
+- `--expect-trap SUBSTRING` expects the first message to *fail the invocation*,
+  with SUBSTRING in the trap's text, instead of returning a reply: `trap!` never
+  returns, so the reply and tool checks are skipped and nothing else is asked of
+  that store.
 - `--expect-mount PATH` checks the mount path the agent type publishes
   (`site/{id}`), which is how the site example's `metadata.httpMount` is
   verified to survive the trip to the registered agent type.
@@ -50,15 +75,33 @@ It exits non-zero when any of these fail:
 - `initialize` traps or returns an error,
 - `invoke handle-message` traps, returns an error, or returns a reply that does
   not contain the expected text,
-- an expected log line, WebSocket send, HTTP request or RPC call was never
-  recorded.
+- an expected log line, WebSocket send, HTTP request, RPC call, quota call,
+  retry-policy call, `golem:api/host` call, key-value call, blobstore call,
+  filesystem call or database call was never recorded,
+- a `--tool-stream` call failed, returned an error or trap, answered with
+  attachment streams instead of using the writers, left a writer unfinished, or
+  wrote something the `--expect-tool-stdout` / `--expect-tool-stderr` substring
+  is not in,
+- a message expected to trap (`--expect-trap`) returned a reply or failed some
+  other way instead.
 
 Current state of the components built from this tree: counter, ai_tool, site and
-effects pass every check, including the effects agent's HTTP and RPC calls.
+static_site pass every check, including the effects the counter carries — the
+quota and retry-policy calls, the execution-control calls, the key-value and
+blobstore round trips, which run against the stubs' own stores, the agent
+filesystem round trip, which runs against the stubs' own directory tree, and the
+database round trip, which runs against the stubs' own relational store (a
+rolled-back and a committed transaction included). The ai_tool checks also drive
+`golem:tool/guest.invoke` with stdin and both output writers (`--tool-stream`),
+which is the only call whose parameters are component-model streams. The
+streaming agent passes here too, `websocket/client.receive` included. The effects
+agent cannot even be *instantiated* by the harness: its p3 `wasi:http` import is
+not in the harness world (see the toolchain notes below), so the e2e job stays its
+authoritative check.
 
 Toolchain notes found while porting to 1.6:
 
-- **Build with the pinned Roc nightly** (`nightly-2026-09-19-d025939`). A newer
+- **Build with the pinned Roc nightly** (`nightly-2026-10-19-601b54c`). A newer
   one produced a counter component whose second `handle-message` trapped in
   `RocStr::drop` → `__rust_dealloc` → `core::panicking::panic` — the hand-written
   `Str` layout/allocator contract in `host/src/roc_std.rs` tracks that
@@ -68,15 +111,14 @@ Toolchain notes found while porting to 1.6:
   deserializer used it defensively and now parses its compact JSON directly.
   If a component starts trapping in `initialize`, look for `Str.trim` (or
   similar slicing helpers) first.
-- **Components that import an async host function trap in the harness** (at the
-  first export call, `wasm unreachable` inside the guest runtime) under both
-  wasmtime 46 and 49. Today that is only the streaming agent, once its
-  `websocket/client.receive` import is linked in (it uses `wit_bindgen::block_on`
-  to call the async import from the synchronous C-ABI effect). The same
-  component initializes and serves requests on a real Golem 1.6 server, so this
-  is a fork-vs-wasmtime async-ABI gap in the harness environment, not a platform
-  bug. Until it is resolved, treat the e2e run as the authoritative check for
-  components with async imports.
+- **Async host imports work here.** The earlier note that components importing
+  an async host function trap in the harness is out of date: the streaming agent
+  passes a `--message connect --then-message receive` run, which calls
+  `websocket/client.receive` — a WIT `async func` — under wasmtime 46 with
+  `component-model-async` enabled. What keeps the *effects* agent out is a
+  missing interface rather than an ABI gap: the harness world does not implement
+  the p3 `wasi:http` interfaces, so instantiation fails with "a matching
+  implementation was not found in the linker" before any call runs.
 
 ## Why this exists
 
@@ -95,7 +137,32 @@ examples' components import, so the harness can supply the missing host
 interfaces with no Golem runtime present: agent types, the clocks, `wasi:io`,
 `wasi:http` (answered from a canned response while recording the request),
 `golem:agent/host` (RPC calls recorded), the WebSocket client (a recording
-connection) and `wasi:logging` (recorded).
+connection), `wasi:logging` (recorded), `golem:api/retry` / `golem:quota/types`
+/ `golem:api/host` (recorded too), the two shared stores `wasi:keyvalue` and
+`wasi:blobstore` (each with a small in-memory store behind it), the agent's
+filesystem `wasi:filesystem@0.2.6` (an in-memory directory tree; the preopens
+answer the sandbox root under both `/` and `.` the way Golem does), and the
+three `golem:rdbms` database interfaces (a tiny relational store; see
+`src/main.rs` for the statement shapes it understands). Those
+interfaces are synchronous, which is why they can be driven here at all. The
+world also *exports* `golem:tool/guest@0.1.0` next to `golem:agent/guest@2.0.0`,
+so `--tool-stream` can call the tool export; its `tool-output-writer` stubs
+record the bytes and the terminal the component selected (a writer dropped open
+reads `abandoned`, the way the real host treats it).
+
+Two functions of the blobstore move a component-model stream — the outgoing
+value's `write-body` and the container's `list-objects` — and attaching a host
+side producer or consumer to a stream needs the store, so the `bindgen!` call
+marks exactly those two `store | trappable` and the stubs implement the
+generated `WithStore` companion traits. That is the only configuration the
+harness needs; the guest still calls both synchronously, as the WIT declares.
+
+`golem:api/host`'s `trap` is the one stub that cannot fail the way the real host
+does: the WIT function has no result an error could travel in, and on the
+concurrent path wasmtime lets a panic inside a host call unwind instead of
+turning it into a guest trap. The stub panics and the harness catches that panic
+itself (`--expect-trap`); the e2e run is what verifies that an invocation really
+fails.
 
 `src/stubs.rs` implements the WASI interfaces by hand. wasmtime's own
 `wasi:http` implementation tracks a newer WASI version (`wasi:http@0.2.12`) than

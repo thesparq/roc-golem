@@ -75,8 +75,15 @@ Types := {}.{
 	# Extra headers added to responses served from a file binding. Golem
 	# rejects headers it owns (content-length, cache-control, etag, ...).
 	FileResponseHeader : { name : Str, value : Str }
-	ToolCall : { id : Str, name : Str, arguments : Str }
-	ToolResult : { id : Str, success : Bool, output : Str }
+	# A tool invocation. `arguments` is the single string input the platform
+	# declares for every tool; `stdin` is the text the caller piped into the tool
+	# (`golem tool invoke --stdin …`), empty when the caller attached nothing.
+	ToolCall : { id : Str, name : Str, arguments : Str, stdin : Str }
+	# The app's answer. `stdout` and `stderr` are the text the tool writes on the
+	# streams the caller attached (`golem tool invoke --stdout` / `--stderr`); an
+	# empty string writes nothing. Both are written after `handleToolCall!`
+	# returns, so a tool cannot emit output while it runs yet (see the README).
+	ToolResult : { id : Str, success : Bool, output : Str, stdout : Str, stderr : Str }
 	# A config key the agent reads with `getConfig!`. `secret` marks it as coming
 	# from the environment's secret store instead of the manifest's local config.
 	ConfigDeclaration : { name : Str, secret : Bool }

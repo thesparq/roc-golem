@@ -1,23 +1,74 @@
 # Glue specs
 
-`roc glue` is the compiler-supported way to derive the Rust side of a platform
-from the compiler's own ABI knowledge, instead of hand-matching layouts in
-`host/src/roc_std.rs` against each nightly.
+`roc glue` is the compiler's official way to generate a platform host's ABI
+layer: a glue *spec* (a Roc app against the `glue` platform) receives the
+compiler-emitted type table and writes host-language source. The compiler repo
+ships `src/glue/src/RustGlue.roc` for Rust hosts, and its README is explicit
+that platform code should consume generated glue rather than hand-rolling ABI
+bindings, because the layout, ownership and refcounting contracts are compiler
+internals.
 
-Two specs live here, both of which run on the pinned nightly
-(`nightly-2026-09-19-d025939`):
+## The official Rust glue (works, not adopted yet)
+
+`RustGlue.roc` runs against this platform and writes one Rust file:
 
 ```bash
-roc glue tooling/glue/abi_surface.roc /tmp/glue-out platform/main.roc
-roc glue tooling/glue/abi_facts.roc   /tmp/glue-out platform/main.roc
-cat /tmp/glue-out/abi_surface.txt /tmp/glue-out/abi_facts.txt
+# fetch it from the roc repo at the commit the pinned nightly was built from
+curl -s -o /tmp/RustGlue.roc \
+  https://raw.githubusercontent.com/roc-lang/roc/<nightly-sha>/src/glue/src/RustGlue.roc
+roc glue /tmp/RustGlue.roc tooling/glue/generated platform/main.roc
+# -> tooling/glue/generated/roc_platform_abi.rs
 ```
 
-- `abi_surface.roc` lists the host-facing symbols (what the host calls, and what
-  the app calls back into).
-- `abi_facts.roc` additionally dumps the committed layout of every type the
-  platform mentions: sizes, alignments, field offsets, tag discriminants and
-  refcountedness.
+`tooling/glue/generated/roc_platform_abi.rs` is checked in as the reference the
+hand-written ABI is measured against. It contains:
+
+- `RocStr`, `RocListWith<T, ELEMENTS_REFCOUNTED>`, `RocDec` and the rest of the
+  ABI-visible types, with the layout documented in the same terms this repo
+  reverse-engineered by hand (capacity shifted left by one, seamless-slice tag
+  in the capacity word, refcount one word before the bytes);
+- retain/release plans (`RocStrRelease`, `RocListRelease`, `RocListSpineRelease`,
+  `RocOwned`), including the recursive teardown rules;
+- the **hosted symbols** the host must export (`rocFx*`) with the exact direct C
+  ABI signatures and per-argument ownership notes;
+- **owning wrappers for the provided entrypoints** (`main_*_owned`) plus
+  `const _: () = assert!(...)` size/alignment checks, which is exactly the call
+  side `host/src/lib.rs` hand-writes with `MaybeUninit` + `mem::forget`.
+
+Adopting it would delete `host/src/roc_std.rs` and the hand-written ownership
+handling, and make a future ABI change a regeneration instead of a rewrite. The
+work, in order:
+
+1. include the generated file in the host crate (it needs the `no_roc_std_helpers`
+   cfg the platform build sets) and switch `host/src/lib.rs` from
+   `roc_std::RocStr` to the generated type — mechanical, ~40 call sites;
+2. use `main_*_owned` for the entrypoint calls and the generated `decref` for
+   arguments, replacing the manual `mem::forget`/`into_result` dance;
+3. keep the allocator exports (`roc_alloc`/`roc_dealloc`/`roc_realloc`,
+   `cabi_realloc`) — the generated file declares them as externs with the
+   contract spelled out;
+4. re-run the harness and e2e, then delete `roc_std.rs` and the layout constants
+   this repo maintains.
+
+## The diagnostic specs
+
+The two specs below dump what *this* platform declares, which is how the
+`host/src/roc_std.rs` layout constants were derived and how a nightly bump was
+verified before the official generator was available:
+
+```bash
+roc glue tooling/glue/abi_facts.roc   /tmp/glue-out platform/main.roc
+cat /tmp/glue-out/abi_facts.txt
+```
+
+They run on `nightly-2026-09-19-d025939` and **not** on the pinned
+`nightly-2026-10-19-601b54c`: the glue platform's API moved (`pf.FunctionRepr`
+is gone; `pf.FunctionInfo`, `pf.FunctionSignature`, `pf.ProvidedExport` and
+`pf.HostedFunctionInfo` replaced it) and the new compiler's type-module
+convention rejects the `import pf.X exposing [X]` clauses these specs use. Port
+them only if the diagnostic output is still wanted after the official generator
+is adopted — the generator already emits the layout assertions and ownership
+rules that made the table below worth keeping.
 
 ## ABI facts (verified against this platform)
 `abi_facts.roc` output, pointer width 32:
