@@ -70,7 +70,48 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 5. **Multimodal values** (`golem:core` text/binary/…): agent methods that take
    or return multimodal content, as the TS/Rust SDKs do. Cost: medium — schema
    graph construction (the router work already builds a graph, so the pattern
-   exists).
+   exists). **Design decided, not implemented** — the plan below is what an
+   implementer should follow; it was checked against the 1.6.0 sources.
+
+   - **The surface.** This platform declares one string-in/string-out method
+     (`handle-message`), so multimodal content has nowhere to travel: the
+     runtime builds a caller's input from the *declared* schema, and a string
+     schema can only ever produce a string node. The smallest honest fix is a
+     **second declared method** whose input and output schemas are multimodal —
+     `handle-multimodal` — leaving `handle-message` (and every existing caller)
+     untouched. The app reaches it through a new `handleMultimodal!` hook, the
+     same kind of documented break `handleRequest!` was for routers.
+   - **The schema.** A `list<variant{text: text-type, binary: binary-type}>`
+     whose *list* node carries `metadata.role = multimodal` (the SDKs set the
+     role on the list node, not the variant — `MultimodalAdvanced` in the Rust
+     SDK, `multimodal.rs` in `golem-rust`). `text-type` takes
+     `text-restrictions` (`languages`, length, regex) and `binary-type` takes
+     `binary-restrictions` (`mime-types`, byte bounds); both may be empty. The
+     existing `router_schema_graph()` in `host/src/lib.rs` is the pattern for
+     building the graph by hand.
+   - **The caller's JSON** is Golem's public/external schema encoding
+     (`golem-common/src/schema/external.rs`, tag `v1.6.0`): every value is a
+     tagged object, e.g. `[{"tag":"text","value":{"text":"hi",
+     "language":null}},{"tag":"binary","value":{"bytes":[1,2,3],
+     "mimeType":"image/png"}}]`. `union` values carry their tag explicitly at
+     this layer, so no discriminator inference is needed here.
+   - **The conversion** the host owes the app is between that tree and a
+     documented JSON envelope on the Roc side (the same envelope the caller
+     used is the obvious choice: a list of `{tag, value}` objects), in both
+     directions, plus the failure cases (unknown tag, payload shape mismatch,
+     a stream or capability node inside the list — which this method must
+     reject).
+   - **Open questions for the implementer to settle first**: whether the CLI's
+     `golem agent invoke` and the HTTP API validate a caller's JSON against a
+     multimodal schema (they do for other schemas, so the expectation is yes,
+     but confirm it against the pinned CLI), and whether the runtime requires
+     `role: multimodal` to accept the value or merely uses it for tooling.
+   - **Test plan.** The conversion is synchronous, so the ABI harness covers it
+     with a recording stub (send a multimodal tree in, assert the app's JSON
+     envelope; answer with an envelope, assert the tree out; one rejected
+     case). The e2e adds a real `golem agent invoke … handle-multimodal
+     '[…]'` round trip against the server. No new WIT import is needed:
+     `golem:core/types@2.0.0` is already imported and carries every node type.
 6. **Permissions** (`golem:permissions/{types,inspect,derive,revoke,wallet,kernel-introspection}`):
    cards, grants, and the principal the runtime passes to methods (we accept
    `Principal` and ignore it). Cost: medium-large.
@@ -330,14 +371,20 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
     but cannot call another component's tool from Roc — a new interface to
     import plus the same stream machinery the writers above use. That is a gap
     of its own, not one of item 11's two halves.
-12. **RPC across components**: `rpc!` resolves the target through the calling
-    component's own agent types, so cross-component calls fail with
-    `Agent type not found` (documented in the README). Cost: unknown — needs
-    server-side support or a different mechanism.
+12. ~~**RPC across components**~~ — **works on 1.6**: `parse-agent-id` falls back
+to the environment's registered agent types, so `rpc!` resolves an agent in
+another component, and item 3's e2e pins it (the effects agent calls a counter
+in a different component and the reply crosses back). The README's older
+"cross-component calls fail with `Agent type not found`" note was wrong for
+1.6 and is gone.
 13. **Durability** (`golem:durability`): the interface that carries
     `persist-remote-write`-style markers — the other half of the old item 8,
-    which is now its own gap. Cheap compared to the rest (a handful of
-    synchronous calls), but no example reaches for it yet.
+    which is now its own gap. **Decision: leave unexposed.** It is the
+    library-author API for wrapping a group of effects in one typed durable
+    call, and everything this platform does is already oplog-recorded for free;
+    exposing it would mean schema-value request/response construction plus the
+    flattened resource lifecycle for no app-level benefit. Recorded here so the
+    next inventory does not re-open it without a concrete use case.
 
 ## How to close them
 
