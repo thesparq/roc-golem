@@ -242,6 +242,15 @@ in a fresh instance without the agent's state, so stateless tools (the AI tool
 example's `calculator`) work while stateful ones (`get-count`) fail with an
 honest error — use the agent method surface for those.
 
+**Multimodal values** are a second declared method: an app that writes
+`multimodal: HandlesMultimodal` in its metadata registers `handle-multimodal`,
+whose input and result are a `list<variant{text, binary}>` (the shape the SDKs
+build and the runtime's detection reads), and answers through a new
+`handleMultimodal!` hook. `handle-message` and every existing caller are
+untouched — an app that does not opt in registers the type it had — and the hook
+is a breaking addition to the `Agent` record, like `handleRequest!` was (see
+[Multimodal values](#-multimodal-values)).
+
 ### Tool streams: stdin, stdout and stderr
 
 Every tool this platform publishes declares **stdin, stdout and stderr** as
@@ -532,6 +541,148 @@ The `static_site` example is the worked case: `examples/static_site/main.roc`,
 `examples/static_site/static/`, and the `router:` checks in `tooling/e2e.sh`
 (both binding kinds, the immutable ETag, 404, the provider document reaching the
 deployment's spec, and the dynamic handler's 204 and head).
+
+---
+
+## 🧩 Multimodal values
+
+A method can take and return **multimodal** content — a list of parts, each one
+text or binary — instead of the single string every other method of this platform
+declares. Declare `multimodal: HandlesMultimodal` and the registered agent type
+gains a second method, `handle-multimodal`, which the app answers through
+`handleMultimodal!`:
+
+```roc
+handleMultimodal!: |state, parts|
+        {
+                state,
+                parts: "[{\"tag\":\"text\",\"value\":{\"text\":\"I read ${parts}\",\"language\":null}}]",
+        },
+
+metadata: {
+        ...,
+        multimodal: HandlesMultimodal,
+},
+```
+
+The caller's parts arrive as the **JSON envelope** below, and the envelope the
+hook answers with becomes the parts the caller sees. `handle-message` and every
+existing caller are untouched: an app that does not opt in registers the agent
+type it had, with no such method.
+
+**The schema, and what the runtime does with it.** `handle-multimodal` declares
+`list<variant{text: text-type, binary: binary-type}>` as its single `parts`
+parameter and as its result, with the *list* node carrying
+`metadata.role = multimodal` — the shape the official SDKs build and the one the
+runtime's own detection reads (`golem-schema`'s `multimodal_variant_cases`
+requires the role on the list node). Both payload types are declared
+unrestricted: languages, length bounds, regexes, MIME allow-lists and byte bounds
+are per-declaration, and one platform-wide method cannot express an app's own
+restrictions.
+
+Two things are worth knowing about the runtime's side:
+
+- **The role is advisory for the value and decisive for the tooling.** A caller's
+  value round-trips with or without `role: multimodal` — measured on a local
+  1.6.0 server, the same invoke answers identically — because the value encoding
+  is the generic list/variant/text/binary one. The role is what the *tooling*
+  layers read: the CLI's bridge generators, MCP's tool-input extraction and the
+  registry's route compilation, which **refuses a multimodal response in an HTTP
+  API** (`Multimodal responses are not supported in http apis`). That refusal is
+  why the method declares no HTTP endpoint: a multimodal result cannot be served
+  from a mount, so the method stays on the agent protocol (CLI, RPC, tools).
+- **A multimodal list cannot be a constructor parameter.** The runtime's
+  placement validation refuses the shape in constructor scope (`a multimodal
+  list<variant<…>> is not allowed in constructor scope`), which is why the
+  method's list lives in a parameter and a result.
+
+### The envelope
+
+The app reads and answers with JSON text:
+
+```json
+[{"tag":"text","value":{"text":"hi","language":null}},
+ {"tag":"binary","value":{"bytes":[1,2,3],"mimeType":"image/png"}}]
+```
+
+- one object per part, in order, with the modality in `tag`,
+- a text part's `value` is `{"text": …, "language": …}` (`language` is `null`
+  when the caller's value carried none),
+- a binary part's `value` is `{"bytes": [<u8>…], "mimeType": …}` (`mimeType` is
+  `null` when none),
+- the host always writes both optional fields (as `null` when there is nothing);
+  the app may leave them out or set them to `null` in its answer.
+
+This is Golem's public schema encoding (`golem-common/src/schema/external.rs`),
+flattened: that encoding wraps every value in `{"kind":…,"value":…}` and names
+a variant's case by index, while the envelope names the modality directly in
+`tag` — the word the platform's other JSON vocabularies already use
+(`db-value`'s `{"tag":"int4","value":1}`, a principal's
+`{"tag":"agent","val":…}`). It is also what a hand-written Roc reader can
+walk: the counter example's `firstField` / `firstBytes` helpers are
+`Str.split_first` lookups, with the platform's usual limits (a value containing a
+quote of its own needs more care than those take).
+
+Everything the host cannot read is reported as the invocation's **error**, never
+as a trap: on the way in, a value tree that is not the parameter record and its
+list, a part that is not a variant, a case the method does not declare, a payload
+the case does not carry, and a capability (`secret`, `quota-token`,
+`permission-card`) or `stream` node inside the list; on the way out, an answer
+that is not a JSON array, a part without a `tag` or with an unknown one, a
+missing or wrongly-shaped payload, a byte that is not a `u8`, and a
+`language`/`mimeType` that is neither a string nor `null`. Each message names the
+part it happened in.
+
+### Calling it
+
+```bash
+# The parts are one argument, in the CLI's literal syntax (this component's
+# source language is `roc`, which the CLI parses with its TypeScript dialect).
+golem -L agent invoke 'counter-agent("c-1")' handle-multimodal \
+  '[{tag: "text", value: Text("hi")}, {tag: "binary", value: Binary("data:image/png;base64,AQID")}]'
+# → the parts the app answered with, in the same syntax:
+#   [{ tag: "text", value: Text("…") }, { tag: "binary", value: Binary("data:image/png;base64,AQID") }]
+```
+
+`Binary(…)` takes a data URL (`data:<mime>;base64,<url-safe base64>`), which is
+also how the CLI renders a binary part back. A binary part travels as a JSON
+array of byte numbers *inside the envelope*, so a large part is a large envelope:
+this method carries content, not a stream — `handle-message` plus a blob is still
+the way to move megabytes. A value that does not match the declared schema (a
+bare string, say) is refused by the runtime before the agent is invoked, so the
+envelope's failure cases are what an app and its callers see.
+
+### Migrating
+
+Adding the hook to the `Agent` record is a breaking change for every app, the way
+`handleRequest!` was: an app must add `handleMultimodal!` and the `multimodal:`
+metadata field. An app that does not want the method writes a stub and opts out:
+
+```roc
+handleMultimodal!: |state, _parts|
+        { state, parts: "[]" },
+
+metadata: {
+        ...,
+        multimodal: NoMultimodal,
+},
+```
+
+`NoMultimodal` registers no method at all, and a direct call to
+`handle-multimodal` is refused (`this agent type declares no multimodal method`)
+the way the OpenAPI provider method is refused on a router without a document.
+A **router** cannot declare it: `HandlesMultimodal` on `agentKind: HttpRouter`
+is refused at registration (`a router cannot declare a multimodal method: routers
+register only their request handler and OpenAPI provider`), because a router's
+methods are its request handler and its OpenAPI provider and nothing else.
+
+The `counter` example is the worked case: its `handle-multimodal` reports the
+count its state carried and what it read out of the envelope, then hands the
+caller's own parts back, and the `multimodal:` checks in `tooling/e2e.sh` send
+one text and one binary part through a real server. The ABI harness drives the
+same method with a value tree built from an envelope, checks the answer's tree,
+and checks the two refusals (a payload of the wrong shape, and an agent that did
+not declare the method).
 
 ---
 
@@ -1166,9 +1317,9 @@ anything is published:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, the declared tool streams and the tool-call stdin/stdout/stderr JSON contract, the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling), and the permission JSON mirror (the grant/view/bounds/holder shapes, every `permission-error` rendering, the principal in all four shapes, and the handle rules' error paths) |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next), the database round trip (params in, rows out, a rolled-back and a committed transaction) and the permission round trip (the wallet, a narrowing derivation, a refused one, a scope card, a revocation, a release) included. `--tool-stream` drives `golem:tool/guest.invoke` itself with stdin bytes and both output writers attached, so the tool streams are checked where the runtime attaches them |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface (and tool stdin/stdout/stderr through `golem tool invoke --stdin/--stdout/--stderr`), HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), the permissions surface (a `golem-user` principal for a CLI invocation and an `agent` principal naming the caller for an RPC one, the default card in the wallet, its lattice, a derivation the runtime accepts and one it refuses, a revocation, the handle rules, and an installation onto the agent itself), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
+| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, the declared tool streams and the tool-call stdin/stdout/stderr JSON contract, the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling), the permission JSON mirror (the grant/view/bounds/holder shapes, every `permission-error` rendering, the principal in all four shapes, and the handle rules' error paths), and the multimodal schema (the declared list, both conversion directions, every rejection the host has, and the refusals an app that did not opt in gets) |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next), the database round trip (params in, rows out, a rolled-back and a committed transaction), the permission round trip (the wallet, a narrowing derivation, a refused one, a scope card, a revocation, a release), and the multimodal method (a value tree built from an envelope in, the answer's tree read back as an envelope, plus a value the host refuses and an agent that did not declare the method) included. `--tool-stream` drives `golem:tool/guest.invoke` itself with stdin bytes and both output writers attached, so the tool streams are checked where the runtime attaches them |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface (and tool stdin/stdout/stderr through `golem tool invoke --stdin/--stdout/--stderr`), HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, a multimodal method's text and binary parts through a real invoke, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), the permissions surface (a `golem-user` principal for a CLI invocation and an `agent` principal naming the caller for an RPC one, the default card in the wallet, its lattice, a derivation the runtime accepts and one it refuses, a revocation, the handle rules, and an installation onto the agent itself), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so

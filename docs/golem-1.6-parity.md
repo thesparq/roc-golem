@@ -99,51 +99,80 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    binding-less mount, and the e2e covers create → POST → await plus the 404.
    Not exposed: the mount's `webhook-suffix` (adding a field to `HttpMount`
    would break every existing `Mount({…})` literal).
-5. **Multimodal values** (`golem:core` text/binary/…): agent methods that take
-   or return multimodal content, as the TS/Rust SDKs do. Cost: medium — schema
-   graph construction (the router work already builds a graph, so the pattern
-   exists). **Design decided, not implemented** — the plan below is what an
-   implementer should follow; it was checked against the 1.6.0 sources.
+5. ~~**Multimodal values** (`golem:core` text/binary/…): agent methods that take
+   or return multimodal content, as the TS/Rust SDKs do~~ — **done**: an app that
+   writes `multimodal: HandlesMultimodal` in its metadata registers a second
+   declared method, `handle-multimodal`, whose input and result are a
+   `list<variant{text: text-type, binary: binary-type}>` with the list node
+   carrying `metadata.role = multimodal`, and answers it through the new
+   `handleMultimodal!` hook. `handle-message` and every existing caller are
+   untouched: an app that does not opt in registers the agent type it had. The
+   hook is a breaking addition to the `Agent` record, like `handleRequest!` was.
+   Details worth knowing:
 
-   - **The surface.** This platform declares one string-in/string-out method
-     (`handle-message`), so multimodal content has nowhere to travel: the
-     runtime builds a caller's input from the *declared* schema, and a string
-     schema can only ever produce a string node. The smallest honest fix is a
-     **second declared method** whose input and output schemas are multimodal —
-     `handle-multimodal` — leaving `handle-message` (and every existing caller)
-     untouched. The app reaches it through a new `handleMultimodal!` hook, the
-     same kind of documented break `handleRequest!` was for routers.
-   - **The schema.** A `list<variant{text: text-type, binary: binary-type}>`
-     whose *list* node carries `metadata.role = multimodal` (the SDKs set the
-     role on the list node, not the variant — `MultimodalAdvanced` in the Rust
-     SDK, `multimodal.rs` in `golem-rust`). `text-type` takes
-     `text-restrictions` (`languages`, length, regex) and `binary-type` takes
-     `binary-restrictions` (`mime-types`, byte bounds); both may be empty. The
-     existing `router_schema_graph()` in `host/src/lib.rs` is the pattern for
-     building the graph by hand.
-   - **The caller's JSON** is Golem's public/external schema encoding
-     (`golem-common/src/schema/external.rs`, tag `v1.6.0`): every value is a
-     tagged object, e.g. `[{"tag":"text","value":{"text":"hi",
-     "language":null}},{"tag":"binary","value":{"bytes":[1,2,3],
-     "mimeType":"image/png"}}]`. `union` values carry their tag explicitly at
-     this layer, so no discriminator inference is needed here.
-   - **The conversion** the host owes the app is between that tree and a
-     documented JSON envelope on the Roc side (the same envelope the caller
-     used is the obvious choice: a list of `{tag, value}` objects), in both
-     directions, plus the failure cases (unknown tag, payload shape mismatch,
-     a stream or capability node inside the list — which this method must
-     reject).
-   - **Open questions for the implementer to settle first**: whether the CLI's
-     `golem agent invoke` and the HTTP API validate a caller's JSON against a
-     multimodal schema (they do for other schemas, so the expectation is yes,
-     but confirm it against the pinned CLI), and whether the runtime requires
-     `role: multimodal` to accept the value or merely uses it for tooling.
-   - **Test plan.** The conversion is synchronous, so the ABI harness covers it
-     with a recording stub (send a multimodal tree in, assert the app's JSON
-     envelope; answer with an envelope, assert the tree out; one rejected
-     case). The e2e adds a real `golem agent invoke … handle-multimodal
-     '[…]'` round trip against the server. No new WIT import is needed:
-     `golem:core/types@2.0.0` is already imported and carries every node type.
+   - **The envelope is the app's side of the conversion**, in both directions:
+     `[{"tag":"text","value":{"text":…,"language":…}},
+     {"tag":"binary","value":{"bytes":[…],"mimeType":…}}]`. It is Golem's
+     public encoding (`golem-common/src/schema/external.rs`) *flattened*: that
+     encoding wraps every value in `{"kind":…,"value":…}` and names a variant's
+     case by index, while the envelope puts the modality in `tag` — the word this
+     platform's other JSON vocabularies already use (`db-value`, the principal) —
+     and drops the variant wrapper, so a hand-written Roc reader can walk it
+     (there is no JSON parser in the language; the platform's convention is
+     `Str.split_first`). The plan's example below said `tag` where `external.rs`
+     says `kind`; the implementation follows the plan's spelling and the README
+     documents the difference.
+   - **What the runtime does with the schema was measured, not inferred.**
+     `role: multimodal` is *not* required for a value to round-trip: with the
+     role removed from the list node, the same `golem agent invoke …
+     handle-multimodal` answers identically on a local 1.6.0 server, because the
+     value encoding is the generic list/variant/text/binary one. The role is what
+     the *tooling* layers read (the CLI's bridge generators, MCP's tool-input
+     extraction, the registry's route compilation), and the runtime's placement
+     validation uses it to refuse the shape in constructor scope. The route layer
+     also **refuses a multimodal response in an HTTP API** (`Multimodal responses
+     are not supported in http apis`), which is why the method declares no HTTP
+     endpoint: a multimodal result cannot be served from a mount.
+   - **The CLI's caller surface is a literal, not JSON.** `golem agent invoke`
+     accepts a value for the method — `agent-type get`/the parse error render the
+     declared parameter as `({ tag: "text"; value: text } | { tag: "binary";
+     value: binary })[]` — but as the component's source-language literal, which
+     for `source_language: "roc"` means the CLI's TypeScript dialect:
+     `'[{tag: "text", value: Text("hi")}, {tag: "binary",
+     value: Binary("data:image/png;base64,AQID")}]'`. The external JSON is the
+     *wire* form the CLI builds from that literal, not something a caller types;
+     the HTTP API's own JSON body codec (`from_untrusted_json_value`) is a third
+     vocabulary and is not reachable here (no endpoint). The plan's expectation —
+     that the CLI validates a caller's value against a multimodal schema — holds;
+     the encoding it validates *into* is just not the caller-facing one.
+   - **The refusals are app-visible errors, never traps**: on the way in a value
+     tree that is not the parameter record and list, a part that is not a variant,
+     a case the method does not declare, a payload the case does not carry, and a
+     capability or `stream` node inside the list; on the way out a non-array
+     answer, a missing or unknown `tag`, a missing or wrongly shaped payload, a
+     byte that is not a `u8`, and an optional field that is neither a string nor
+     `null`. Each message names the part it happened in.
+   - **A method can opt out, and the combination the host cannot serve is
+     refused.** `NoMultimodal` registers nothing, and a direct call to the hook is
+     refused (`this agent type declares no multimodal method`) the way the OpenAPI
+     provider method is refused on a router without a document;
+     `HandlesMultimodal` on `agentKind: HttpRouter` is refused at registration
+     (`a router cannot declare a multimodal method: routers register only their
+     request handler and OpenAPI provider`) — the same shape as the
+     `staticBindings`-on-a-regular-agent refusal.
+   - **Coverage**: host unit tests for the declared graph, both conversion
+     directions and every rejection; the ABI harness builds a caller's value tree
+     from an envelope and reads the answer's tree back (`--multimodal`,
+     `--expect-multimodal`, `--multimodal-shape-mismatch`,
+     `--expect-multimodal-error`), wired into CI and the release workflow; and the
+     e2e sends one text and one binary part through a real `golem agent invoke …
+     handle-multimodal` and checks what the app read and what came back. The
+     `counter` example is the worked case, and no new WIT import was needed
+     (`golem:core/types@2.0.0` already carries every node type).
+   - **Not exposed**: per-part restrictions (languages, length bounds, regexes,
+     MIME allow-lists, byte bounds) — one platform-wide declaration cannot express
+     an app's own — streaming parts (the method carries content, not streams), and
+     any HTTP route for the method (see the refusal above).
 6. ~~**Permissions** (`golem:permissions/{types,inspect,derive,revoke,wallet,kernel-introspection}`):
    cards, grants, and the principal the runtime passes to methods (we accept
    `Principal` and ignore it)~~ — **done**: all six interfaces are imports of

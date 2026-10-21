@@ -25,6 +25,16 @@ agent = defineAgent({
 			response: { status: 404, headers: [], body: "this agent is not an HTTP router" },
 		},
 
+	# The multimodal method's handler. This app declares `multimodal: NoMultimodal`,
+	# so it registers no such method and this is never called; an app that wants
+	# multimodal content declares `HandlesMultimodal` instead and answers with the
+	# envelope it was handed (see the README's "Multimodal values").
+	handleMultimodal!: |state, _parts|
+		{
+			state,
+			parts: "[{\"tag\":\"text\",\"value\":{\"text\":\"this agent does not handle multimodal input\",\"language\":null}}]",
+		},
+
 	handleToolCall!: |state, toolCall| {
 		nextInvocations = state.invocations + 1
 		match toolCall.name {
@@ -111,6 +121,7 @@ agent = defineAgent({
 		agentKind: Regular,
 		httpMount: None,
 		httpHandler: NoHandler,
+		multimodal: NoMultimodal,
 		openapiProvider: NoOpenApi,
 	},
 

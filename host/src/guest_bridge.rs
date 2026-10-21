@@ -1,7 +1,22 @@
 use crate::roc_std::{RocResult, RocStr};
+use core::cell::RefCell;
 use core::ptr;
 
 // Mock implementations for testing purposes only.
+
+thread_local! {
+    /// The metadata JSON a test wants the stub app to report instead of the
+    /// built-in one below. Thread-local, so the tests that override it (a
+    /// router, an app that did not declare the multimodal method) cannot see
+    /// each other's — `cargo test` runs them on separate threads.
+    static METADATA_OVERRIDE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Reports `json` as the stub app's metadata until the test resets it with
+/// `None`, which restores the built-in metadata.
+pub fn set_metadata_override(json: Option<String>) {
+    METADATA_OVERRIDE.with(|cell| *cell.borrow_mut() = json);
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn main_init_for_host_1_exposed_generic(
@@ -191,7 +206,26 @@ pub unsafe extern "C" fn main_handle_request_for_host_1_exposed_generic(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn main_metadata_for_host_1_exposed_generic(out: *mut RocStr) {    let meta_json = r#"{
+pub unsafe extern "C" fn main_handle_multimodal_for_host_1_exposed_generic(
+    out: *mut RocResult<RocStr, RocStr>,
+    state: *const RocStr,
+    parts: *const RocStr,
+) {
+    let state_str = if state.is_null() { "{}" } else { (*state).as_str() };
+    let parts_str = if parts.is_null() { "[]" } else { (*parts).as_str() };
+
+    // The stub app answers the same envelope it was handed, so a test can read
+    // the envelope the app received out of the value tree it answered with.
+    let payload = serde_json::json!({
+        "state": state_str,
+        "parts": parts_str,
+    });
+    ptr::write(out, RocResult::ok(RocStr::from_str(&payload.to_string())));
+}
+
+/// The metadata the stub app reports when no test overrode it: the same shape a
+/// real app's `metadata` builds, with the multimodal method declared.
+const DEFAULT_METADATA: &str = r#"{
         "name": "roc-golem-agent",
         "version": "1.0.0",
         "description": "Durable Roc Agent on Golem Cloud",
@@ -245,8 +279,15 @@ pub unsafe extern "C" fn main_metadata_for_host_1_exposed_generic(out: *mut RocS
                 "name": "greeting",
                 "secret": false
             }
-        ]
+        ],
+        "multimodal": "multimodal"
     }"#;
 
-    ptr::write(out, RocStr::from_str(meta_json));
+#[no_mangle]
+pub unsafe extern "C" fn main_metadata_for_host_1_exposed_generic(out: *mut RocStr) {
+    let meta_json = METADATA_OVERRIDE
+        .with(|cell| cell.borrow().clone())
+        .unwrap_or_else(|| String::from(DEFAULT_METADATA));
+
+    ptr::write(out, RocStr::from_str(&meta_json));
 }

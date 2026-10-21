@@ -62,6 +62,18 @@ Flags:
   with SUBSTRING in the trap's text, instead of returning a reply: `trap!` never
   returns, so the reply and tool checks are skipped and nothing else is asked of
   that store.
+- `--multimodal ENVELOPE` drives the multimodal method (`handle-multimodal`) with
+  a value tree built from that JSON envelope — the platform's documented one, a
+  list of `{"tag":"text"|"binary","value":{…}}` parts — and renders the tree the
+  component answered with back into an envelope. The harness builds and reads
+  those trees itself, so both directions are checked against the documented
+  envelope rather than against the host's own conversion.
+  `--expect-multimodal SUBSTRING` checks the answer envelope and may be given
+  more than once. `--multimodal-shape-mismatch` builds the first part's payload
+  as a plain string instead of a text value (what a caller's value would look
+  like if the declared schema were a bare string) and
+  `--expect-multimodal-error SUBSTRING` expects the call to *fail* with that text:
+  a conversion the host cannot do is the invocation's error, never a trap.
 - `--expect-mount PATH` checks the mount path the agent type publishes
   (`site/{id}`), which is how the site example's `metadata.httpMount` is
   verified to survive the trip to the registered agent type.
@@ -88,6 +100,8 @@ It exits non-zero when any of these fail:
 - an expected log line, WebSocket send, HTTP request, RPC call, quota call,
   retry-policy call, `golem:api/host` call, key-value call, blobstore call,
   filesystem call or database call was never recorded,
+- a `--multimodal` answer envelope does not contain an expected substring, or a
+  call expected to be refused (`--expect-multimodal-error`) answered instead,
 - a `--tool-stream` call failed, returned an error or trap, answered with
   attachment streams instead of using the writers, left a writer unfinished, or
   wrote something the `--expect-tool-stdout` / `--expect-tool-stderr` substring
@@ -99,9 +113,11 @@ Current state of the components built from this tree: counter, ai_tool, site and
 static_site pass every check, including the effects the counter carries — the
 quota and retry-policy calls, the execution-control calls, the key-value and
 blobstore round trips, which run against the stubs' own stores, the agent
-filesystem round trip, which runs against the stubs' own directory tree, and the
+filesystem round trip, which runs against the stubs' own directory tree, the
 database round trip, which runs against the stubs' own relational store (a
-rolled-back and a committed transaction included). The ai_tool checks also drive
+rolled-back and a committed transaction included), and the multimodal method,
+whose parts the harness builds and whose answer it reads back as the documented
+envelope. The ai_tool checks also drive
 `golem:tool/guest.invoke` with stdin and both output writers (`--tool-stream`),
 which is the only call whose parameters are component-model streams. The
 streaming agent passes here too, `websocket/client.receive` included. The effects

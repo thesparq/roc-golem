@@ -266,6 +266,33 @@ jobs:
             --expect-tool-stdout "harness stdin bytes" \
             --expect-tool-stderr "read 19 bytes of stdin"
 
+          # The multimodal method (`handle-multimodal`): the parts a caller sends
+          # arrive as the JSON envelope the app reads, and the envelope the app
+          # answers with becomes the parts the caller sees. The harness builds the
+          # caller's value tree and renders the answer's tree itself, so both
+          # directions are checked against the documented envelope; a value the
+          # host cannot represent is refused as the invocation's error, and an
+          # agent that did not declare the method is refused before the app runs
+          # at all.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message increment --reply "Counter incremented to 1" \
+            --multimodal '[{"tag":"text","value":{"text":"hi","language":null}},{"tag":"binary","value":{"bytes":[1,2,3],"mimeType":"image/png"}}]' \
+            --expect-multimodal '"text":"count=1; text=hi; bytes=[1,2,3]; mime=image/png"' \
+            --expect-multimodal '"bytes":[1,2,3],"mimeType":"image/png"'
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent \
+            --multimodal '[{"tag":"text","value":{"text":"hi"}}]' \
+            --multimodal-shape-mismatch \
+            --expect-multimodal-error "instead of a text value"
+
+          check "$HARNESS" build/site_agent.wasm \
+            --type file-site-agent --method handle-message \
+            --message ping --reply "is serving its mount" \
+            --multimodal '[{"tag":"text","value":{"text":"hi"}}]' \
+            --expect-multimodal-error "declares no multimodal method"
+
           # The streaming agent is not driven here: the harness can run its
           # async `websocket/client.receive` import (see
           # tooling/abi_harness/README.md), but the e2e job below is what runs

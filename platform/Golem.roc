@@ -102,6 +102,14 @@ Agent(state) : {
 	# `httpHandler: HandlesRequests`; every other agent type can answer with a
 	# plain `Err`-style response.
 	handleRequest! : state, HttpRequest => { state : state, response : HttpResponse },
+	# The multimodal method's handler. Only called when the app declares
+	# `multimodal: HandlesMultimodal`; every other agent type can answer with the
+	# same kind of envelope it was handed. `parts` is the JSON envelope of the
+	# caller's parts — `[{"tag":"text","value":{"text":…,"language":…}},
+	# {"tag":"binary","value":{"bytes":[…],"mimeType":…}}]` — and the answer is
+	# the same envelope, which is what the caller's parts become (see the README's
+	# "Multimodal values").
+	handleMultimodal! : state, Str => { state : state, parts : Str },
 	handleToolCall! : state, ToolCall => { state : state, result : ToolResult },
 	metadata : Metadata,
 	serializeState : state -> Str,

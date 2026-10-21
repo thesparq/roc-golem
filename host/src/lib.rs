@@ -58,6 +58,11 @@ extern "C" {
         state: *const RocStr,
         request: *const RocStr,
     );
+    pub fn main_handle_multimodal_for_host_1_exposed_generic(
+        out: *mut RocResult<RocStr, RocStr>,
+        state: *const RocStr,
+        parts: *const RocStr,
+    );
     pub fn main_handle_tool_call_for_host_1_exposed_generic(
         out: *mut RocResult<RocStr, RocStr>,
         state: *const RocStr,
@@ -94,8 +99,8 @@ use golem::agent::common::{
     OutputSchema, PathSegment, PathVariable, ReadOnlyConfig, Snapshotting, SubtreeFileMapping,
 };
 use golem::core::types::{
-    MetadataEnvelope, NamedFieldType, SchemaGraph, SchemaTypeBody, SchemaTypeNode, SchemaValueNode,
-    SchemaValueTree,
+    BinaryRestrictions, MetadataEnvelope, NamedFieldType, Role, SchemaGraph, SchemaTypeBody,
+    SchemaTypeNode, SchemaValueNode, SchemaValueTree, TextRestrictions, VariantCaseType,
 };
 
 // Global worker state managed in linear memory (automatically persisted by Golem)
@@ -249,6 +254,87 @@ fn router_schema_graph() -> RouterSchema {
         request,
         response,
     }
+}
+
+/// The tag a text part carries in the multimodal JSON envelope. The envelope's
+/// `tag` names the modality, so it is the variant case's name — lower case, the
+/// spelling the platform's other JSON vocabularies use.
+const MULTIMODAL_TEXT: &str = "text";
+
+/// The tag a binary part carries in the multimodal JSON envelope.
+const MULTIMODAL_BINARY: &str = "binary";
+
+/// The schema graph the multimodal method declares: a
+/// `list<variant{text: text-type, binary: binary-type}>` whose *list* node
+/// carries `metadata.role = multimodal` — the shape the official SDKs build
+/// (`MultimodalAdvanced` in `golem-rust`) and the one the runtime recognises
+/// (`golem-schema`'s `multimodal_variant_cases` matches the role on the list
+/// node). Both payloads are unrestricted here: an app that needs to narrow the
+/// languages, length, regex, MIME types or byte bounds of its own parts would
+/// have to declare them itself, which this platform's single declared method
+/// cannot express.
+///
+/// Node 0 stays the string every other declared parameter, result and tool
+/// input points at, so an agent that declares the multimodal method keeps its
+/// constructor parameter and `handle-message` exactly as they were.
+struct MultimodalSchema {
+    graph: SchemaGraph,
+    /// The list node: the method's single parameter field and its result.
+    parts: i32,
+}
+
+fn multimodal_schema_graph() -> MultimodalSchema {
+    let text = 1i32; // text-type
+    let binary = 2i32; // binary-type
+    let part = 3i32; // variant { text, binary }
+    let parts = 4i32; // list<part>, the node that carries the multimodal role
+
+    let named = |name: &str, schema: i32| NamedFieldType {
+        name: name.to_string(),
+        body: schema,
+        metadata: empty_metadata(),
+    };
+    let case = |name: &str, payload: i32| VariantCaseType {
+        name: name.to_string(),
+        payload: Some(payload),
+        metadata: empty_metadata(),
+    };
+
+    let graph = SchemaGraph {
+        type_nodes: vec![
+            // 0: the string every other declared parameter, result and tool input
+            // points at
+            type_node(SchemaTypeBody::StringType),
+            type_node(SchemaTypeBody::TextType(TextRestrictions {
+                languages: None,
+                min_length: None,
+                max_length: None,
+                regex: None,
+            })),
+            type_node(SchemaTypeBody::BinaryType(BinaryRestrictions {
+                mime_types: None,
+                min_bytes: None,
+                max_bytes: None,
+            })),
+            type_node(SchemaTypeBody::VariantType(vec![
+                case(MULTIMODAL_TEXT, text),
+                case(MULTIMODAL_BINARY, binary),
+            ])),
+            SchemaTypeNode {
+                body: SchemaTypeBody::ListType(part),
+                metadata: MetadataEnvelope {
+                    role: Some(Role::Multimodal),
+                    ..empty_metadata()
+                },
+            },
+            // 5: the parameter record whose single field is the list
+            type_node(SchemaTypeBody::RecordType(vec![named("parts", parts)])),
+        ],
+        defs: vec![],
+        root: parts,
+    };
+
+    MultimodalSchema { graph, parts }
 }
 
 fn post_endpoint(path: &str) -> HttpEndpointDetails {
@@ -831,12 +917,318 @@ async fn handle_router_request(
     }))
 }
 
-fn build_agent_type() -> Result<AgentType, AgentError> {
+/// One multimodal part as the JSON envelope carries it, rendered from a value
+/// tree node. The envelope is the platform's app-facing form of Golem's public
+/// schema encoding (`golem-common/src/schema/external.rs`): each part is a
+/// tagged object — `{"tag":"text","value":{"text":…,"language":…}}` or
+/// `{"tag":"binary","value":{"bytes":[…],"mimeType":…}}` — where the
+/// external encoding wraps the same payload one level deeper (`kind`, the
+/// `variant` case index). The tag names the modality, so the app never has to
+/// know the case's position in the declared variant.
+///
+/// A node this method cannot represent — a capability (`secret`,
+/// `quota-token`, `permission-card`) or a `stream` inside the list — is
+/// reported to the caller as an error rather than handed to the app as an
+/// empty or lossy part.
+fn multimodal_part_json(
+    tree: &SchemaValueTree,
+    position: usize,
+    index: i32,
+) -> Result<serde_json::Value, AgentError> {
+    let node = tree.value_nodes.get(index as usize).ok_or_else(|| {
+        AgentError::InvalidInput(format!("multimodal part {position} is missing"))
+    })?;
+    let payload = match node {
+        SchemaValueNode::VariantValue(payload) => payload,
+        other => {
+            return Err(AgentError::InvalidInput(format!(
+                "multimodal part {position} is {other:?} instead of a variant"
+            )))
+        }
+    };
+    let tag = match payload.case {
+        0 => MULTIMODAL_TEXT,
+        1 => MULTIMODAL_BINARY,
+        other => {
+            return Err(AgentError::InvalidInput(format!(
+                "multimodal part {position} carries unknown case {other}: this agent's method \
+                 declares text (0) and binary (1)"
+            )))
+        }
+    };
+    let value = payload
+        .payload
+        .and_then(|index| tree.value_nodes.get(index as usize))
+        .ok_or_else(|| {
+            AgentError::InvalidInput(format!(
+                "multimodal part {position} ({tag}) carries no payload"
+            ))
+        })?;
+
+    match (tag, value) {
+        (MULTIMODAL_TEXT, SchemaValueNode::TextValue(text)) => Ok(serde_json::json!({
+            "tag": MULTIMODAL_TEXT,
+            "value": { "text": text.text, "language": text.language },
+        })),
+        (MULTIMODAL_BINARY, SchemaValueNode::BinaryValue(binary)) => Ok(serde_json::json!({
+            "tag": MULTIMODAL_BINARY,
+            "value": { "bytes": binary.bytes, "mimeType": binary.mime_type },
+        })),
+        (_, SchemaValueNode::SecretValue(_))
+        | (_, SchemaValueNode::QuotaTokenHandle(_))
+        | (_, SchemaValueNode::PermissionCardHandle(_)) => Err(AgentError::InvalidInput(format!(
+            "multimodal part {position} ({tag}) is a host-managed capability, which this method \
+             cannot carry"
+        ))),
+        (_, SchemaValueNode::StreamValue(_)) => Err(AgentError::InvalidInput(format!(
+            "multimodal part {position} ({tag}) is a stream, which this method cannot carry"
+        ))),
+        // A payload the case does not carry: the declared schema cannot build
+        // one, so this is a caller's value tree that does not match it.
+        (_, other) => Err(AgentError::InvalidInput(format!(
+            "multimodal part {position} ({tag}) carries {other:?} instead of a {tag} value"
+        ))),
+    }
+}
+
+/// The JSON envelope of the parts a caller passed: a JSON array of the part
+/// objects above. The input is the method's parameter record whose single field
+/// is the multimodal list — the shape the declared input schema makes the
+/// runtime build — and anything else is reported rather than read as no parts.
+fn multimodal_envelope_of_tree(tree: &SchemaValueTree) -> Result<String, AgentError> {
+    let node = |index: i32| tree.value_nodes.get(index as usize);
+    let parts = match node(tree.root) {
+        Some(SchemaValueNode::RecordValue(fields)) => fields.first().copied().and_then(node),
+        _ => None,
+    };
+    let parts = match parts {
+        Some(SchemaValueNode::ListValue(parts)) => parts,
+        _ => {
+            return Err(AgentError::InvalidInput(
+                "the parts argument is not a multimodal list".to_string(),
+            ))
+        }
+    };
+
+    let mut envelope = Vec::with_capacity(parts.len());
+    for (position, part) in parts.iter().enumerate() {
+        envelope.push(multimodal_part_json(tree, position, *part)?);
+    }
+    Ok(serde_json::Value::Array(envelope).to_string())
+}
+
+/// The value tree the caller sees, built from the envelope the app answered
+/// with: the same part objects the app received, in the same two shapes. The
+/// result is the list itself, which is what the method's declared output schema
+/// makes the runtime expect.
+///
+/// Everything the app can get wrong is reported as an error naming the part it
+/// happened in: an answer that is not a JSON array, a part that is not an
+/// object, a missing or unknown `tag`, a missing `value`, a `text` or `binary`
+/// payload of the wrong shape (including a byte that is not a `u8`), and a
+/// `language` or `mimeType` that is neither a string nor `null`.
+fn multimodal_tree_of_envelope(envelope: &str) -> Result<SchemaValueTree, AgentError> {
+    let bad_answer = |reason: String| AgentError::InvalidMethod(reason);
+    let parsed: serde_json::Value = serde_json::from_str(envelope).map_err(|err| {
+        bad_answer(format!("the app's multimodal answer is not valid JSON: {err}"))
+    })?;
+    let parts = match parsed.as_array() {
+        Some(parts) => parts,
+        None => {
+            return Err(bad_answer(
+                "the app's multimodal answer is not a JSON array of parts".to_string(),
+            ))
+        }
+    };
+
+    // The list node is written once the parts exist; the parts themselves are
+    // appended as they are read.
+    let mut value_nodes = vec![SchemaValueNode::ListValue(Vec::new())];
+    let mut part_indices = Vec::with_capacity(parts.len());
+    for (position, part) in parts.iter().enumerate() {
+        let tag = match part.get("tag").and_then(|value| value.as_str()) {
+            Some(tag) => tag,
+            None => {
+                return Err(bad_answer(format!(
+                    "multimodal part {position} has no \"tag\" string"
+                )))
+            }
+        };
+        let value = match part.get("value") {
+            Some(value) => value,
+            None => {
+                return Err(bad_answer(format!(
+                    "multimodal part {position} ({tag}) has no \"value\""
+                )))
+            }
+        };
+
+        let payload = match tag {
+            MULTIMODAL_TEXT => {
+                let text = match value.get("text").and_then(|value| value.as_str()) {
+                    Some(text) => text,
+                    None => {
+                        return Err(bad_answer(format!(
+                            "multimodal part {position} ({tag}) has no \"text\" string"
+                        )))
+                    }
+                };
+                let language = optional_text_field(value, "language").map_err(|reason| {
+                    bad_answer(format!("multimodal part {position} ({tag}): {reason}"))
+                })?;
+                SchemaValueNode::TextValue(golem::core::types::TextValuePayload {
+                    text: text.to_string(),
+                    language,
+                })
+            }
+            MULTIMODAL_BINARY => {
+                let bytes = match value.get("bytes").and_then(|value| value.as_array()) {
+                    Some(bytes) => bytes,
+                    None => {
+                        return Err(bad_answer(format!(
+                            "multimodal part {position} ({tag}) has no \"bytes\" array"
+                        )))
+                    }
+                };
+                let mut decoded = Vec::with_capacity(bytes.len());
+                for byte in bytes {
+                    match byte.as_u64().and_then(|byte| u8::try_from(byte).ok()) {
+                        Some(byte) => decoded.push(byte),
+                        None => {
+                            return Err(bad_answer(format!(
+                                "multimodal part {position} ({tag}) has a byte that is not a u8: \
+                                 {byte}"
+                            )))
+                        }
+                    }
+                }
+                let mime_type = optional_text_field(value, "mimeType").map_err(|reason| {
+                    bad_answer(format!("multimodal part {position} ({tag}): {reason}"))
+                })?;
+                SchemaValueNode::BinaryValue(golem::core::types::BinaryValuePayload {
+                    bytes: decoded,
+                    mime_type,
+                })
+            }
+            other => {
+                return Err(bad_answer(format!(
+                    "multimodal part {position} carries unknown tag {other:?}: this agent's method \
+                     answers text and binary parts"
+                )))
+            }
+        };
+
+        let payload_index = value_nodes.len() as i32;
+        value_nodes.push(payload);
+        let case = match tag {
+            MULTIMODAL_TEXT => 0,
+            _ => 1,
+        };
+        part_indices.push(value_nodes.len() as i32);
+        value_nodes.push(SchemaValueNode::VariantValue(
+            golem::core::types::VariantValuePayload {
+                case,
+                payload: Some(payload_index),
+            },
+        ));
+    }
+    value_nodes[0] = SchemaValueNode::ListValue(part_indices);
+
+    Ok(SchemaValueTree {
+        value_nodes,
+        root: 0,
+    })
+}
+
+/// An optional string field of the envelope: absent and `null` are both "the
+/// runtime carried none", anything else has to be a string.
+fn optional_text_field(value: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
+    match value.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(text)) => Ok(Some(text.clone())),
+        Some(other) => Err(format!("\"{field}\" is {other}, not a string or null")),
+    }
+}
+
+/// Runs the app's `handleMultimodal!` hook for one multimodal call: the caller's
+/// parts become the JSON envelope the app reads, and the app's envelope becomes
+/// the value tree the caller sees. Both directions report what they cannot read
+/// as the invocation's error, so a malformed call or answer is visible to the
+/// caller instead of trapping the agent.
+fn handle_multimodal(input: &SchemaValueTree) -> Result<Option<SchemaValueTree>, AgentError> {
+    // The method is declared on request (`metadata.multimodal`), so an agent
+    // that did not opt in is refused here too — its registered type has no such
+    // method, and the hook is unreachable.
+    if !multimodal_declared() {
+        return Err(AgentError::InvalidMethod(
+            "this agent type declares no multimodal method: add `multimodal: HandlesMultimodal` to \
+             its metadata"
+                .to_string(),
+        ));
+    }
+
+    let envelope = multimodal_envelope_of_tree(input)?;
+    let state_str = get_current_state();
+    let roc_state = RocStr::from_str(&state_str);
+    let roc_parts = RocStr::from_str(&envelope);
+    let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+
+    let answer = unsafe {
+        main_handle_multimodal_for_host_1_exposed_generic(roc_out.as_mut_ptr(), &roc_state, &roc_parts);
+        core::mem::forget(roc_state);
+        core::mem::forget(roc_parts);
+        match roc_out.assume_init().into_result() {
+            Ok(payload) => payload.to_string(),
+            Err(err) => return Err(AgentError::InvalidMethod(err.to_string())),
+        }
+    };
+
+    let parsed: serde_json::Value = serde_json::from_str(&answer).map_err(|err| {
+        AgentError::InvalidMethod(format!("the app's multimodal answer is not valid JSON: {err}"))
+    })?;
+    if let Some(state) = parsed.get("state") {
+        set_current_state(state.to_string());
+    }
+    let parts = parsed
+        .get("parts")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            AgentError::InvalidMethod(
+                "the app's multimodal answer has no \"parts\" string".to_string(),
+            )
+        })?;
+    multimodal_tree_of_envelope(parts).map(Some)
+}
+
+/// The app's metadata JSON, as the app's own `metadata` hook builds it. The
+/// registered agent type and the multimodal method's declaration are both read
+/// from it.
+fn app_metadata_json() -> String {
     let mut roc_out = MaybeUninit::<RocStr>::uninit();
-    let meta_json = unsafe {
+    unsafe {
         main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
         roc_out.assume_init().to_string()
-    };
+    }
+}
+
+/// Whether the app's metadata declares the multimodal method
+/// (`multimodal: HandlesMultimodal`). The same field decides whether the
+/// registered agent type carries the method, so an app that did not opt in
+/// cannot be driven through the hook either.
+fn multimodal_declared() -> bool {
+    serde_json::from_str::<serde_json::Value>(&app_metadata_json())
+        .ok()
+        .and_then(|meta| {
+            meta.get("multimodal")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .as_deref()
+        == Some("multimodal")
+}
+
+fn build_agent_type() -> Result<AgentType, AgentError> {
+    let meta_json = app_metadata_json();
 
     // The registered type comes from the app's own metadata, which the platform
     // builds from `agent.metadata` ({"name", "version", "description", "tools"}).
@@ -873,6 +1265,7 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
     let mut mount_error: Option<String> = None;
     let mut is_router = false;
     let mut wants_handler = false;
+    let mut wants_multimodal = false;
     let mut openapi_document: Option<String> = None;
     let mut metadata_error: Option<String> = None;
 
@@ -881,6 +1274,7 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
         // methods and has no constructor parameters.
         is_router = meta.get("agentKind").and_then(|v| v.as_str()) == Some("http-router");
         wants_handler = meta.get("httpHandler").and_then(|v| v.as_str()) == Some("handler");
+        wants_multimodal = meta.get("multimodal").and_then(|v| v.as_str()) == Some("multimodal");
         if let Some(document) = meta.get("openapiProvider").and_then(|v| v.as_str()) {
             if !document.is_empty() {
                 openapi_document = Some(document.to_string());
@@ -1020,6 +1414,17 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
                 }
             }
         }
+        // A router's methods are the OpenAPI provider and its request handler:
+        // it is parameterless and ephemeral, and Golem serves its mount itself.
+        // An app that asks for a multimodal method on one is refused rather
+        // than silently left without the method it declared.
+        if kind_error.is_none() && wants_multimodal {
+            kind_error = Some(
+                "a router cannot declare a multimodal method: routers register only their request \
+                 handler and OpenAPI provider"
+                    .to_string(),
+            );
+        }
     } else if wants_handler {
         kind_error = Some(
             "httpHandler needs the http-router agent kind: only a router receives requests"
@@ -1059,6 +1464,31 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
             });
         }
         router_schema = Some(schema);
+    }
+
+    // The multimodal method is declared on request: an app with nothing to do
+    // with multimodal content keeps the agent type it had (no extra method, no
+    // multimodal nodes in its graph). It carries no HTTP endpoint — the parts
+    // are the caller's, and this platform's HTTP story stays `handle-message`'s
+    // `/api/chat` route and the mounts.
+    let mut multimodal_schema: Option<MultimodalSchema> = None;
+    if wants_multimodal && kind_error.is_none() && !is_router {
+        let schema = multimodal_schema_graph();
+        methods.push(AgentMethod {
+            name: "handle-multimodal".to_string(),
+            description: "Handles a multimodal message: text and binary parts".to_string(),
+            http_endpoint: vec![],
+            prompt_hint: None,
+            input_schema: InputSchema::Parameters(vec![NamedField {
+                name: "parts".to_string(),
+                source: FieldSource::UserSupplied,
+                schema: schema.parts,
+                metadata: empty_metadata(),
+            }]),
+            output_schema: OutputSchema::Single(schema.parts),
+            read_only: None,
+        });
+        multimodal_schema = Some(schema);
     }
 
     // A router's only other method is the OpenAPI provider, which Golem calls to
@@ -1116,9 +1546,10 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
             },
             description: description_str,
             source_language: "roc".to_string(),
-            schema: match &router_schema {
-                Some(schema) => schema.graph.clone(),
-                None => string_schema_graph(),
+            schema: match (&router_schema, &multimodal_schema) {
+                (Some(schema), _) => schema.graph.clone(),
+                (None, Some(schema)) => schema.graph.clone(),
+                (None, None) => string_schema_graph(),
             },
             constructor: AgentConstructor {
                 name: None,
@@ -3818,6 +4249,13 @@ impl Guest for GolemAgentHost {
             return handle_router_request(&mut input).await;
         }
 
+        // The multimodal method: the caller's parts arrive as a value tree and
+        // leave as the JSON envelope the app reads, and the app's envelope
+        // becomes the value tree the caller sees.
+        if method_name == "handle-multimodal" {
+            return handle_multimodal(&input);
+        }
+
         let input_str = extract_input_string(&input);
 
         // A router's provider method: Golem calls it to build the deployment's
@@ -4839,6 +5277,475 @@ mod tests {
             tree.value_nodes[8],
             SchemaValueNode::OptionValue(None)
         ));
+    }
+
+    /// The multimodal method's schema is the shape the SDKs build and the
+    /// runtime recognises: `list<variant{text, binary}>` with the role on the
+    /// *list* node, wrapped in the one-field parameter record. Node 0 stays the
+    /// string the rest of the agent type points at, so declaring the method
+    /// cannot disturb the constructor parameter, `handle-message` or a tool's
+    /// input.
+    #[test]
+    fn test_multimodal_schema_graph_is_the_multimodal_list() {
+        let schema = multimodal_schema_graph();
+        let nodes = &schema.graph.type_nodes;
+
+        assert!(matches!(nodes[0].body, SchemaTypeBody::StringType));
+        assert!(matches!(
+            nodes[1].body,
+            SchemaTypeBody::TextType(TextRestrictions {
+                languages: None,
+                min_length: None,
+                max_length: None,
+                regex: None,
+            })
+        ));
+        assert!(matches!(
+            nodes[2].body,
+            SchemaTypeBody::BinaryType(BinaryRestrictions {
+                mime_types: None,
+                min_bytes: None,
+                max_bytes: None,
+            })
+        ));
+
+        let cases = match &nodes[3].body {
+            SchemaTypeBody::VariantType(cases) => cases,
+            other => panic!("expected the variant at 3, got {other:?}"),
+        };
+        assert_eq!(
+            cases.iter().map(|case| case.name.as_str()).collect::<Vec<_>>(),
+            vec![MULTIMODAL_TEXT, MULTIMODAL_BINARY]
+        );
+        assert_eq!(cases[0].payload, Some(1));
+        assert_eq!(cases[1].payload, Some(2));
+
+        // The list node carries the role — not the variant, and not the field
+        // — which is what the runtime's multimodal detection reads.
+        assert!(matches!(
+            nodes[4].metadata.role,
+            Some(Role::Multimodal)
+        ));
+        assert!(nodes[3].metadata.role.is_none());
+        assert!(matches!(nodes[4].body, SchemaTypeBody::ListType(3)));
+
+        let fields = match &nodes[5].body {
+            SchemaTypeBody::RecordType(fields) => fields,
+            other => panic!("expected the parameter record at 5, got {other:?}"),
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "parts");
+        assert_eq!(fields[0].body, schema.parts);
+        assert_eq!(schema.parts, 4);
+        assert_eq!(schema.graph.root, schema.parts);
+        assert!(schema.graph.defs.is_empty());
+    }
+
+    /// The declared method: one `parts` parameter whose schema is the multimodal
+    /// list, a result of the same shape, and no HTTP endpoint (the caller's parts
+    /// travel through the agent protocol, not a route).
+    #[test]
+    fn test_multimodal_method_declaration() {
+        let agent_type = build_agent_type().expect("the stub app's metadata registers");
+        let method = agent_type
+            .methods
+            .iter()
+            .find(|method| method.name == "handle-multimodal")
+            .expect("the multimodal method is declared when the metadata asks for it");
+
+        assert!(method.http_endpoint.is_empty());
+        assert!(method.read_only.is_none());
+        match &method.input_schema {
+            InputSchema::Parameters(fields) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].name, "parts");
+                assert!(matches!(fields[0].source, FieldSource::UserSupplied));
+                assert_eq!(fields[0].schema, 4);
+            }
+            other => panic!("expected a parameter schema, got {other:?}"),
+        }
+        assert!(matches!(method.output_schema, OutputSchema::Single(4)));
+
+        // The agent's own graph is the multimodal one, and it still has the
+        // string every other declared parameter points at.
+        assert!(matches!(
+            agent_type.schema.type_nodes[0].body,
+            SchemaTypeBody::StringType
+        ));
+        assert!(matches!(
+            agent_type.schema.type_nodes[4].metadata.role,
+            Some(Role::Multimodal)
+        ));
+        // `handle-message` still declares the string parameter and result.
+        let message = agent_type
+            .methods
+            .iter()
+            .find(|method| method.name == "handle-message")
+            .expect("handle-message is declared too");
+        assert!(matches!(message.output_schema, OutputSchema::Single(0)));
+    }
+
+    /// The message of a refusal: the conversion reports every failure in the
+    /// `invalid-input` (the caller's value tree) and `invalid-method` (the app's
+    /// answer) cases, so the tests read those two apart from the variant's
+    /// `Debug` rendering.
+    fn refusal_message(error: AgentError) -> String {
+        match error {
+            AgentError::InvalidInput(message) | AgentError::InvalidMethod(message) => message,
+            other => format!("{other:?}"),
+        }
+    }
+
+    /// A value tree the runtime builds for `handle-multimodal`: the parameter
+    /// record's single field is the list, and each part is a `variant` whose
+    /// payload is the node the caller's value became. The nodes are owned rather
+    /// than borrowed because `SchemaValueNode` is not `Clone` (it can carry
+    /// resources).
+    fn multimodal_tree(parts: Vec<(u32, SchemaValueNode)>) -> SchemaValueTree {
+        let mut value_nodes = vec![
+            SchemaValueNode::RecordValue(vec![1]),
+            SchemaValueNode::ListValue(vec![]),
+        ];
+        let mut indices = Vec::new();
+        for (case, payload) in parts {
+            let payload_index = value_nodes.len() as i32;
+            value_nodes.push(payload);
+            indices.push(value_nodes.len() as i32);
+            value_nodes.push(SchemaValueNode::VariantValue(
+                golem::core::types::VariantValuePayload {
+                    case,
+                    payload: Some(payload_index),
+                },
+            ));
+        }
+        value_nodes[1] = SchemaValueNode::ListValue(indices);
+        SchemaValueTree {
+            value_nodes,
+            root: 0,
+        }
+    }
+
+    fn text_part(text: &str, language: Option<&str>) -> SchemaValueNode {
+        SchemaValueNode::TextValue(golem::core::types::TextValuePayload {
+            text: text.to_string(),
+            language: language.map(str::to_string),
+        })
+    }
+
+    fn binary_part(bytes: &[u8], mime_type: Option<&str>) -> SchemaValueNode {
+        SchemaValueNode::BinaryValue(golem::core::types::BinaryValuePayload {
+            bytes: bytes.to_vec(),
+            mime_type: mime_type.map(str::to_string),
+        })
+    }
+
+    /// The envelope of an *answer* tree, whose root is the list itself: the same
+    /// rendering the input direction does, without the parameter record the
+    /// runtime wraps a caller's value in.
+    fn answer_envelope(tree: &SchemaValueTree) -> String {
+        let parts = match tree.value_nodes.get(tree.root as usize) {
+            Some(SchemaValueNode::ListValue(parts)) => parts,
+            other => panic!("expected the list at the root, got {other:?}"),
+        };
+        let rendered: Vec<serde_json::Value> = parts
+            .iter()
+            .enumerate()
+            .map(|(position, part)| {
+                multimodal_part_json(tree, position, *part).expect("the part renders")
+            })
+            .collect();
+        serde_json::Value::Array(rendered).to_string()
+    }
+
+    /// The input direction: the caller's parts become the JSON envelope the app
+    /// reads, with the modality named in `tag` (not the external encoding's
+    /// `kind`, and not the variant's case index).
+    #[test]
+    fn test_multimodal_envelope_of_tree() {
+        let tree = multimodal_tree(vec![
+            (0, text_part("hi", None)),
+            (1, binary_part(&[1, 2, 3], Some("image/png"))),
+        ]);
+        assert_eq!(
+            multimodal_envelope_of_tree(&tree).expect("the parts decode"),
+            r#"[{"tag":"text","value":{"language":null,"text":"hi"}},{"tag":"binary","value":{"bytes":[1,2,3],"mimeType":"image/png"}}]"#
+        );
+
+        // A language code and a part without a MIME type travel as they are
+        // (`null` when the caller's value carried none).
+        let tree = multimodal_tree(vec![
+            (0, text_part("bonjour", Some("fr"))),
+            (1, binary_part(&[0], None)),
+        ]);
+        assert_eq!(
+            multimodal_envelope_of_tree(&tree).expect("the parts decode"),
+            r#"[{"tag":"text","value":{"language":"fr","text":"bonjour"}},{"tag":"binary","value":{"bytes":[0],"mimeType":null}}]"#
+        );
+
+        // An empty list is an empty envelope, not an error.
+        let empty = multimodal_tree(vec![]);
+        assert_eq!(
+            multimodal_envelope_of_tree(&empty).expect("no parts decode"),
+            "[]"
+        );
+    }
+
+    /// The answer direction: the app's envelope becomes the value tree the
+    /// caller sees — the list at the root, one variant per part, the payload
+    /// nodes behind them.
+    #[test]
+    fn test_multimodal_tree_of_envelope() {
+        let tree = multimodal_tree_of_envelope(
+            r#"[{"tag":"text","value":{"text":"hi","language":null}},
+               {"tag":"binary","value":{"bytes":[1,2,3],"mimeType":"image/png"}}]"#,
+        )
+        .expect("the envelope decodes");
+
+        assert_eq!(tree.root, 0);
+        assert!(matches!(tree.value_nodes[0], SchemaValueNode::ListValue(_)));
+
+        // The parts are the same tree the input direction produces, so an app
+        // that answers with what it received round-trips exactly.
+        let echoed = answer_envelope(&tree);
+        let again = multimodal_tree_of_envelope(&echoed).expect("the envelope decodes again");
+        assert_eq!(answer_envelope(&again), echoed);
+        assert_eq!(echoed, r#"[{"tag":"text","value":{"language":null,"text":"hi"}},{"tag":"binary","value":{"bytes":[1,2,3],"mimeType":"image/png"}}]"#);
+
+        // `language` and `mimeType` may be absent instead of null, and an empty
+        // envelope is no parts at all.
+        let absent = multimodal_tree_of_envelope(
+            r#"[{"tag":"text","value":{"text":"hi"}},{"tag":"binary","value":{"bytes":[]}}]"#,
+        )
+        .expect("absent optional fields decode");
+        assert!(matches!(
+            absent.value_nodes[1],
+            SchemaValueNode::TextValue(ref text) if text.language.is_none()
+        ));
+        assert!(matches!(
+            absent.value_nodes[3],
+            SchemaValueNode::BinaryValue(ref binary)
+                if binary.bytes.is_empty() && binary.mime_type.is_none()
+        ));
+        let empty = multimodal_tree_of_envelope("[]").expect("no parts decode");
+        assert!(matches!(
+            empty.value_nodes[0],
+            SchemaValueNode::ListValue(ref parts) if parts.is_empty()
+        ));
+    }
+
+    /// Everything the input direction refuses: a tree that is not the parameter
+    /// record, a field that is not a list, a part that is not a variant, a case
+    /// the method does not declare, a missing payload, a payload of the wrong
+    /// shape, and the two node kinds the method cannot carry (a capability and a
+    /// stream).
+    #[test]
+    fn test_multimodal_input_rejections() {
+        let reason = |tree: &SchemaValueTree| {
+            refusal_message(
+                multimodal_envelope_of_tree(tree).expect_err("the tree should be refused"),
+            )
+        };
+
+        assert!(reason(&SchemaValueTree {
+            value_nodes: vec![SchemaValueNode::StringValue(String::from("hi"))],
+            root: 0,
+        })
+        .contains("not a multimodal list"));
+
+        assert!(reason(&SchemaValueTree {
+            value_nodes: vec![
+                SchemaValueNode::RecordValue(vec![1]),
+                SchemaValueNode::StringValue(String::from("hi")),
+            ],
+            root: 0,
+        })
+        .contains("not a multimodal list"));
+
+        // A list whose element is not a variant at all.
+        let not_a_variant = SchemaValueTree {
+            value_nodes: vec![
+                SchemaValueNode::RecordValue(vec![1]),
+                SchemaValueNode::ListValue(vec![2]),
+                SchemaValueNode::StringValue(String::from("hi")),
+            ],
+            root: 0,
+        };
+        assert!(reason(&not_a_variant).contains("instead of a variant"));
+
+        assert!(reason(&multimodal_tree(vec![(7, text_part("hi", None))]))
+            .contains("unknown case 7"));
+
+        let no_payload = SchemaValueTree {
+            value_nodes: vec![
+                SchemaValueNode::RecordValue(vec![1]),
+                SchemaValueNode::ListValue(vec![2]),
+                SchemaValueNode::VariantValue(golem::core::types::VariantValuePayload {
+                    case: 0,
+                    payload: None,
+                }),
+            ],
+            root: 0,
+        };
+        assert!(reason(&no_payload).contains("carries no payload"));
+
+        // A payload of the wrong shape for the case that carries it: a text case
+        // with a string (what a bare-string schema would build) and one with the
+        // other modality's value.
+        assert!(reason(&multimodal_tree(vec![(
+            0,
+            SchemaValueNode::StringValue(String::from("hi"))
+        )]))
+        .contains("instead of a text value"));
+        assert!(reason(&multimodal_tree(vec![(0, binary_part(&[1], None))]))
+            .contains("instead of a text value"));
+        assert!(reason(&multimodal_tree(vec![(1, text_part("hi", None))]))
+            .contains("instead of a binary value"));
+
+        // The capabilities and streams a value tree can carry are refused, not
+        // passed to the app as a part it cannot represent. The handles are
+        // leaked rather than dropped: outside wasm there is no host for the
+        // resource's drop import to call.
+        let secret = multimodal_tree(vec![(0, SchemaValueNode::SecretValue(unsafe {
+            golem::core::types::Secret::from_handle(7)
+        }))]);
+        assert!(reason(&secret).contains("host-managed capability"));
+        core::mem::forget(secret);
+
+        let stream = multimodal_tree(vec![(0, SchemaValueNode::StreamValue(unsafe {
+            golem::core::types::SchemaValueStream::from_handle(7)
+        }))]);
+        assert!(reason(&stream).contains("is a stream"));
+        core::mem::forget(stream);
+    }
+
+    /// Everything the answer direction refuses: an answer that is not JSON, not
+    /// an array, not an object per part, without a `tag`, with an unknown tag,
+    /// without a `value`, with a payload of the wrong shape (a missing field, a
+    /// byte that is not a `u8`, an optional field that is neither a string nor
+    /// null).
+    #[test]
+    fn test_multimodal_answer_rejections() {
+        let reason = |envelope: &str| {
+            refusal_message(
+                multimodal_tree_of_envelope(envelope).expect_err("the answer should be refused"),
+            )
+        };
+
+        assert!(reason("not json").contains("not valid JSON"));
+        assert!(reason(r#"{"tag":"text"}"#).contains("not a JSON array"));
+        assert!(reason(r#"["text"]"#).contains("no \"tag\" string"));
+        assert!(reason(r#"[{"tag":"image","value":{}}]"#).contains("unknown tag"));
+        assert!(reason(r#"[{"tag":"text"}]"#).contains("no \"value\""));
+        assert!(
+            reason(r#"[{"tag":"text","value":{"language":"fr"}}]"#)
+                .contains("no \"text\" string")
+        );
+        assert!(
+            reason(r#"[{"tag":"text","value":{"text":"hi","language":7}}]"#)
+                .contains("not a string or null")
+        );
+        assert!(
+            reason(r#"[{"tag":"binary","value":{"mimeType":"image/png"}}]"#)
+                .contains("no \"bytes\" array")
+        );
+        assert!(
+            reason(r#"[{"tag":"binary","value":{"bytes":[1,256]}}]"#)
+                .contains("not a u8")
+        );
+        assert!(
+            reason(r#"[{"tag":"binary","value":{"bytes":[-1]}}]"#)
+                .contains("not a u8")
+        );
+        assert!(
+            reason(r#"[{"tag":"binary","value":{"bytes":["1"]}}]"#)
+                .contains("not a u8")
+        );
+        assert!(
+            reason(r#"[{"tag":"binary","value":{"bytes":[1],"mimeType":[]}}]"#)
+                .contains("not a string or null")
+        );
+        // The part's position is in every message, so an app with several parts
+        // can tell which one it got wrong.
+        assert!(
+            reason(r#"[{"tag":"text","value":{"text":"hi"}},{"tag":"nope"}]"#)
+                .contains("part 1")
+        );
+    }
+
+    /// The whole method through the host: the caller's tree reaches the app as
+    /// the envelope, the app's answer comes back as the tree the caller sees,
+    /// and the state travels with it. The stub app echoes the envelope, so the
+    /// answer carries exactly what the app received.
+    #[test]
+    fn test_handle_multimodal_round_trip() {
+        let input = multimodal_tree(vec![
+            (0, text_part("hi", None)),
+            (1, binary_part(&[1, 2, 3], Some("image/png"))),
+        ]);
+        let answer = pollster::block_on(GolemAgentHost::invoke(
+            "handle-multimodal".to_string(),
+            input,
+            Principal::Anonymous,
+        ))
+        .expect("the method runs")
+        .expect("the method answers");
+
+        let envelope = r#"[{"tag":"text","value":{"language":null,"text":"hi"}},{"tag":"binary","value":{"bytes":[1,2,3],"mimeType":"image/png"}}]"#;
+        assert_eq!(answer_envelope(&answer), envelope);
+    }
+
+    /// The method is declared on request, so an app that did not ask for it is
+    /// refused — its registered type has no such method and the hook is
+    /// unreachable — instead of running app code no caller could have reached.
+    #[test]
+    fn test_handle_multimodal_refuses_an_agent_that_did_not_declare_it() {
+        guest_bridge::set_metadata_override(Some(
+            r#"{"name":"stub-agent","description":"stub","multimodal":null}"#.to_string(),
+        ));
+
+        let input = multimodal_tree(vec![(0, text_part("hi", None))]);
+        let error = pollster::block_on(GolemAgentHost::invoke(
+            "handle-multimodal".to_string(),
+            input,
+            Principal::Anonymous,
+        ))
+        .expect_err("the call is refused");
+        assert!(
+            format!("{error:?}").contains("declares no multimodal method"),
+            "unexpected error: {error:?}"
+        );
+
+        guest_bridge::set_metadata_override(None);
+    }
+
+    /// A router cannot carry the method: it is parameterless and ephemeral, and
+    /// Golem serves its mount itself, so an app that asks for a multimodal
+    /// method on one is refused at registration with a message naming the app.
+    #[test]
+    fn test_build_agent_type_refuses_multimodal_on_a_router() {
+        guest_bridge::set_metadata_override(Some(
+            serde_json::json!({
+                "name": "stub-router",
+                "description": "stub router",
+                "agentKind": "http-router",
+                "multimodal": "multimodal",
+                "httpMount": {
+                    "pathPrefix": ["static"],
+                    "staticBindings": [
+                        { "exact": { "publicPath": ["index.html"], "filePath": "/index.html" } }
+                    ],
+                },
+            })
+            .to_string(),
+        ));
+
+        let error = build_agent_type().expect_err("the router is refused");
+        assert!(
+            format!("{error:?}").contains("a router cannot declare a multimodal method"),
+            "unexpected error: {error:?}"
+        );
+
+        guest_bridge::set_metadata_override(None);
     }
 
     #[test]

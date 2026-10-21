@@ -45,6 +45,15 @@ agent = defineAgent({
 			}
 		},
 
+	# The multimodal method's handler. A router cannot declare it: its registered
+	# methods are the request handler above and the OpenAPI provider, and the host
+	# refuses `HandlesMultimodal` here. The stub is still part of the agent record.
+	handleMultimodal!: |state, _parts|
+		{
+			state,
+			parts: "[{\"tag\":\"text\",\"value\":{\"text\":\"a router registers no multimodal method\",\"language\":null}}]",
+		},
+
 	handleToolCall!: |state, toolCall|
 		{
 			state,
@@ -75,6 +84,7 @@ agent = defineAgent({
 			corsAllowedPatterns: ["*"],
 		}),
 		httpHandler: HandlesRequests,
+		multimodal: NoMultimodal,
 		# The provider's paths are relative to the mount prefix: `/index.html`
 		# here is `/static/index.html` on the deployment's domain.
 		openapiProvider: OpenApi(

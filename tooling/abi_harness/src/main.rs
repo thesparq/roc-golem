@@ -38,8 +38,9 @@ bindgen!({
 use exports::golem::agent::guest::Principal;
 use golem::agent::common::PathSegment;
 use golem::core::types::{
-    MetadataEnvelope, NamedFieldType, SchemaGraph, SchemaTypeBody, SchemaTypeNode,
-    SchemaValueNode, SchemaValueTree, TypedSchemaValue,
+    BinaryValuePayload, MetadataEnvelope, NamedFieldType, SchemaGraph, SchemaTypeBody,
+    SchemaTypeNode, SchemaValueNode, SchemaValueTree, TextValuePayload, TypedSchemaValue,
+    VariantValuePayload,
 };
 
 /// Renders a mount's path prefix the way an app author writes it: literal
@@ -3178,6 +3179,19 @@ struct Expectation {
     /// The agent type kind the app should register (`regular` or
     /// `http-router`).
     kind: Option<String>,
+    /// A multimodal envelope to drive `handle-multimodal` with: the harness
+    /// builds the value tree the runtime would build for it, invokes the method
+    /// and renders the tree the app answered with back into an envelope.
+    multimodal: Option<String>,
+    /// Substrings the answer envelope must contain (`--expect-multimodal` may be
+    /// given more than once).
+    expect_multimodal: Vec<String>,
+    /// Drive `handle-multimodal` with a tree whose part payload is a plain
+    /// string instead of a text or binary value, which the host has to refuse.
+    multimodal_shape_mismatch: bool,
+    /// Substring expected in the error the multimodal call fails with: the host
+    /// reports a conversion failure as the invocation's error, never as a trap.
+    expect_multimodal_error: Option<String>,
 }
 
 fn usage() -> String {
@@ -3194,6 +3208,8 @@ fn usage() -> String {
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
          [--tool-stream NAME] [--tool-stdin TEXT] \
          [--expect-tool-stdout SUBSTRING] [--expect-tool-stderr SUBSTRING] \
+         [--multimodal ENVELOPE] [--expect-multimodal SUBSTRING] \
+         [--multimodal-shape-mismatch] [--expect-multimodal-error SUBSTRING] \
          [--expect-kind regular|http-router]",
     )
 }
@@ -3230,6 +3246,10 @@ fn parse_args() -> Result<Expectation> {
         expect_tool_stderr: None,
         mount: None,
         kind: None,
+        multimodal: None,
+        expect_multimodal: Vec::new(),
+        multimodal_shape_mismatch: false,
+        expect_multimodal_error: None,
     };
 
     while let Some(arg) = args.next() {
@@ -3268,6 +3288,18 @@ fn parse_args() -> Result<Expectation> {
             "--expect-tool-stderr" => expectation.expect_tool_stderr = args.next(),
             "--expect-mount" => expectation.mount = args.next(),
             "--expect-kind" => expectation.kind = args.next(),
+            "--multimodal" => {
+                expectation.multimodal =
+                    Some(args.next().context("--multimodal needs a value")?)
+            }
+            "--expect-multimodal" => expectation
+                .expect_multimodal
+                .push(args.next().context("--expect-multimodal needs a value")?),
+            "--multimodal-shape-mismatch" => expectation.multimodal_shape_mismatch = true,
+            "--expect-multimodal-error" => {
+                expectation.expect_multimodal_error =
+                    Some(args.next().context("--expect-multimodal-error needs a value")?)
+            }
             "-h" | "--help" => bail!("{}", usage()),
             other => {
                 if expectation.component.as_os_str().is_empty() {
@@ -3348,6 +3380,140 @@ fn tool_input_value(s: &str) -> TypedSchemaValue {
         },
         value: text_value(s),
     }
+}
+
+/// A multimodal value tree, shaped the way the runtime builds it for
+/// `handle-multimodal`: the method's parameter record whose single `parts` field
+/// is the multimodal list, and each part a `variant` whose payload is a text or
+/// binary value. The envelope is the platform's documented one — the same JSON
+/// the app reads and answers with — so a check drives the method exactly the way
+/// a caller's parts arrive.
+///
+/// `shape_mismatch` builds the first part's payload as a plain string instead,
+/// which is what a caller's value would look like if the declared schema were a
+/// bare string: the host has to refuse that rather than hand the app a part it
+/// cannot represent.
+fn multimodal_value(envelope: &str, shape_mismatch: bool) -> Result<SchemaValueTree> {
+    let parsed: serde_json::Value = serde_json::from_str(envelope)
+        .with_context(|| format!("--multimodal is not valid JSON: {envelope}"))?;
+    let parts = parsed
+        .as_array()
+        .context("--multimodal is not a JSON array of parts")?;
+
+    let mut value_nodes = vec![
+        SchemaValueNode::RecordValue(vec![1]),
+        SchemaValueNode::ListValue(Vec::new()),
+    ];
+    let mut indices = Vec::new();
+    for (position, part) in parts.iter().enumerate() {
+        let tag = part
+            .get("tag")
+            .and_then(|value| value.as_str())
+            .with_context(|| format!("part {position} has no \"tag\" string"))?;
+        let value = part
+            .get("value")
+            .with_context(|| format!("part {position} has no \"value\""))?;
+        let text = || {
+            value
+                .get("text")
+                .and_then(|text| text.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        let (case, payload) = match tag {
+            "text" if shape_mismatch && position == 0 => {
+                (0, SchemaValueNode::StringValue(text()))
+            }
+            "text" => (
+                0,
+                SchemaValueNode::TextValue(TextValuePayload {
+                    text: text(),
+                    language: value
+                        .get("language")
+                        .and_then(|language| language.as_str())
+                        .map(str::to_string),
+                }),
+            ),
+            "binary" => {
+                let encoded = value
+                    .get("bytes")
+                    .and_then(|bytes| bytes.as_array())
+                    .with_context(|| format!("part {position} has no \"bytes\" array"))?;
+                let mut bytes = Vec::with_capacity(encoded.len());
+                for byte in encoded {
+                    let byte = byte
+                        .as_u64()
+                        .and_then(|byte| u8::try_from(byte).ok())
+                        .with_context(|| format!("part {position} has a byte that is not a u8"))?;
+                    bytes.push(byte);
+                }
+                (
+                    1,
+                    SchemaValueNode::BinaryValue(BinaryValuePayload {
+                        bytes,
+                        mime_type: value
+                            .get("mimeType")
+                            .and_then(|mime| mime.as_str())
+                            .map(str::to_string),
+                    }),
+                )
+            }
+            other => bail!("part {position} carries unknown tag {other:?}"),
+        };
+
+        let payload_index = value_nodes.len() as i32;
+        value_nodes.push(payload);
+        indices.push(value_nodes.len() as i32);
+        value_nodes.push(SchemaValueNode::VariantValue(VariantValuePayload {
+            case,
+            payload: Some(payload_index),
+        }));
+    }
+    value_nodes[1] = SchemaValueNode::ListValue(indices);
+
+    Ok(SchemaValueTree {
+        value_nodes,
+        root: 0,
+    })
+}
+
+/// The envelope an answer tree carries, rendered the way the platform documents
+/// it: the answer's root is the list itself (the method's declared result), and
+/// each element a `variant` whose payload is the text or binary value. This is
+/// the harness's own reader rather than the host's conversion, so a check sees
+/// the tree the component really answered with, in the form the app was handed.
+fn multimodal_envelope(tree: &SchemaValueTree) -> Result<String> {
+    let parts = match tree.value_nodes.get(tree.root as usize) {
+        Some(SchemaValueNode::ListValue(parts)) => parts,
+        other => bail!("the answer's root is {other:?} instead of a list"),
+    };
+
+    let mut rendered = Vec::with_capacity(parts.len());
+    for (position, part) in parts.iter().enumerate() {
+        let variant = match tree.value_nodes.get(*part as usize) {
+            Some(SchemaValueNode::VariantValue(variant)) => variant,
+            other => bail!("answer part {position} is {other:?} instead of a variant"),
+        };
+        let payload = variant
+            .payload
+            .and_then(|index| tree.value_nodes.get(index as usize))
+            .with_context(|| format!("answer part {position} carries no payload"))?;
+        let rendered_part = match (variant.case, payload) {
+            (0, SchemaValueNode::TextValue(text)) => serde_json::json!({
+                "tag": "text",
+                "value": { "text": text.text, "language": text.language },
+            }),
+            (1, SchemaValueNode::BinaryValue(binary)) => serde_json::json!({
+                "tag": "binary",
+                "value": { "bytes": binary.bytes, "mimeType": binary.mime_type },
+            }),
+            (case, other) => bail!("answer part {position} is case {case} with {other:?}"),
+        };
+        rendered.push(rendered_part);
+    }
+
+    Ok(serde_json::Value::Array(rendered).to_string())
 }
 
 fn main() -> Result<ExitCode> {
@@ -3822,6 +3988,83 @@ async fn run() -> Result<ExitCode> {
                             text, expected
                         ));
                     }
+                }
+            }
+        }
+    }
+
+    // 5c. The multimodal method (`handle-multimodal`): the parts a caller sends
+    //     arrive as the JSON envelope the app reads, and the envelope the app
+    //     answers with becomes the value tree the caller sees. The harness
+    //     builds the caller's tree and renders the answer's tree itself, so both
+    //     directions are checked against the documented envelope rather than
+    //     against the host's own conversion. A conversion the host cannot do is
+    //     reported as the invocation's error, never as a trap.
+    if expectation.expect_trap.is_none() {
+        if let Some(envelope) = &expectation.multimodal {
+            let input = multimodal_value(envelope, expectation.multimodal_shape_mismatch)
+                .context("--multimodal")?;
+            let call = store
+                .run_concurrent(async |accessor| {
+                    guest
+                        .call_invoke(
+                            accessor,
+                            String::from("handle-multimodal"),
+                            input,
+                            Principal::Anonymous,
+                        )
+                        .await
+                })
+                .await;
+
+            match call {
+                Ok(Ok(Ok(value))) => match value {
+                    Some(value) => match multimodal_envelope(&value) {
+                        Ok(answer) => {
+                            println!("[invoke handle-multimodal] = {answer}");
+                            for expected in &expectation.expect_multimodal {
+                                if !answer.contains(expected.as_str()) {
+                                    failures.push(format!(
+                                        "handle-multimodal: answer {answer} does not contain \
+                                         {expected:?}"
+                                    ));
+                                }
+                            }
+                            if let Some(expected) = &expectation.expect_multimodal_error {
+                                failures.push(format!(
+                                    "handle-multimodal: expected the call to fail with \
+                                     {expected:?}, but it answered {answer}"
+                                ));
+                            }
+                        }
+                        Err(err) => failures.push(format!(
+                            "handle-multimodal: the answer is not a multimodal envelope: {err}"
+                        )),
+                    },
+                    None => failures.push(String::from(
+                        "handle-multimodal: the invocation returned no result",
+                    )),
+                },
+                Ok(Ok(Err(err))) => {
+                    let text = format!("{err:?}");
+                    println!("[invoke handle-multimodal] = error {text}");
+                    match &expectation.expect_multimodal_error {
+                        Some(expected) if text.contains(expected.as_str()) => {}
+                        Some(expected) => failures.push(format!(
+                            "handle-multimodal: error {text} does not contain {expected:?}"
+                        )),
+                        None => failures.push(format!(
+                            "handle-multimodal returned an error: {text}"
+                        )),
+                    }
+                }
+                Ok(Err(err)) => {
+                    println!("[invoke handle-multimodal] = trap\n{err}");
+                    failures.push(String::from("handle-multimodal trapped"));
+                }
+                Err(err) => {
+                    println!("[invoke handle-multimodal] = executor error\n{err:?}");
+                    failures.push(String::from("handle-multimodal could not run"));
                 }
             }
         }

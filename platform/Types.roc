@@ -14,6 +14,7 @@ Types := {}.{
 		agentKind : AgentKind,
 		httpMount : HttpMountOption,
 		httpHandler : HttpHandlerOption,
+		multimodal : MultimodalOption,
 		openapiProvider : OpenApiProvider,
 	}
 	# `HttpRouter` agent types are served by Golem itself: they are parameterless,
@@ -26,6 +27,32 @@ Types := {}.{
 	# keeps a router purely static (and lets unmatched paths answer 404 without
 	# waking anything).
 	HttpHandlerOption : [NoHandler, HandlesRequests]
+	# `HandlesMultimodal` declares the `handle-multimodal` method, whose input and
+	# output are a multimodal list of parts, and reaches the app through
+	# `handleMultimodal!`. `NoMultimodal` (what an app with nothing to do with
+	# multimodal content writes) registers no such method, so the hook is
+	# unreachable — the same way `handleRequest!` is unreachable without
+	# `HandlesRequests`. A router cannot declare it: routers register only their
+	# request handler and their OpenAPI provider.
+	MultimodalOption : [NoMultimodal, HandlesMultimodal]
+	# One part of a multimodal envelope. The envelope itself travels as JSON text
+	# (the app reads it out of `handleMultimodal!`'s argument and answers with the
+	# same shape — see the README's "Multimodal values"); these types are the
+	# shape that text carries, for an app that wants to model the parts it reads
+	# or builds.
+	MultimodalPart : [
+		Text(MultimodalText),
+		Binary(MultimodalBinary),
+	]
+	# A text part's text and its BCP-47 language code (`""` when the caller's
+	# value carried none).
+	MultimodalText : { text : Str, language : Str }
+	# A binary part's byte values, as the JSON array text the envelope carries
+	# (`[1,2,3]`), and its MIME type (`""` when the caller's value carried none).
+	MultimodalBinary : { bytes : Str, mimeType : Str }
+	# The parts a multimodal method carries, in order: what `handle-multimodal`
+	# receives and what it answers with.
+	MultimodalEnvelope : List(MultimodalPart)
 	# One request routed to a router's mount. `headersJson` is the raw header list
 	# (`[{"name":...,"value":...}]`, in request order) and `query` is empty when
 	# the URL had none.

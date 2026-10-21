@@ -246,6 +246,18 @@ agent = defineAgent({
 			response: { status: 404, headers: [], body: "this agent is not an HTTP router" },
 		},
 
+	# The multimodal method's handler. This app declares
+	# `multimodal: HandlesMultimodal`, so it is registered and reachable; an app
+	# with nothing to do with multimodal content writes `NoMultimodal` and a stub
+	# like this one (see the README's "Multimodal values"). The hook is a method
+	# like any other: it runs against the agent's own state and answers the next
+	# one.
+	handleMultimodal!: |state, parts|
+		{
+			state,
+			parts: multimodalAnswer(state.count, parts),
+		},
+
 	handleToolCall!: |state, toolCall|
 		match toolCall.name {
 			"get_count" =>
@@ -294,6 +306,7 @@ agent = defineAgent({
 		agentKind: Regular,
 		httpMount: None,
 		httpHandler: NoHandler,
+		multimodal: HandlesMultimodal,
 		openapiProvider: NoOpenApi,
 	},
 
@@ -336,6 +349,71 @@ splitThree = |text| {
 	secondOfThem = splitToken(firstTwo.rest)
 	{ first: firstTwo.first, second: secondOfThem.first, rest: secondOfThem.rest }
 }
+
+## The multimodal method's answer. `parts` is the JSON envelope Golem built from
+## the caller's value tree — one `{"tag":"text"|"binary","value":{…}}` object
+## per part — and the hook's answer is the envelope the caller's parts become.
+##
+## This app reads the parts with the platform's simple string helpers (the ones
+## `extract_json_field` and `deserializeState` use: a value is found by its
+## `"field":` prefix and read up to the next quote), reports the count its state
+## carried and what it found, and hands the caller's own parts back, so one call
+## shows both directions carrying text and binary against the agent's state.
+## `MultimodalEnvelope` in `pf.Types` is the shape the text carries.
+multimodalAnswer : I64, Str -> Str
+multimodalAnswer = |count, parts| {
+	report = "count=${I64.to_str(count)}; text=${firstField(parts, "\"text\":\"")}; bytes=${firstBytes(parts)}; mime=${firstField(parts, "\"mimeType\":\"")}"
+	reportPart = "{\"tag\":\"text\",\"value\":{\"text\":${jsonString(report)},\"language\":null}}"
+	received = envelopeParts(parts)
+
+	if (Str.is_empty(received))
+		"[${reportPart}]"
+	else
+		"[${reportPart},${received}]"
+}
+
+## An envelope's parts with the enclosing `[` and `]` removed (`""` for `[]`),
+## which is what lets an app hand the parts it received back verbatim.
+envelopeParts : Str -> Str
+envelopeParts = |envelope|
+	match Str.split_first(envelope, "[") {
+		Err(_) => ""
+
+		Ok({ before: _, after }) =>
+			match Str.split_last(after, "]") {
+				Err(_) => after
+				Ok({ before, after: _ }) => before
+			}
+	}
+
+## The first `"<field>":"` … `"` string in `envelope` (`""` when the field is
+## not there), the simple reading the platform's other JSON parsers use: the
+## value must not contain a quote of its own.
+firstField : Str, Str -> Str
+firstField = |envelope, prefix|
+	match Str.split_first(envelope, prefix) {
+		Err(_) => ""
+
+		Ok({ before: _, after }) =>
+			match Str.split_first(after, "\"") {
+				Err(_) => ""
+				Ok({ before, after: _ }) => before
+			}
+	}
+
+## The first `"bytes":` … `]` array in `envelope`, brackets included (`"[]"`
+## when the envelope carries no binary part).
+firstBytes : Str -> Str
+firstBytes = |envelope|
+	match Str.split_first(envelope, "\"bytes\":") {
+		Err(_) => "[]"
+
+		Ok({ before: _, after }) =>
+			match Str.split_first(after, "]") {
+				Err(_) => "[]"
+				Ok({ before, after: _ }) => "${before}]"
+			}
+	}
 
 ## `true` / `false` as the text the round-trip reports render their checks with.
 boolText : Bool -> Str

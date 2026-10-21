@@ -9,6 +9,7 @@ platform "golem"
 	packages {}
 	provides {
 		"main_handle_message_for_host_1_exposed_generic": main_handle_message_for_host!,
+		"main_handle_multimodal_for_host_1_exposed_generic": main_handle_multimodal_for_host!,
 		"main_handle_request_for_host_1_exposed_generic": main_handle_request_for_host!,
 		"main_handle_tool_call_for_host_1_exposed_generic": main_handle_tool_call_for_host!,
 		"main_init_for_host_1_exposed_generic": main_init_for_host!,
@@ -110,6 +111,7 @@ import Types exposing [
 	HttpHeader,
 	HttpMountOption,
 	HttpResponse,
+	MultimodalOption,
 	OpenApiProvider,
 	ToolCall,
 	ToolDefinition,
@@ -163,6 +165,20 @@ main_handle_tool_call_for_host! = |state_json, tool_call_json| {
 			escaped_stdout = escape_json_str(res.result.stdout)
 			escaped_stderr = escape_json_str(res.result.stderr)
 			Ok("{\"state\":${next_state_json},\"success\":${success_str},\"output\":\"${escaped_output}\",\"stdout\":\"${escaped_stdout}\",\"stderr\":\"${escaped_stderr}\"}")
+		}
+	}
+}
+
+main_handle_multimodal_for_host! : Str, Str => Try(Str, Str)
+main_handle_multimodal_for_host! = |state_json, parts_json| {
+	match (agent.deserializeState)(state_json) {
+		Err(err) =>
+			Err("Failed to deserialize state: ${err}")
+
+		Ok(current_model) => {
+			res = (agent.handleMultimodal!)(current_model, parts_json)
+			next_state_json = (agent.serializeState)(res.state)
+			Ok("{\"state\":${next_state_json},\"parts\":${format_json_string(res.parts)}}")
 		}
 	}
 }
@@ -231,10 +247,18 @@ main_metadata_for_host = |_| {
 	mount_json = format_http_mount(meta.httpMount)
 	kind_json = format_agent_kind(meta.agentKind)
 	handler_json = format_http_handler(meta.httpHandler)
+	multimodal_json = format_multimodal(meta.multimodal)
 	openapi_json = format_openapi_provider(meta.openapiProvider)
 
-	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}],\"agentKind\":${kind_json},\"httpMount\":${mount_json},\"httpHandler\":${handler_json},\"openapiProvider\":${openapi_json}}"
+	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}],\"agentKind\":${kind_json},\"httpMount\":${mount_json},\"httpHandler\":${handler_json},\"multimodal\":${multimodal_json},\"openapiProvider\":${openapi_json}}"
 }
+
+format_multimodal : MultimodalOption -> Str
+format_multimodal = |multimodal|
+	match multimodal {
+		NoMultimodal => "null"
+		HandlesMultimodal => "\"multimodal\""
+	}
 
 format_http_handler : HttpHandlerOption -> Str
 format_http_handler = |handler|

@@ -201,6 +201,33 @@ check "counter: method named like a tool" '{"count": 2}' \
 check "ai_tool: greeting" "I am an AI assistant agent" \
     "$(invoke "ai-tool-agent(\"$RUN_ID\")" handle-message '"hello"')"
 
+say "==> Multimodal values (a method whose parts travel as a multimodal list)"
+# `handle-multimodal` declares a multimodal input *and* result — a list of
+# `{tag, value}` parts — which is what lets one call carry text and binary
+# content. The caller writes the parts in the CLI's literal syntax (the
+# component's source language is `roc`, which the CLI parses with its TypeScript
+# dialect), Golem builds the value tree from the declared schema, the host hands
+# the app the JSON envelope of those parts, and the envelope the app answers with
+# becomes the parts the caller sees. The counter's hook reports what it read out
+# of the envelope and hands the caller's own parts back, so one call shows both
+# directions.
+mm_agent="counter-agent(\"$RUN_ID-mm\")"
+mm_parts='[{tag: "text", value: Text("hi from e2e")}, {tag: "binary", value: Binary("data:image/png;base64,AQID")}]'
+# The increment is what makes the state check below meaningful: the hook reports
+# the count its state carried.
+invoke "$mm_agent" handle-message '"increment"' >/dev/null
+# The reply is a long rendered value the CLI wraps, and a wrap only ever adds
+# whitespace (see the retry section), so these compare space-free copies.
+mm_reply="$(invoke "$mm_agent" handle-multimodal "$mm_parts")"
+check_nospace "multimodal: the hook ran against the agent's state" 'count=1;' "$mm_reply"
+check_nospace "multimodal: the app read the text part" 'text=hi from e2e' "$mm_reply"
+check_nospace "multimodal: the app read the binary part's bytes and MIME type" \
+    'bytes=[1,2,3];mime=image/png' "$mm_reply"
+check_nospace "multimodal: the caller's text part came back" 'Text("hi from e2e")' \
+    "$mm_reply"
+check_nospace "multimodal: the caller's binary part came back" \
+    'Binary("data:image/png;base64,AQID")' "$mm_reply"
+
 say '==> Tool surface (golem:tool/guest, what `golem tool invoke` and MCP use)'
 # Tools run on the agent's instance but without its state, so a stateless tool
 # answers and a stateful one reports the missing state instead of inventing one.
