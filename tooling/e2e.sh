@@ -679,7 +679,12 @@ elif ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
 else
     mkdir -p "$WORK_DIR/durable-streams"
     cp "$ROOT_DIR/tooling/durable_streams_server.mjs" "$WORK_DIR/durable-streams/server.mjs"
-    if ! npm install --no-audit --no-fund --silent --prefix "$WORK_DIR/durable-streams" \
+    # `--ignore-scripts` because the in-memory store needs no native build:
+    # the one dependency with an install script (`lmdb`, for the file-backed
+    # store the e2e does not use) ships prebuilt binaries either way, and this
+    # keeps npm 10 and npm 11 on the same path.
+    if ! npm install --no-audit --no-fund --silent --ignore-scripts \
+        --prefix "$WORK_DIR/durable-streams" \
         "@durable-streams/server@$DS_VERSION" \
         >"$WORK_DIR/durable-streams/npm.log" 2>&1; then
         ds_reason="npm could not install @durable-streams/server@$DS_VERSION (see $WORK_DIR/durable-streams/npm.log)"
