@@ -12,6 +12,19 @@ world golem-agent {
     // Resource quotas: `golem:quota/types` is synchronous too; its
     // `quota-token` resource comes from `golem:core/types` above.
     import golem:quota/types@1.5.0;
+    // Permissions: the six `golem:permissions` interfaces Golem 1.6 registers
+    // for guests. Every function in them is synchronous (no `block_on`, no
+    // streams), which is what lets the ABI harness drive them against stubs.
+    // The `permission-card` capability itself is a bare resource in
+    // `golem:core/types` above; these interfaces are its data model, its
+    // inspection/derivation/revocation operations, the wallet, and the
+    // kernel's own introspection.
+    import golem:permissions/derive@0.1.0;
+    import golem:permissions/inspect@0.1.0;
+    import golem:permissions/kernel-introspection@0.1.0;
+    import golem:permissions/revoke@0.1.0;
+    import golem:permissions/types@0.1.0;
+    import golem:permissions/wallet@0.1.0;
     import golem:websocket/client@1.5.0;
     // The two shared stores: `wasi:blobstore` (containers of named objects) and
     // `wasi:keyvalue` (buckets of key-value pairs). Both interfaces are

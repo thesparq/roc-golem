@@ -26,6 +26,9 @@ mod retry_json;
 /// The JSON mirror of the three `golem:rdbms` `db-value` vocabularies, and the
 /// effects that carry them (`dbOpen!`, `dbQuery!`, …).
 mod rdbms_json;
+/// The JSON mirror of `golem:permissions` (cards, grants, wallets) and of the
+/// principal the runtime hands every invocation.
+mod permissions_json;
 
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
@@ -1896,17 +1899,6 @@ fn fork_result_text(result: golem::api::host::ForkResult) -> String {
     format!("{side}:{}", uuid_string(&details.forked_phantom_id))
 }
 
-/// An `agent-id` record as JSON. An app that resolved an agent needs both
-/// halves: the component id (which the agent id string does not carry) and the
-/// agent id string itself.
-fn agent_id_json(id: &golem::core::types::AgentId) -> String {
-    serde_json::json!({
-        "componentId": uuid_string(&id.component_id.uuid),
-        "agentId": id.agent_id,
-    })
-    .to_string()
-}
-
 /// What the resolve effects report for a reference that named no component: the
 /// app asked for something that does not exist, which is its mistake to see —
 /// the way a malformed agent id is for `parseAgentId!`.
@@ -1982,7 +1974,7 @@ pub unsafe extern "C" fn rocFxResolveAgentId(
 ) -> RocResult<RocStr, RocStr> {
     let reference = component_reference.as_str();
     match golem::api::host::resolve_agent_id(reference, agent_name.as_str()) {
-        Some(agent_id) => RocResult::ok(RocStr::from_str(&agent_id_json(&agent_id))),
+        Some(agent_id) => RocResult::ok(RocStr::from_str(&permissions_json::agent_id_json(&agent_id))),
         None => RocResult::err(RocStr::from_str(&unresolved_component_text(reference))),
     }
 }
@@ -2991,14 +2983,416 @@ pub unsafe extern "C" fn rocFxDbRollback(handle: u32) -> RocResult<(), RocStr> {
     unit_result(db_finish_transaction(handle, false))
 }
 
+// Permission effects (`golem:permissions`) and the principal
+//
+// Golem decides what an agent may do with permission cards, and every one of
+// the six `golem:permissions` interfaces is a synchronous host call, so the
+// effects below call them directly (no `block_on`, no streams) — which is what
+// lets the ABI harness drive them against stubs. What the runtime *enforces*
+// is unchanged by this platform: the effects expose the wallet an app already
+// holds, the inspection/derivation/installation/revocation operations the SDKs
+// expose, and the kernel's own introspection. An operation the cards do not
+// allow comes back as the interface's `permission-error`, rendered as text the
+// way the database errors are (`not-permitted: …`).
+//
+// A `permission-card` is a host-side capability; the app carries it as a `U32`
+// handle in the same kind of table the WebSocket, quota and database handles
+// use. Handles are positional (the first card of an instance is 1) and never
+// forgeable: a number that was never allocated is an error, not an authority.
+// Ownership is explicit, because the WIT makes it so:
+//
+// * `id` / `parents` / `expires-at` / `inspect` / `derive` / `derive-scope`
+//   **borrow** the handle — the card stays in the table and can be used again,
+// * `revoke` and `install` **consume** it (the interfaces take `own`), so a
+//   second use of the same handle is `unknown permission card handle N`,
+// * `release` gives a card up without consuming it as authority: the card is
+//   dropped, which releases the runtime's own entry, and the handle is freed
+//   for reuse.
+//
+// Roc holds plain numbers, so the host cannot see when an app is done with a
+// card. What that means in practice: a handle that is neither consumed nor
+// released stays in the instance's table (and the card with it) for as long as
+// the instance lives, so an app that lists the wallet or derives cards in a
+// loop should release the handles it does not keep.
+
+thread_local! {
+    /// The permission cards this instance holds, in the order they were handed
+    /// out: handle N is the entry at index N-1.
+    static PERMISSION_CARDS: RefCell<Vec<Option<golem::core::types::PermissionCard>>> =
+        const { RefCell::new(Vec::new()) };
+    /// The principal the runtime handed the current invocation, as JSON.
+    /// Golem passes it to `initialize` and `invoke`, and it is the same for
+    /// every call in the invocation, so the host stashes the rendering when
+    /// the invocation starts. A tool invocation is not given one — the tool
+    /// ABI carries no principal — so the stash is empty there.
+    static INVOCATION_PRINCIPAL: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Stashes the principal the runtime handed this invocation, so `getPrincipal!`
+/// can answer with it.
+fn remember_principal(principal: &Principal) {
+    let rendered = permissions_json::principal_to_json(principal);
+    INVOCATION_PRINCIPAL.with(|slot| {
+        *slot.borrow_mut() = Some(rendered);
+    });
+}
+
+fn unknown_permission_handle(handle: u32) -> String {
+    format!("unknown permission card handle {handle}")
+}
+
+/// The card behind `handle`, for the effects that borrow it. The borrow is
+/// released when the call returns, so the card can be used again.
+fn permission_card_at<'a>(
+    slots: &'a [Option<golem::core::types::PermissionCard>],
+    handle: u32,
+) -> Option<&'a golem::core::types::PermissionCard> {
+    if handle == 0 {
+        return None;
+    }
+    slots.get((handle - 1) as usize).and_then(|slot| slot.as_ref())
+}
+
+/// Runs one permission call against the card behind `handle`: `Err` for a
+/// handle that was never allocated (or was already consumed), and the
+/// interface's own `permission-error` rendered as text.
+fn with_permission_card<T>(
+    handle: u32,
+    f: impl FnOnce(
+        &golem::core::types::PermissionCard,
+    ) -> Result<T, golem::permissions::types::PermissionError>,
+) -> Result<T, String> {
+    match handle_with(&PERMISSION_CARDS, handle, f) {
+        Some(Ok(value)) => Ok(value),
+        Some(Err(error)) => Err(permissions_json::permission_error_text(&error)),
+        None => Err(unknown_permission_handle(handle)),
+    }
+}
+
+/// The card inside a persistent derivation's answer, whichever kind it is
+/// labelled as.
+fn derived_card(
+    card: golem::permissions::types::PersistentCard,
+) -> golem::core::types::PermissionCard {
+    match card {
+        golem::permissions::types::PersistentCard::Concrete(card) => card,
+        golem::permissions::types::PersistentCard::Template(card) => card,
+    }
+}
+
+/// The `Try(U32, Str)` of the effects that hand back a card handle: the card
+/// goes into the instance's table and the app gets its number.
+fn card_handle_result(
+    result: Result<golem::core::types::PermissionCard, String>,
+) -> RocResult<u32, RocStr> {
+    match result {
+        Ok(card) => RocResult::ok(handle_store(&PERMISSION_CARDS, card)),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+/// The principal the runtime handed this invocation, as JSON: `{"tag":"…"}`
+/// with the WIT record's fields in camelCase (`{"tag":"golem-user",
+/// "val":{"accountId":…}}`, `{"tag":"agent","val":{"componentId":…,
+/// "agentId":…}}`, `{"tag":"oidc","val":{…}}`), or the JSON literal `null`
+/// when it handed none (a tool invocation).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxGetPrincipal() -> RocStr {
+    let principal = INVOCATION_PRINCIPAL.with(|slot| slot.borrow().clone());
+    RocStr::from_str(principal.as_deref().unwrap_or("null"))
+}
+
+/// `permissionsWallet!`: every card installed in the caller's wallet, as a JSON
+/// array of `{"tag":"concrete"|"template"|"scope","handle":N}` — the
+/// invocation's scope card included when the runtime lent one. Each entry's
+/// handle is a card this instance now holds, so it is the app's to use and to
+/// release.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionsWallet() -> RocResult<RocStr, RocStr> {
+    let cards = golem::permissions::wallet::self_wallet();
+    let mut entries: Vec<String> = Vec::with_capacity(cards.len());
+
+    for card in cards {
+        let (tag, handle) = match card {
+            golem::permissions::types::WalletCard::Concrete(card) => {
+                ("concrete", handle_store(&PERMISSION_CARDS, card))
+            }
+            golem::permissions::types::WalletCard::Template(card) => {
+                ("template", handle_store(&PERMISSION_CARDS, card))
+            }
+            golem::permissions::types::WalletCard::Scope(card) => {
+                ("scope", handle_store(&PERMISSION_CARDS, card))
+            }
+        };
+        entries.push(permissions_json::wallet_card_json(tag, handle));
+    }
+
+    RocResult::ok(RocStr::from_str(&format!("[{}]", entries.join(","))))
+}
+
+/// `permissionsWalletVersion!`: the caller's wallet version, as
+/// `{"walletIdHash":[<bytes>],"generation":N}`. It changes whenever the set
+/// of installed cards does.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionsWalletVersion() -> RocResult<RocStr, RocStr> {
+    RocResult::ok(RocStr::from_str(&permissions_json::wallet_version_json(
+        &golem::permissions::wallet::self_version(),
+    )))
+}
+
+/// `permissionId!`: the card's stable identifier, as a JSON string (its
+/// canonical UUID text).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionId(handle: u32) -> RocResult<RocStr, RocStr> {
+    text_result(with_permission_card(handle, |card| {
+        Ok(permissions_json::card_id_json(
+            &golem::permissions::types::id(card),
+        ))
+    }))
+}
+
+/// `permissionParents!`: the card's parents in the derivation DAG, as a JSON
+/// array of UUID strings (`[]` for a card that was derived from nothing).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionParents(handle: u32) -> RocResult<RocStr, RocStr> {
+    text_result(with_permission_card(handle, |card| {
+        Ok(permissions_json::card_ids_json(
+            &golem::permissions::types::parents(card),
+        ))
+    }))
+}
+
+/// `permissionExpiresAt!`: when the card stops being valid, as
+/// `{"seconds":…,"nanoseconds":…}` — or `null` for a card that never expires
+/// (and for a scope card, the earliest expiry of its root cards).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionExpiresAt(handle: u32) -> RocResult<RocStr, RocStr> {
+    text_result(with_permission_card(handle, |card| {
+        let expires_at = golem::permissions::types::expires_at(card);
+        Ok(permissions_json::timestamp_json(expires_at.as_ref()))
+    }))
+}
+
+/// `permissionInspect!`: the card's whole grant lattice, as a `card-view` JSON
+/// object (`{"lowerPositive":[…],"lowerNegative":[…],"upperPositive":[…],
+/// "upperNegative":[…]}`).
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionInspect(handle: u32) -> RocResult<RocStr, RocStr> {
+    text_result(with_permission_card(handle, |card| {
+        golem::permissions::inspect::inspect_card(card)
+            .map(|view| permissions_json::CardViewJson::to_json(&view))
+    }))
+}
+
+/// `permissionDerive!`: derives a child card from the card behind `handle`,
+/// narrowing its lattice. The bounds JSON says which lower- and upper-positive
+/// grants to retain, which negatives to add, and — as `"lifespan":
+/// {"iso8601":"P30D"}`, or `null`/absent — how long the child lives. `Ok` is
+/// the handle of the derived card, which is the app's to install, pass on,
+/// revoke or release. The parent is only borrowed.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionDerive(
+    handle: u32,
+    bounds_json: RocStr,
+) -> RocResult<u32, RocStr> {
+    let bounds = match permissions_json::bounds_from_json(bounds_json.as_str()) {
+        Ok(bounds) => bounds,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+    let grants = bounds.grants();
+    let lifespan = bounds.lifespan();
+
+    card_handle_result(
+        with_permission_card(handle, |card| {
+            golem::permissions::derive::derive(
+                card,
+                &grants.lower_positive,
+                &grants.lower_negative,
+                &grants.upper_positive,
+                &grants.upper_negative,
+                lifespan.as_ref(),
+            )
+        })
+        .map(derived_card),
+    )
+}
+
+/// `permissionDeriveFromWallet!`: the same, derived from the caller's own
+/// wallet instead of one named parent card. A request the wallet does not cover
+/// comes back as the interface's `permission-error`.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionDeriveFromWallet(
+    bounds_json: RocStr,
+) -> RocResult<u32, RocStr> {
+    let bounds = match permissions_json::bounds_from_json(bounds_json.as_str()) {
+        Ok(bounds) => bounds,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+    let grants = bounds.grants();
+    let lifespan = bounds.lifespan();
+
+    card_handle_result(
+        match golem::permissions::derive::derive_from_wallet(
+            &grants.lower_positive,
+            &grants.lower_negative,
+            &grants.upper_positive,
+            &grants.upper_negative,
+            lifespan.as_ref(),
+        ) {
+            Ok(card) => Ok(derived_card(card)),
+            Err(error) => Err(permissions_json::permission_error_text(&error)),
+        },
+    )
+}
+
+/// `permissionDeriveScope!`: derives an invocation-local card from one or more
+/// cards the app already holds. The request JSON is a bounds object plus
+/// `"parents":[<handle>, …]`; it carries no lifespan, because the card it asks
+/// for lives exactly as long as the invocation that derived it. The parents are
+/// only borrowed, so they stay usable.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionDeriveScope(
+    request_json: RocStr,
+) -> RocResult<u32, RocStr> {
+    let request = match permissions_json::scope_request_from_json(request_json.as_str()) {
+        Ok(request) => request,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+    let grants = request.grants();
+
+    // The parents have to stay in the table while the call runs (it takes
+    // borrows of them), so they are looked up under one borrow and the derived
+    // card is stored after that borrow is released — a second `borrow_mut`
+    // inside would panic.
+    let derived = PERMISSION_CARDS.with(|slots| {
+        let slots = slots.borrow();
+        let mut parents: Vec<&golem::core::types::PermissionCard> =
+            Vec::with_capacity(request.parents.len());
+        for handle in &request.parents {
+            match permission_card_at(&slots, *handle) {
+                Some(card) => parents.push(card),
+                None => return Err(unknown_permission_handle(*handle)),
+            }
+        }
+
+        match golem::permissions::derive::derive_scope(
+            &parents,
+            &grants.lower_positive,
+            &grants.lower_negative,
+            &grants.upper_positive,
+            &grants.upper_negative,
+        ) {
+            Ok(card) => Ok(card),
+            Err(error) => Err(permissions_json::permission_error_text(&error)),
+        }
+    });
+
+    card_handle_result(derived)
+}
+
+/// `permissionInstall!`: installs the card behind `handle` onto `holder` (a
+/// JSON `{"tag":"agent","val":{"componentId":…,"agentId":…}}`, or an
+/// `account`/`app` one, which the runtime refuses — only agent targets are
+/// supported today). The card is consumed by the call, so the handle is spent
+/// whether or not the installation succeeded.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionInstall(
+    handle: u32,
+    holder_json: RocStr,
+) -> RocResult<(), RocStr> {
+    let holder = match permissions_json::holder_from_json(holder_json.as_str()) {
+        Ok(holder) => holder,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+
+    unit_result(match handle_take(&PERMISSION_CARDS, handle) {
+        Some(card) => match golem::permissions::wallet::install_card(card, &holder) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(permissions_json::permission_error_text(&error)),
+        },
+        None => Err(unknown_permission_handle(handle)),
+    })
+}
+
+/// `permissionRevoke!`: revokes the card behind `handle` and every card
+/// derived from it, consuming the handle. `Ok` is how many cards the
+/// revocation cut, the card itself included; a card that was already revoked
+/// comes back as the interface's `card-revoked`.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionRevoke(handle: u32) -> RocResult<u32, RocStr> {
+    let revoked = match handle_take(&PERMISSION_CARDS, handle) {
+        Some(card) => match golem::permissions::revoke::revoke_card(card) {
+            Ok(count) => Ok(count),
+            Err(error) => Err(permissions_json::permission_error_text(&error)),
+        },
+        None => Err(unknown_permission_handle(handle)),
+    };
+
+    match revoked {
+        Ok(count) => RocResult::ok(count),
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+/// `permissionRelease!`: gives a card handle up. The card is dropped — which is
+/// what releases the runtime's own entry for it — and the handle is freed for
+/// reuse. This is the only way an app can tell the host it is done with a card
+/// it is not consuming as authority; a handle that was never allocated, or was
+/// already consumed by `permissionRevoke!` / `permissionInstall!` / an earlier
+/// `permissionRelease!`, is reported.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionRelease(handle: u32) -> RocResult<(), RocStr> {
+    match handle_take(&PERMISSION_CARDS, handle) {
+        Some(card) => {
+            drop(card);
+            RocResult::ok(())
+        }
+        None => RocResult::err(RocStr::from_str(&unknown_permission_handle(handle))),
+    }
+}
+
+/// `permissionListModules!`: every resource class the permission kernel knows
+/// about, as a JSON array of `{"className":…,"verbs":[…]}`, in the order the
+/// kernel listed them. The interface declares no error channel, so the `Err`
+/// half of this effect's `Try` is never used: a host-side failure traps the
+/// invocation instead of reaching the app.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionListModules() -> RocResult<RocStr, RocStr> {
+    RocResult::ok(RocStr::from_str(&permissions_json::kernel_modules_json(
+        &golem::permissions::kernel_introspection::list_modules(),
+    )))
+}
+
+/// `permissionValidateGrant!`: checks one grant (a `pattern-grant` JSON object)
+/// against the kernel's schema — its class, owner, recipient, verb and
+/// resource-id pattern. `Ok(())` means the kernel accepts it; anything it
+/// rejects comes back as the interface's `permission-error`.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxPermissionValidateGrant(
+    grant_json: RocStr,
+) -> RocResult<(), RocStr> {
+    let grant = match permissions_json::grant_from_json(grant_json.as_str()) {
+        Ok(grant) => grant,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+
+    unit_result(
+        match golem::permissions::kernel_introspection::validate_grant(&grant) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(permissions_json::permission_error_text(&error)),
+        },
+    )
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
     async fn initialize(
         _agent_type: String,
         input: SchemaValueTree,
-        _principal: Principal,
+        principal: Principal,
     ) -> Result<(), AgentError> {
+        remember_principal(&principal);
         let config = extract_input_string(&input);
         let roc_config = RocStr::from_str(&config);
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
@@ -3021,8 +3415,9 @@ impl Guest for GolemAgentHost {
     async fn invoke(
         method_name: String,
         input: SchemaValueTree,
-        _principal: Principal,
+        principal: Principal,
     ) -> Result<Option<SchemaValueTree>, AgentError> {
+        remember_principal(&principal);
         let state_str = get_current_state();
         let input_str = extract_input_string(&input);
 
@@ -4162,7 +4557,7 @@ mod tests {
         };
 
         let json: serde_json::Value =
-            serde_json::from_str(&agent_id_json(&id)).expect("the agent id must be valid JSON");
+            serde_json::from_str(&permissions_json::agent_id_json(&id)).expect("the agent id must be valid JSON");
         assert_eq!(json["componentId"], "01020304-0506-0708-090a-0b0c0d0e0f10");
         assert_eq!(json["agentId"], "counter-agent(\"c-1\")");
     }
@@ -4615,6 +5010,152 @@ mod tests {
                 Ok(_) => panic!("an unknown handle must be reported, not answered"),
             };
             assert_eq!(error.as_str(), "unknown database handle 9999");
+        }
+    }
+
+    /// `getPrincipal!` answers with the principal the runtime handed the
+    /// invocation, rendered as JSON; before one is handed over (a tool
+    /// invocation) it answers the literal `null` rather than inventing an
+    /// identity.
+    #[test]
+    fn test_principal_effect() {
+        unsafe {
+            assert_eq!(crate::rocFxGetPrincipal().to_string(), "null");
+
+            remember_principal(&Principal::Anonymous);
+            assert_eq!(crate::rocFxGetPrincipal().to_string(), r#"{"tag":"anonymous"}"#);
+
+            remember_principal(&Principal::GolemUser(
+                golem::agent::common::GolemUserPrincipal {
+                    account_id: golem::core::types::AccountId {
+                        uuid: golem::core::types::Uuid {
+                            high_bits: 0x0102_0304_0506_0708,
+                            low_bits: 0x090a_0b0c_0d0e_0f10,
+                        },
+                    },
+                },
+            ));
+            assert_eq!(
+                crate::rocFxGetPrincipal().to_string(),
+                r#"{"tag":"golem-user","val":{"accountId":"01020304-0506-0708-090a-0b0c0d0e0f10"}}"#
+            );
+
+            // The next invocation's principal replaces the previous one: the
+            // stash is not a history.
+            remember_principal(&Principal::Agent(
+                golem::agent::common::AgentPrincipal {
+                    agent_id: golem::core::types::AgentId {
+                        component_id: golem::core::types::ComponentId {
+                            uuid: golem::core::types::Uuid {
+                                high_bits: 0x0102_0304_0506_0708,
+                                low_bits: 0x090a_0b0c_0d0e_0f10,
+                            },
+                        },
+                        agent_id: String::from("effects-agent(\"e2e\")"),
+                    },
+                },
+            ));
+            let agent = crate::rocFxGetPrincipal().to_string();
+            assert_eq!(
+                agent,
+                r#"{"tag":"agent","val":{"agentId":"effects-agent(\"e2e\")","componentId":"01020304-0506-0708-090a-0b0c0d0e0f10"}}"#
+            );
+            assert!(serde_json::from_str::<serde_json::Value>(&agent).is_ok());
+        }
+    }
+
+    /// A permission card handle this instance never handed out is reported
+    /// instead of reaching the host APIs (which are stubbed outside wasm, so a
+    /// call would panic here the way it would fail on a real server). The
+    /// consuming effects report it the same way as the borrowing ones, and a
+    /// handle is never forgeable into authority.
+    #[test]
+    fn test_permission_unknown_handles() {
+        unsafe {
+            let bounds = || {
+                RocStr::from_str(
+                    r#"{"lowerPositive":[],"lowerNegative":[],"upperPositive":[],"upperNegative":[]}"#,
+                )
+            };
+            let scope = || {
+                RocStr::from_str(
+                    r#"{"parents":[9999],"lowerPositive":[],"lowerNegative":[],"upperPositive":[],"upperNegative":[]}"#,
+                )
+            };
+            let holder = || RocStr::from_str(r#"{"tag":"account","val":"01020304-0506-0708-090a-0b0c0d0e0f10"}"#);
+
+            fn expect_unknown<T>(label: &str, result: Result<T, RocStr>) {
+                match result {
+                    Err(error) => assert_eq!(
+                        error.as_str(),
+                        "unknown permission card handle 9999",
+                        "the {label} effect reported something else"
+                    ),
+                    Ok(_) => panic!("the {label} effect answered an unknown handle"),
+                }
+            }
+
+            expect_unknown("id", crate::rocFxPermissionId(9999).into_result());
+            expect_unknown("parents", crate::rocFxPermissionParents(9999).into_result());
+            expect_unknown(
+                "expires-at",
+                crate::rocFxPermissionExpiresAt(9999).into_result(),
+            );
+            expect_unknown("inspect", crate::rocFxPermissionInspect(9999).into_result());
+            expect_unknown(
+                "derive",
+                crate::rocFxPermissionDerive(9999, bounds()).into_result(),
+            );
+            expect_unknown(
+                "derive-scope",
+                crate::rocFxPermissionDeriveScope(scope()).into_result(),
+            );
+            expect_unknown(
+                "install",
+                crate::rocFxPermissionInstall(9999, holder()).into_result(),
+            );
+            expect_unknown("revoke", crate::rocFxPermissionRevoke(9999).into_result());
+            expect_unknown("release", crate::rocFxPermissionRelease(9999).into_result());
+
+            // A request the text cannot be read as is reported before any
+            // handle is looked up, and `0` is not a handle either.
+            let error = match crate::rocFxPermissionDerive(9999, RocStr::from_str("not json"))
+                .into_result()
+            {
+                Err(error) => error,
+                Ok(_) => panic!("a malformed bounds text must be reported"),
+            };
+            assert!(
+                error.as_str().starts_with("invalid permission bounds JSON"),
+                "unexpected error: {}",
+                error.as_str()
+            );
+            assert!(crate::rocFxPermissionInspect(0).is_err());
+
+            // The kernel's schema check reads the grant first: a malformed one
+            // is reported without reaching the host.
+            let error = match crate::rocFxPermissionValidateGrant(RocStr::from_str(
+                r#"{"class":"filesystem","owner":"?agent","recipient":"?agent","verb":"read"}"#,
+            ))
+            .into_result()
+            {
+                Err(error) => error,
+                Ok(()) => panic!("a grant without a resource id must be reported"),
+            };
+            assert!(
+                error.as_str().starts_with("invalid permission grant JSON"),
+                "unexpected error: {}",
+                error.as_str()
+            );
+
+            // The grant the malformed one was missing parses, so the text shape
+            // is what is checked here and not the kernel.
+            let parsed = permissions_json::grant_from_json(
+                r#"{"class":"filesystem","owner":"?agent","recipient":"?agent","verb":"read","resourceId":"/data/**"}"#,
+            )
+            .expect("a complete grant");
+            assert_eq!(parsed.verb, "read");
+            assert_eq!(parsed.resource_id, "/data/**");
         }
     }
 }

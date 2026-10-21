@@ -22,6 +22,7 @@ import pf.Golem exposing [
 	fileExists!,
 	fileSize!,
 	getConfig!,
+	getPrincipal!,
 	getRetryPolicies!,
 	kvDelete!,
 	kvExists!,
@@ -32,6 +33,20 @@ import pf.Golem exposing [
 	newQuotaToken!,
 	nextRetryDelay!,
 	oplogCommit!,
+	permissionDerive!,
+	permissionDeriveFromWallet!,
+	permissionDeriveScope!,
+	permissionExpiresAt!,
+	permissionId!,
+	permissionInspect!,
+	permissionInstall!,
+	permissionListModules!,
+	permissionParents!,
+	permissionRelease!,
+	permissionRevoke!,
+	permissionValidateGrant!,
+	permissionsWallet!,
+	permissionsWalletVersion!,
 	quotaCommit!,
 	quotaReserve!,
 	readFile!,
@@ -39,6 +54,7 @@ import pf.Golem exposing [
 	resolveComponentId!,
 	resolveRetryPolicy!,
 	trap!,
+	workerId!,
 	writeFile!,
 ]
 
@@ -204,10 +220,22 @@ agent = defineAgent({
 					replies: [dbCommand!(command.rest)],
 				}
 
+			"permission" =>
+			# permission <verb> [args]: the permission-card surface
+			# (`golem:permissions`) and the principal. Cards are host-side
+			# capabilities the app carries as `U32` handles: `wallet` hands out one
+			# handle per installed card, `inspect` / `id` / `parents` / `expires`
+			# borrow a handle, `revoke` and `install` consume it, and `release`
+			# gives it up. The verbs and their arguments are in the usage reply.
+				{
+					state,
+					replies: [permissionCommand!(command.rest)],
+				}
+
 			_ =>
 				{
 					state,
-					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>, kv <bucket> <key> <value>, blob <container> <object> <value>, fs <verb> <path> [text], db <verb> [args]"],
+					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>, kv <bucket> <key> <value>, blob <container> <object> <value>, fs <verb> <path> [text], db <verb> [args], permission <verb> [args]"],
 				}
 		}
 	},
@@ -682,4 +710,361 @@ stateJsonOf = |decision|
 			}
 
 		Err(_) => "[]"
+	}
+
+## The `permission <verb> [args]` commands run. Each verb reports the effect's
+## own answer in the one reply, so a check sees exactly how far it got: a JSON
+## answer comes back as its JSON, `revoke` as the number of cards it cut, and a
+## refusal as the platform's `<case>: <message>` text (`not-permitted: …`,
+## `lower-bound-too-broad: …`). The handle-taking verbs are named in the usage
+## reply, and a handle this instance never handed out — or one that was already
+## consumed — is reported the same way as any other refusal.
+permissionCommand! : Str => Str
+permissionCommand! = |args| {
+	verbToken = splitToken(args)
+	{ first: verb, second: handleText, rest: afterHandle } = splitThree(args)
+	afterVerb = verbToken.rest
+
+	match verb {
+		"principal" => "permission principal: ${getPrincipal!({})}"
+
+		"wallet" =>
+			describePermission!(permissionsWallet!({}), "permission wallet", "permission wallet failed")
+
+		"version" =>
+			describePermission!(permissionsWalletVersion!({}), "permission version", "permission version failed")
+
+		"modules" =>
+			describePermission!(permissionListModules!({}), "permission modules", "permission modules failed")
+
+		"id" =>
+			withHandle!(handleText, "Usage: permission id <handle>", |handle|
+				describePermission!(permissionId!(handle), "permission id", "permission id failed"))
+
+		"parents" =>
+			withHandle!(handleText, "Usage: permission parents <handle>", |handle|
+				describePermission!(permissionParents!(handle), "permission parents", "permission parents failed"))
+
+		"expires" =>
+			withHandle!(handleText, "Usage: permission expires <handle>", |handle|
+				describePermission!(permissionExpiresAt!(handle), "permission expires", "permission expires failed"))
+
+		"inspect" =>
+			withHandle!(handleText, "Usage: permission inspect <handle>", |handle|
+				describePermission!(permissionInspect!(handle), "permission inspect", "permission inspect failed"))
+
+		"derive" =>
+			withHandle!(handleText, "Usage: permission derive <handle> <bounds-json>", |handle|
+				describeDerived!(permissionDerive!(handle, afterHandle), "permission derive"))
+
+		"derive-from-wallet" =>
+			describeDerived!(permissionDeriveFromWallet!(afterVerb), "permission derive-from-wallet")
+
+		"derive-scope" =>
+			describeDerived!(permissionDeriveScope!(afterVerb), "permission derive-scope")
+
+		"derive-narrow" =>
+			withHandle!(handleText, "Usage: permission derive-narrow <handle>", |handle|
+				permissionNarrowing!(handle))
+
+		"derive-broad" =>
+			withHandle!(handleText, "Usage: permission derive-broad <handle>", |handle|
+				permissionOverBroad!(handle))
+
+		"derive-scope-narrow" =>
+			withHandle!(handleText, "Usage: permission derive-scope-narrow <handle>", |handle|
+				permissionScopeNarrowing!(handle))
+
+		"install" =>
+			withHandle!(handleText, "Usage: permission install <handle> <holder-json>", |handle|
+				describeInstall!(permissionInstall!(handle, afterHandle)))
+
+		"install-self" =>
+			withHandle!(handleText, "Usage: permission install-self <handle>", |handle|
+				permissionInstallSelf!(handle))
+
+		"install-account" =>
+			withHandle!(handleText, "Usage: permission install-account <handle>", |handle|
+				permissionInstallAccount!(handle))
+
+		"roundtrip" =>
+			permissionRoundTrip!({})
+
+		"revoke" =>
+			withHandle!(handleText, "Usage: permission revoke <handle>", |handle|
+				describeRevoke!(permissionRevoke!(handle)))
+
+		"release" =>
+			withHandle!(handleText, "Usage: permission release <handle>", |handle|
+				describeRelease!(permissionRelease!(handle)))
+
+		"validate" =>
+			describeValidated!(permissionValidateGrant!(afterVerb))
+
+		_ =>
+			"Usage: permission principal | wallet | version | modules | roundtrip | validate <grant-json> | derive-from-wallet <bounds-json> | derive-scope <request-json> | derive-narrow <handle> | derive-broad <handle> | derive-scope-narrow <handle> | id|parents|expires|inspect|revoke|release <handle> | derive <handle> <bounds-json> | install <handle> <holder-json> | install-self <handle> | install-account <handle>"
+	}
+}
+
+## Runs the body of a `permission` verb that takes a card handle, or answers
+## with the verb's usage text when the argument is not a number (which is a
+## typo in the command, not a card the host could report on).
+withHandle! : Str, Str, (U32 => Str) => Str
+withHandle! = |handleText, usage, body|
+	match U32.from_str(handleText) {
+		Ok(handle) => body(handle)
+		Err(_) => usage
+	}
+
+## A `permission` verb's JSON answer, prefixed so the reply says which verb it
+## came from.
+describePermission! : Try(Str, Str), Str, Str => Str
+describePermission! = |answer, prefix, failurePrefix|
+	match answer {
+		Ok(text) => "${prefix}: ${text}"
+		Err(err) => "${failurePrefix}: ${err}"
+	}
+
+## A derivation's answer: the handle of the card it made. Deriving does not
+## install anything — the card is the app's to use, pass on or release.
+describeDerived! : Try(U32, Str), Str => Str
+describeDerived! = |derived, prefix|
+	match derived {
+		Ok(handle) => "${prefix}: handle ${U32.to_str(handle)}"
+		Err(err) => "${prefix} failed: ${err}"
+	}
+
+describeInstall! : Try({}, Str) => Str
+describeInstall! = |installed|
+	match installed {
+		Ok(_) => "permission install: installed"
+		Err(err) => "permission install failed: ${err}"
+	}
+
+describeRevoke! : Try(U32, Str) => Str
+describeRevoke! = |revoked|
+	match revoked {
+		Ok(count) => "permission revoke: revoked ${U32.to_str(count)} card(s)"
+		Err(err) => "permission revoke failed: ${err}"
+	}
+
+describeRelease! : Try({}, Str) => Str
+describeRelease! = |released|
+	match released {
+		Ok(_) => "permission release: released"
+		Err(err) => "permission release failed: ${err}"
+	}
+
+describeValidated! : Try({}, Str) => Str
+describeValidated! = |validated|
+	match validated {
+		Ok(_) => "permission validate: accepted"
+		Err(err) => "permission validate failed: ${err}"
+	}
+
+## The recipient the card's own grants name: the concrete holder path, taken out
+## of the card's inspection (`"recipient":"…"`). A derivation request has to name
+## a recipient, and the only one this agent can know is the one its own card
+## carries — so the check commands below read it back instead of hard-coding a
+## path that depends on the agent id.
+firstRecipientOf : Str -> Str
+firstRecipientOf = |viewJson|
+	match Str.split_first(viewJson, "\"recipient\":\"") {
+		Ok({ before: _, after }) =>
+			match Str.split_first(after, "\"") {
+				Ok({ before, after: _ }) => before
+				Err(_) => ""
+			}
+
+		Err(_) => ""
+	}
+
+## The bounds object a narrowing derivation sends: one `network` grant narrowed
+## to a single destination, addressed to whoever the parent card is addressed to.
+## The card allows any destination, so this is strictly narrower than its own
+## lattice — the derivation the runtime accepts.
+narrowingBounds : Str -> Str
+narrowingBounds = |recipient|
+	"{\"lowerPositive\":[{\"class\":\"network\",\"owner\":\"\",\"recipient\":\"${recipient}\",\"verb\":\"connect\",\"resourceId\":\"example.test:443\"}],\"lowerNegative\":[],\"upperPositive\":[],\"upperNegative\":[],\"lifespan\":{\"iso8601\":\"PT1H\"}}"
+
+## The bounds object an over-broad derivation sends: an `account` grant, which no
+## card of this agent's default lattice covers at all. The runtime refuses it
+## with `lower-bound-too-broad`, which is the enforcement check — nothing here is
+## stubbed.
+overBroadBounds : Str
+overBroadBounds = "{\"lowerPositive\":[{\"class\":\"account\",\"owner\":\"alice@example.com\",\"recipient\":\"alice@example.com\",\"verb\":\"view\",\"resourceId\":\"\"}],\"lowerNegative\":[],\"upperPositive\":[],\"upperNegative\":[],\"lifespan\":{\"iso8601\":\"PT1H\"}}"
+
+## A narrowing derivation built from the card's own inspection.
+permissionNarrowing! : U32 => Str
+permissionNarrowing! = |handle|
+	match permissionInspect!(handle) {
+		Err(err) => "permission narrowing failed: ${err}"
+
+		Ok(view) =>
+			describeDerived!(permissionDerive!(handle, narrowingBounds(firstRecipientOf(view))), "permission narrowing")
+	}
+
+## A derivation the runtime refuses: an `account` grant, which the card's lattice
+## cannot cover.
+permissionOverBroad! : U32 => Str
+permissionOverBroad! = |handle|
+	describeDerived!(permissionDerive!(handle, overBroadBounds), "permission over-broad")
+
+## An invocation-local card derived from the wallet card: the same narrowed
+## network grant, but as a `derive-scope` request (which takes concrete grants
+## only, so the card's own recipient is what makes it concrete).
+permissionScopeNarrowing! : U32 => Str
+permissionScopeNarrowing! = |handle|
+	match permissionInspect!(handle) {
+		Err(err) => "permission scope failed: ${err}"
+
+		Ok(view) =>
+			describeDerived!(
+				permissionDeriveScope!(
+					"{\"parents\":[${U32.to_str(handle)}],\"lowerPositive\":[{\"class\":\"network\",\"owner\":\"\",\"recipient\":\"${firstRecipientOf(view)}\",\"verb\":\"connect\",\"resourceId\":\"example.test:443\"}],\"lowerNegative\":[],\"upperPositive\":[],\"upperNegative\":[]}",
+				),
+				"permission scope",
+			)
+	}
+
+## This agent's own holder: the component id it resolves from its own component
+## and the agent id it reports as its worker id — the `{"tag":"agent","val":…}`
+## shape `getPrincipal!` and `resolveAgentId!` print.
+selfHolder! : {} => Str
+selfHolder! = |_| {
+	componentId = match resolveComponentId!("roc-golem:counter") {
+		Ok(id) => id
+		Err(_) => "unknown"
+	}
+	"{\"tag\":\"agent\",\"val\":{\"componentId\":\"${componentId}\",\"agentId\":${jsonString(workerId!({}))}}}"
+}
+
+## Installs a derived card back onto this agent, the one target kind the runtime
+## supports.
+permissionInstallSelf! : U32 => Str
+permissionInstallSelf! = |handle|
+	describeInstall!(permissionInstall!(handle, selfHolder!({})))
+
+## The installation the runtime refuses before looking at anything else: only
+## agent targets are supported, so an `account` holder is `not-permitted`.
+permissionInstallAccount! : U32 => Str
+permissionInstallAccount! = |handle| {
+	componentId = match resolveComponentId!("roc-golem:counter") {
+		Ok(id) => id
+		Err(_) => "unknown"
+	}
+	describeInstall!(permissionInstall!(handle, "{\"tag\":\"account\",\"val\":\"${componentId}\"}"))
+}
+
+## The whole permission surface in one invocation, every step's outcome in the
+## one reply, the way the store and database round trips report theirs. It lists
+## the wallet itself (so the handle is always the first card of a fresh
+## instance), then runs the sequence that matters for the rules this platform
+## adds on top of the interfaces: the borrowing effects leave a handle usable,
+## `revoke` spends a handle, a second revoke of the same handle is a clean error
+## rather than a trap, `release` gives a card up, and a derivation the card
+## cannot cover is the runtime's refusal. A scope card is inspected and released
+## but never revoked: it lives only for the invocation that derived it.
+permissionRoundTrip! : {} => Str
+permissionRoundTrip! = |_| {
+	walletReply = permissionsWallet!({})
+	handle = match walletReply {
+		Ok(cards) => firstHandleOf(cards)
+		Err(_) => 0
+	}
+
+	walletOutcome = match walletReply {
+		Ok(cards) => "wallet: ${U32.to_str(handle)} first, ${walletTagOf(cards)}"
+		Err(err) => "wallet failed: ${err}"
+	}
+	versionOutcome = describePermission!(permissionsWalletVersion!({}), "version", "version failed")
+	modulesOutcome = describePermission!(permissionListModules!({}), "modules", "modules failed")
+
+	idOutcome = describePermission!(permissionId!(handle), "id", "id failed")
+	parentsOutcome = describePermission!(permissionParents!(handle), "parents", "parents failed")
+	expiresOutcome = describePermission!(permissionExpiresAt!(handle), "expires", "expires failed")
+	inspectOutcome = describePermission!(permissionInspect!(handle), "inspect", "inspect failed")
+	narrowOutcome = permissionNarrowing!(handle)
+	broadOutcome = permissionOverBroad!(handle)
+	scopeOutcome = permissionScopeNarrowing!(handle)
+
+	revokeOutcome = describeRevoke!(permissionRevoke!(handleOfDerived!(narrowOutcome)))
+	revokeAgainOutcome = describeRevoke!(permissionRevoke!(handleOfDerived!(narrowOutcome)))
+	scopeReleaseOutcome = describeRelease!(permissionRelease!(handleOfDerived!(scopeOutcome)))
+	releaseOutcome = describeRelease!(permissionRelease!(handle))
+	releaseAgainOutcome = describeRelease!(permissionRelease!(handle))
+	unknownOutcome = describePermission!(permissionInspect!(handle), "unknown inspect", "unknown inspect failed")
+
+	validOutcome = describeValidated!(permissionValidateGrant!(validGrant))
+	invalidOutcome = describeValidated!(permissionValidateGrant!(invalidGrant))
+
+	"${walletOutcome} ${versionOutcome} ${modulesOutcome} ${idOutcome} ${parentsOutcome} ${expiresOutcome} ${inspectOutcome} ${narrowOutcome} ${broadOutcome} ${scopeOutcome} ${revokeOutcome} ${revokeAgainOutcome} ${scopeReleaseOutcome} ${releaseOutcome} ${releaseAgainOutcome} ${unknownOutcome} ${validOutcome} ${invalidOutcome}"
+}
+
+## The grant the kernel accepts: every part of it is concrete, which is what
+## `validate-grant` checks (a slot such as `?agent` is an `invalid-pattern`
+## there, because a slot only means something inside a card).
+validGrant : Str
+validGrant = "{\"class\":\"filesystem\",\"owner\":\"alice@example.com/shop/prod/cart-svc/CartAgent\",\"recipient\":\"alice@example.com/shop/prod/cart-svc/CartAgent\",\"verb\":\"read\",\"resourceId\":\"/data/**\"}"
+
+## The same with a class the kernel does not know.
+invalidGrant : Str
+invalidGrant = "{\"class\":\"nope\",\"owner\":\"alice@example.com/shop/prod/cart-svc/CartAgent\",\"recipient\":\"alice@example.com/shop/prod/cart-svc/CartAgent\",\"verb\":\"read\",\"resourceId\":\"/data/**\"}"
+
+## The first card handle a wallet listing named (`[{"handle":1,…}, …]`), or 0
+## when the listing named none — which every effect reports as an unknown handle.
+firstHandleOf : Str -> U32
+firstHandleOf = |cardsJson|
+	match Str.split_first(cardsJson, "\"handle\":") {
+		Ok({ before: _, after }) => handleNumber(after)
+		Err(_) => 0
+	}
+
+## The number at the start of `after`, which a wallet entry ends with a comma or
+## the closing brace (the field order is the encoder's, so both are read).
+handleNumber : Str -> U32
+handleNumber = |after|
+	match Str.split_first(after, ",") {
+		Ok({ before, after: _ }) => handleDigits(before)
+		Err(_) =>
+			match Str.split_first(after, "}") {
+				Ok({ before, after: _ }) => handleDigits(before)
+				Err(_) => 0
+			}
+	}
+
+handleDigits : Str -> U32
+handleDigits = |text|
+	match U32.from_str(text) {
+		Ok(handle) => handle
+		Err(_) => 0
+	}
+
+## The kind the first card of a wallet listing is labelled as (`concrete`,
+## `template` or `scope`).
+walletTagOf : Str -> Str
+walletTagOf = |cardsJson|
+	match Str.split_first(cardsJson, "\"tag\":\"") {
+		Ok({ before: _, after }) =>
+			match Str.split_first(after, "\"") {
+				Ok({ before, after: _ }) => before
+				Err(_) => "none"
+			}
+
+		Err(_) => "none"
+	}
+
+## The card handle a `permission <verb>` reply reported, or 0 when the step
+## failed — which the consuming effect then reports as an unknown handle, so a
+## failed derivation shows itself in the next step instead of hiding it.
+handleOfDerived! : Str => U32
+handleOfDerived! = |reply|
+	match Str.split_first(reply, ": handle ") {
+		Ok({ before: _, after }) =>
+			match U32.from_str(after) {
+				Ok(handle) => handle
+				Err(_) => 0
+			}
+
+		Err(_) => 0
 	}

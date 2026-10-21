@@ -181,6 +181,14 @@ check_true() { # check_true <label> <actual boolean-ish>
     fi
 }
 
+check_nospace() { # check_nospace <label> <expected substring> <actual>
+    # The same, for replies the CLI wraps: a wrap only ever adds whitespace (see
+    # the retry section), so both sides are compared with their whitespace
+    # removed. Use it wherever the expected text has spaces of its own — a
+    # message-style reply rather than JSON.
+    check "$1" "${2// /}" "${3// /}"
+}
+
 say "==> Invoking agents (agent ids carry the run id: $RUN_ID)"
 counter="counter-agent(\"$RUN_ID\")"
 
@@ -493,6 +501,126 @@ else
     check "db: the rolled-back row is not selectable" 'select2={"columns":[{"dbType":{"tag":"int4"}' "$db_roundtrip"
     check "db: the round trip dropped its table" 'drop=0' "$db_roundtrip"
 fi
+
+say "==> Permissions and the principal (golem:permissions)"
+# The counter's `permission` commands drive the whole surface, and every answer
+# here is the runtime's own: the agent's wallet, the card's lattice, a derivation
+# that narrows it, one the card cannot cover, a revocation, and an installation
+# the runtime only allows onto agents. A card is a host-side capability the app
+# carries as a `U32` handle, so the commands also show the handle rules the
+# platform adds on top of the interfaces (a borrow leaves a handle usable, a
+# revoke spends it, a release gives it up).
+#
+# Replies here are long and the CLI wraps them, and a wrap only ever adds
+# whitespace, so these checks compare space-free copies (`check_nospace`).
+perm_agent="counter-agent(\"$RUN_ID-perm\")"
+
+# What the runtime hands a method: a CLI invocation is the calling *user* (the
+# CLI's static token names an account), and an invocation from another agent is
+# that *agent* — which the effects agent's `principal-rpc` command shows by
+# calling the counter and reporting what the callee saw.
+perm_principal="$(invoke "$perm_agent" handle-message '"permission principal"')"
+check "permission: a CLI invocation is a user principal" '"tag":"golem-user"' \
+    "${perm_principal// /}"
+check_true "permission: the principal carries the caller's account id" \
+    "$([[ "${perm_principal// /}" =~ \"accountId\":\"[0-9a-f-]{36}\" ]] && echo true || echo false)"
+
+rpc_principal="$(invoke "$effects_caller" handle-message \
+    "$(message_arg "principal-rpc $perm_agent")")"
+check_nospace "permission: an RPC caller is an agent principal" '"tag":"agent"' "$rpc_principal"
+check_nospace "permission: the agent principal names the caller" \
+    '"agentId":"effects-agent(' "$rpc_principal"
+check_nospace "permission: and the caller's run id" "$RUN_ID" "$rpc_principal"
+
+# The wallet: the counter declares no `initialCard`, so the runtime gives it the
+# broad default card for the agent type — a template whose grants carry slots
+# (`?agent`, `?env`) — and `permission wallet` hands the app a handle for it.
+perm_wallet="$(invoke "$perm_agent" handle-message '"permission wallet"')"
+check_nospace "permission: the default card is in the wallet" '"tag":"template"' "$perm_wallet"
+check_nospace "permission: the wallet entry carries a card handle" '"handle":1' "$perm_wallet"
+check_nospace "permission: the wallet version is a hash and a generation" '"walletIdHash":[' \
+    "$(invoke "$perm_agent" handle-message '"permission version"')"
+
+# The card itself: its lattice, its id, its parent in the derivation DAG and its
+# expiry. The default card grants the agent's own filesystem and its environment,
+# which is what `inspect` shows.
+perm_inspect="$(invoke "$perm_agent" handle-message '"permission inspect 1"')"
+check_nospace "permission: inspecting a card shows its grants" '"lowerPositive":[' "$perm_inspect"
+check_nospace "permission: the card grants the agent's own filesystem" \
+    '"class":"filesystem"' "$perm_inspect"
+perm_id="$(invoke "$perm_agent" handle-message '"permission id 1"')"
+check_true "permission: a card has a UUID id" \
+    "$([[ "${perm_id// /}" =~ [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12} ]] && echo true || echo false)"
+check_nospace "permission: the card names its parent" 'parents:["0' \
+    "$(invoke "$perm_agent" handle-message '"permission parents 1"')"
+check "permission: a card with no bounded lifespan never expires" "permission expires: null" \
+    "$(invoke "$perm_agent" handle-message '"permission expires 1"')"
+
+# The kernel's own schema: the classes and verbs a grant may name, and the check
+# of one concrete grant. A slot (`?agent`) is an `invalid-pattern` there — a slot
+# only means something inside a card — so the valid grant is fully concrete.
+perm_modules="$(invoke "$perm_agent" handle-message '"permission modules"')"
+check_nospace "permission: the kernel lists its resource classes" \
+    '"className":"filesystem"' "$perm_modules"
+check_nospace "permission: and the verbs of a class" \
+    '"verbs":["read","write","list","stat","delete"]' "$perm_modules"
+perm_grant='{"class":"filesystem","owner":"alice@example.com/shop/prod/cart-svc/CartAgent","recipient":"alice@example.com/shop/prod/cart-svc/CartAgent","verb":"read","resourceId":"/data/**"}'
+check "permission: the kernel accepts a concrete grant" "permission validate: accepted" \
+    "$(invoke "$perm_agent" handle-message "$(message_arg "permission validate $perm_grant")")"
+perm_unknown_grant="${perm_grant/\"class\":\"filesystem\"/\"class\":\"nope\"}"
+check "permission: a class the kernel does not know is reported" \
+    "unknown-resource-class: nope" \
+    "$(invoke "$perm_agent" handle-message "$(message_arg "permission validate $perm_unknown_grant")")"
+
+# Derivations: the counter builds the requests from the card's own inspection, so
+# the narrowing one retains a grant the card really carries (a `network` grant
+# narrowed to one destination) and the over-broad one asks for an `account`
+# grant, which no card of this agent's lattice covers. The first is the runtime's
+# acceptance, the second its refusal — a real enforcement check.
+check "permission: a narrowing derivation is accepted" "permission narrowing: handle " \
+    "$(invoke "$perm_agent" handle-message '"permission derive-narrow 1"')"
+check "permission: a derivation the card cannot cover is refused" \
+    "lower-bound-too-broad" \
+    "$(invoke "$perm_agent" handle-message '"permission derive-broad 1"')"
+check "permission: an invocation-local scope card is derived too" "permission scope: handle " \
+    "$(invoke "$perm_agent" handle-message '"permission derive-scope-narrow 1"')"
+
+# The handle rules, in one invocation on an agent of its own (so the handles are
+# the ones the round trip expects): the child is revoked (one card, the child
+# itself), the same handle is then reported rather than replayed, the scope card
+# and the wallet card are released, and a released handle is gone.
+perm_roundtrip="$(invoke "counter-agent(\"$RUN_ID-perm-rt\")" handle-message '"permission roundtrip"')"
+check_nospace "permission: revoking the derived card reports the cut" \
+    "permission revoke: revoked 1 card(s)" "$perm_roundtrip"
+check_nospace "permission: a consumed handle is reported, not replayed" \
+    "permission revoke failed: unknown permission card handle 2" "$perm_roundtrip"
+check_nospace "permission: the scope card and the wallet card are released" \
+    "permission release: released permission release: released" "$perm_roundtrip"
+check_nospace "permission: a released handle is gone" \
+    "permission release failed: unknown permission card handle 1" "$perm_roundtrip"
+check_nospace "permission: the over-broad derivation is refused here too" \
+    "permission over-broad failed: lower-bound-too-broad" "$perm_roundtrip"
+
+# Installation: only agent targets are supported, and the interface consumes the
+# card, so the refused attempt spends the handle like any other install does.
+check_nospace "permission: only agent installation targets are supported" \
+    "not-permitted: install-card currently supports only agent targets" \
+    "$(invoke "$perm_agent" handle-message '"permission install-account 1"')"
+check_nospace "permission: the refused installation spent the handle" \
+    "unknown permission card handle 1" \
+    "$(invoke "$perm_agent" handle-message '"permission install-account 1"')"
+
+# And the installation the runtime accepts: a derived card onto this agent, which
+# is then a concrete card in the wallet.
+perm_install_agent="counter-agent(\"$RUN_ID-perm-install\")"
+invoke "$perm_install_agent" handle-message '"permission wallet"' >/dev/null
+check "permission: a narrowing card is derived" "permission narrowing: handle 2" \
+    "$(invoke "$perm_install_agent" handle-message '"permission derive-narrow 1"')"
+check "permission: the derived card installs onto this agent" "permission install: installed" \
+    "$(invoke "$perm_install_agent" handle-message '"permission install-self 2"')"
+check_nospace "permission: the installed card is a concrete card in the wallet" \
+    '"tag":"concrete"' \
+    "$(invoke "$perm_install_agent" handle-message '"permission wallet"')"
 
 say "==> Oplog and execution control (golem:api/host)"
 # What an app can reach on 1.6: fail an invocation (`trap!`), name an external

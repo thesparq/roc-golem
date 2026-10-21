@@ -201,6 +201,60 @@ jobs:
             --message "db open not-a-database-url" \
             --reply "db open failed: connection-failure"
 
+          # The permission effects (`golem:permissions`) are synchronous host
+          # imports too, and the harness keeps a small card table of its own: the
+          # `permission roundtrip` command lists the wallet, inspects the card it
+          # found, derives a narrowing child, has an over-broad derivation
+          # refused, derives a scope card, revokes the child, tries to revoke it
+          # again, releases the wallet card and tries to use it again — so the
+          # reply only comes back correct if the handles really behaved the way
+          # the platform documents, and the recorded calls show which host
+          # functions ran (including the drop a release performs).
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "permission principal" --reply '{"tag":"anonymous"}' \
+            --then-message "permission wallet" \
+            --then-reply '"handle":1' --then-reply '"tag":"template"' \
+            --expect-permission "self-wallet() -> 1 card"
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "permission roundtrip" \
+            --reply "wallet: 1 first, template" \
+            --reply 'id: "01020304-0506-0709-090a-0b0c0d0e0f11"' \
+            --reply 'parents: ["01020304-0506-0708-090a-0b0c0d0e0f10"]' \
+            --reply "expires: null" \
+            --reply '"className":"filesystem"' \
+            --reply "permission narrowing: handle 2" \
+            --reply "permission over-broad failed: lower-bound-too-broad" \
+            --reply "permission scope: handle 3" \
+            --reply "permission revoke: revoked 1 card(s)" \
+            --reply "permission revoke failed: unknown permission card handle 2" \
+            --reply "permission release failed: unknown permission card handle 1" \
+            --reply "permission validate: accepted" \
+            --reply "permission validate failed: unknown-resource-class: nope" \
+            --expect-permission "derive(parent=0, retain=[network()@initial@user/roc-golem/local/roc-golem:counter/counter-agent:connect:example.test:443], lifespan=PT1H)" \
+            --expect-permission "derive-scope(parents=[0]" \
+            --expect-permission "drop(card)"
+
+          # An installation the runtime refuses before it looks at the card: only
+          # agent targets are supported. The same command against the harness's
+          # stub shows the holder the component built (`install-self` resolves its
+          # own component id and worker id).
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "permission wallet" --reply '"tag":"template"' \
+            --then-message "permission install-account 1" \
+            --then-reply "not-permitted: install-card currently supports only agent targets" \
+            --expect-permission "install-card(card=0, target=account("
+
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "permission wallet" --reply '"handle":1' \
+            --then-message "permission install-self 1" \
+            --then-reply "permission install: installed" \
+            --expect-permission 'install-card(card=0, target=agent(stub-agent("harness")))'
+
           # The tool export itself (`golem:tool/guest.invoke`, the surface
           # `golem tool invoke` drives) carries its stdin/stdout/stderr as
           # component-model streams, so the harness supplies the stdin bytes

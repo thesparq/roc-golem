@@ -102,6 +102,16 @@ struct Ctx {
     blob_incoming: Vec<Vec<u8>>,
     /// Database host calls (`golem:rdbms`) the agent made, for `--expect-db`.
     db_calls: Vec<String>,
+    /// Permission host calls (`golem:permissions`) the agent made, for
+    /// `--expect-permission`: the wallet listing, the inspection calls, the
+    /// derivation requests (with the grants they asked to retain) and the
+    /// drops, which is how a check sees that `permissionRelease!` gave a card
+    /// up.
+    permission_calls: Vec<String>,
+    /// The permission cards the stub handed out, by rep: what `id` / `parents` /
+    /// `expires-at` / `inspect-card` answer with, and what a derivation records
+    /// as its parent.
+    permission_cards: Vec<StubPermissionCard>,
     /// The stub's relational store: the committed `(id, note)` rows, and one
     /// copy per open transaction (a transaction's rep indexes this list).
     db_rows: Vec<(i32, String)>,
@@ -359,6 +369,416 @@ impl golem::quota::types::HostReservation for Ctx {
     }
 }
 
+/// A permission card the permission stubs handed out: the id `id` answers with,
+/// the parents `parents` answers with, and the lattice `inspect-card` returns.
+/// Nothing here enforces a lattice of its own — a derivation from a card records
+/// its parent and produces a new card, which is what lets the checks see that a
+/// derived handle really is a fresh capability.
+#[derive(Clone)]
+struct StubPermissionCard {
+    /// Which card this is, as the small number the stub's card ids are built
+    /// from.
+    index: u32,
+    /// The card ids `parents` answers with.
+    parents: Vec<u32>,
+    /// The four quadrants `inspect-card` answers with.
+    view: golem::permissions::types::CardView,
+}
+
+/// The card id of the stub's n-th card.
+fn stub_card_id(index: u32) -> golem::core::types::CardId {
+    golem::core::types::CardId {
+        uuid: golem::core::types::Uuid {
+            high_bits: 0x0102_0304_0506_0708_u64.wrapping_add(index as u64),
+            low_bits: 0x090a_0b0c_0d0e_0f10_u64.wrapping_add(index as u64),
+        },
+    }
+}
+
+/// A `pattern-grant` of the shape a real card carries: the class and verb are
+/// concrete, the owner may be a slot, and the recipient names the agent.
+fn stub_grant(
+    class: &str,
+    owner: &str,
+    recipient: &str,
+    verb: &str,
+    resource_id: &str,
+) -> golem::permissions::types::PatternGrant {
+    golem::permissions::types::PatternGrant {
+        class: class.to_string(),
+        owner: owner.to_string(),
+        recipient: recipient.to_string(),
+        verb: verb.to_string(),
+        resource_id: resource_id.to_string(),
+    }
+}
+
+/// One grant as a line a recorded call can carry.
+fn grant_text(grant: &golem::permissions::types::PatternGrant) -> String {
+    format!(
+        "{}({})@{}:{}:{}",
+        grant.class, grant.owner, grant.recipient, grant.verb, grant.resource_id
+    )
+}
+
+/// The four quadrants of a card that carries one grant, in the order the
+/// checks read them.
+fn stub_view(grants: Vec<golem::permissions::types::PatternGrant>) -> golem::permissions::types::CardView {
+    golem::permissions::types::CardView {
+        lower_positive: grants,
+        lower_negative: vec![],
+        upper_positive: vec![],
+        upper_negative: vec![],
+    }
+}
+
+impl Ctx {
+    /// The card behind a rep, or the `not-permitted` a host would answer with.
+    fn permission_card(
+        &self,
+        rep: u32,
+    ) -> Result<StubPermissionCard, golem::permissions::types::PermissionError> {
+        self.permission_cards
+            .get(rep as usize)
+            .cloned()
+            .ok_or_else(|| {
+                golem::permissions::types::PermissionError::NotPermitted(format!(
+                    "no such permission card handle {rep}"
+                ))
+            })
+    }
+
+    /// Adds a card to the stub's table and returns the owned handle the guest
+    /// receives for it.
+    fn store_permission_card(
+        &mut self,
+        card: StubPermissionCard,
+    ) -> wasmtime::component::Resource<golem::core::types::PermissionCard> {
+        self.permission_cards.push(card);
+        wasmtime::component::Resource::new_own((self.permission_cards.len() - 1) as u32)
+    }
+
+    /// The refusal the checks drive through the component: an `account` grant,
+    /// which no card of the stub's wallet covers — the same answer a real server
+    /// gives (`lower-bound-too-broad`).
+    fn over_broad_refusal(
+        grants: &[golem::permissions::types::PatternGrant],
+    ) -> Option<golem::permissions::types::PermissionError> {
+        grants
+            .iter()
+            .find(|grant| grant.class == "account")
+            .map(|grant| {
+                golem::permissions::types::PermissionError::LowerBoundTooBroad(format!(
+                    "{} is not covered by this wallet's lattice",
+                    grant_text(grant)
+                ))
+            })
+    }
+}
+
+/// The permission interfaces, stubbed: every call is recorded, the cards the
+/// component holds live in a small table of their own, and the two refusals the
+/// checks drive (an `account` grant in a derivation, a non-agent installation
+/// target) are answered the way the runtime answers them. Everything else is
+/// accepted, so what the checks assert is the platform's own plumbing: the JSON
+/// shapes, the handle rules, and that a derivation really reaches the host.
+impl golem::permissions::types::Host for Ctx {
+    fn id(
+        &mut self,
+        c: wasmtime::component::Resource<golem::core::types::PermissionCard>,
+    ) -> golem::core::types::CardId {
+        let rep = c.rep();
+        self.permission_calls.push(format!("id(card={rep})"));
+        let index = self.permission_card(rep).map(|card| card.index).unwrap_or(0);
+        stub_card_id(index)
+    }
+
+    fn parents(
+        &mut self,
+        c: wasmtime::component::Resource<golem::core::types::PermissionCard>,
+    ) -> Vec<golem::core::types::CardId> {
+        let rep = c.rep();
+        self.permission_calls.push(format!("parents(card={rep})"));
+        self.permission_card(rep)
+            .map(|card| card.parents.iter().copied().map(stub_card_id).collect())
+            .unwrap_or_default()
+    }
+
+    fn expires_at(
+        &mut self,
+        c: wasmtime::component::Resource<golem::core::types::PermissionCard>,
+    ) -> Option<golem::permissions::types::Timestamp> {
+        let rep = c.rep();
+        self.permission_calls.push(format!("expires-at(card={rep})"));
+        // The stub's cards never expire; `null` is what a real card without a
+        // bounded lifespan answers with too.
+        None
+    }
+}
+
+impl golem::permissions::inspect::Host for Ctx {
+    fn inspect_card(
+        &mut self,
+        c: wasmtime::component::Resource<golem::core::types::PermissionCard>,
+    ) -> Result<
+        golem::permissions::types::CardView,
+        golem::permissions::types::PermissionError,
+    > {
+        let rep = c.rep();
+        self.permission_calls.push(format!("inspect-card(card={rep})"));
+        self.permission_card(rep).map(|card| card.view)
+    }
+}
+
+impl golem::permissions::derive::Host for Ctx {
+    fn derive(
+        &mut self,
+        parent: wasmtime::component::Resource<golem::core::types::PermissionCard>,
+        lower_positive_to_retain: Vec<golem::permissions::types::PatternGrant>,
+        lower_negative_to_add: Vec<golem::permissions::types::PatternGrant>,
+        upper_positive_to_retain: Vec<golem::permissions::types::PatternGrant>,
+        upper_negative_to_add: Vec<golem::permissions::types::PatternGrant>,
+        lifespan: Option<golem::permissions::types::Duration>,
+    ) -> Result<
+        golem::permissions::types::PersistentCard,
+        golem::permissions::types::PermissionError,
+    > {
+        let rep = parent.rep();
+        let retained = lower_positive_to_retain
+            .iter()
+            .map(grant_text)
+            .collect::<Vec<_>>()
+            .join(",");
+        self.permission_calls.push(format!(
+            "derive(parent={rep}, retain=[{retained}], lifespan={})",
+            lifespan
+                .map(|duration| duration.iso_8601)
+                .unwrap_or_else(|| String::from("none"))
+        ));
+
+        if let Some(refusal) = Ctx::over_broad_refusal(&lower_positive_to_retain) {
+            return Err(refusal);
+        }
+
+        let parent_card = self.permission_card(rep)?;
+        let card = StubPermissionCard {
+            index: self.permission_cards.len() as u32 + 1,
+            parents: vec![parent_card.index],
+            view: stub_view(lower_positive_to_retain),
+        };
+        Ok(golem::permissions::types::PersistentCard::Concrete(
+            self.store_permission_card(card),
+        ))
+    }
+
+    fn derive_from_wallet(
+        &mut self,
+        lower_positive: Vec<golem::permissions::types::PatternGrant>,
+        lower_negative: Vec<golem::permissions::types::PatternGrant>,
+        upper_positive: Vec<golem::permissions::types::PatternGrant>,
+        upper_negative: Vec<golem::permissions::types::PatternGrant>,
+        lifespan: Option<golem::permissions::types::Duration>,
+    ) -> Result<
+        golem::permissions::types::PersistentCard,
+        golem::permissions::types::PermissionError,
+    > {
+        let retained = lower_positive
+            .iter()
+            .map(grant_text)
+            .collect::<Vec<_>>()
+            .join(",");
+        self.permission_calls.push(format!(
+            "derive-from-wallet(retain=[{retained}], lifespan={})",
+            lifespan
+                .map(|duration| duration.iso_8601)
+                .unwrap_or_else(|| String::from("none"))
+        ));
+
+        if let Some(refusal) = Ctx::over_broad_refusal(&lower_positive) {
+            return Err(refusal);
+        }
+
+        let card = StubPermissionCard {
+            index: self.permission_cards.len() as u32 + 1,
+            parents: vec![1],
+            view: stub_view(lower_positive),
+        };
+        Ok(golem::permissions::types::PersistentCard::Concrete(
+            self.store_permission_card(card),
+        ))
+    }
+
+    fn derive_scope(
+        &mut self,
+        parents: Vec<wasmtime::component::Resource<golem::core::types::PermissionCard>>,
+        lower_positive: Vec<golem::permissions::types::PatternGrant>,
+        lower_negative: Vec<golem::permissions::types::PatternGrant>,
+        upper_positive: Vec<golem::permissions::types::PatternGrant>,
+        upper_negative: Vec<golem::permissions::types::PatternGrant>,
+    ) -> Result<
+        wasmtime::component::Resource<golem::core::types::PermissionCard>,
+        golem::permissions::types::PermissionError,
+    > {
+        let parent_reps = parents.iter().map(|p| p.rep()).collect::<Vec<_>>();
+        let retained = lower_positive
+            .iter()
+            .map(grant_text)
+            .collect::<Vec<_>>()
+            .join(",");
+        self.permission_calls.push(format!(
+            "derive-scope(parents={parent_reps:?}, retain=[{retained}])"
+        ));
+
+        // The runtime refuses a slot in a scope request (`invalid-pattern`): a
+        // scope card has to be concrete, because it is attenuated in memory for
+        // one invocation.
+        if let Some(slotted) = lower_positive
+            .iter()
+            .find(|grant| grant.owner.contains('?') || grant.recipient.contains('?'))
+        {
+            return Err(golem::permissions::types::PermissionError::InvalidPattern(
+                format!("{} names a slot", grant_text(slotted)),
+            ));
+        }
+
+        if let Some(refusal) = Ctx::over_broad_refusal(&lower_positive) {
+            return Err(refusal);
+        }
+
+        let mut parent_indices = Vec::new();
+        for rep in parent_reps {
+            parent_indices.push(self.permission_card(rep)?.index);
+        }
+        let card = StubPermissionCard {
+            index: self.permission_cards.len() as u32 + 1,
+            parents: parent_indices,
+            view: stub_view(lower_positive),
+        };
+        Ok(self.store_permission_card(card))
+    }
+}
+
+impl golem::permissions::revoke::Host for Ctx {
+    fn revoke_card(
+        &mut self,
+        c: wasmtime::component::Resource<golem::core::types::PermissionCard>,
+    ) -> Result<u32, golem::permissions::types::PermissionError> {
+        let rep = c.rep();
+        self.permission_calls.push(format!("revoke-card(card={rep})"));
+        // The runtime answers with the size of the cut subtree; the stub's cards
+        // are one node each, so the count is one.
+        self.permission_card(rep).map(|_| 1)
+    }
+}
+
+impl golem::permissions::wallet::Host for Ctx {
+    fn self_wallet(&mut self) -> Vec<golem::permissions::types::WalletCard> {
+        let card = StubPermissionCard {
+            index: 1,
+            parents: vec![0],
+            view: stub_view(vec![
+                stub_grant(
+                    "network",
+                    "",
+                    "initial@user/roc-golem/local/roc-golem:counter/counter-agent",
+                    "*",
+                    "*",
+                ),
+                stub_grant(
+                    "filesystem",
+                    "?agent",
+                    "initial@user/roc-golem/local/roc-golem:counter/counter-agent",
+                    "read",
+                    "/workspace/**",
+                ),
+            ]),
+        };
+        let handle = self.store_permission_card(card);
+        self.permission_calls.push(String::from("self-wallet() -> 1 card"));
+        vec![golem::permissions::types::WalletCard::Template(handle)]
+    }
+
+    fn self_version(&mut self) -> golem::permissions::types::WalletVersionToken {
+        self.permission_calls.push(String::from("self-version()"));
+        golem::permissions::types::WalletVersionToken {
+            wallet_id_hash: vec![1, 2, 3, 4],
+            generation: 7,
+        }
+    }
+
+    fn install_card(
+        &mut self,
+        card: wasmtime::component::Resource<golem::core::types::PermissionCard>,
+        target: golem::permissions::types::Holder,
+    ) -> Result<(), golem::permissions::types::PermissionError> {
+        let rep = card.rep();
+        let holder = match &target {
+            golem::permissions::types::Holder::Account(uuid) => {
+                format!("account({})", uuid.high_bits)
+            }
+            golem::permissions::types::Holder::App(uuid) => {
+                format!("app({})", uuid.high_bits)
+            }
+            golem::permissions::types::Holder::Agent(agent_id) => {
+                format!("agent({})", agent_id.agent_id)
+            }
+        };
+        self.permission_calls
+            .push(format!("install-card(card={rep}, target={holder})"));
+
+        // The runtime refuses every non-agent target before it looks at the
+        // card, and the checks drive that refusal through the component.
+        match target {
+            golem::permissions::types::Holder::Agent(_) => self.permission_card(rep).map(|_| ()),
+            _ => Err(golem::permissions::types::PermissionError::NotPermitted(
+                String::from("install-card currently supports only agent targets"),
+            )),
+        }
+    }
+}
+
+impl golem::permissions::kernel_introspection::Host for Ctx {
+    fn list_modules(&mut self) -> Vec<golem::permissions::kernel_introspection::KernelModule> {
+        self.permission_calls.push(String::from("list-modules()"));
+        vec![
+            golem::permissions::kernel_introspection::KernelModule {
+                class_name: String::from("filesystem"),
+                verbs: vec![
+                    String::from("read"),
+                    String::from("write"),
+                    String::from("delete"),
+                ],
+            },
+            golem::permissions::kernel_introspection::KernelModule {
+                class_name: String::from("network"),
+                verbs: vec![String::from("connect")],
+            },
+        ]
+    }
+
+    fn validate_grant(
+        &mut self,
+        g: golem::permissions::types::PatternGrant,
+    ) -> Result<(), golem::permissions::types::PermissionError> {
+        self.permission_calls.push(format!("validate-grant({})", grant_text(&g)));
+
+        // `validate-grant` checks concrete grants: a slot is an
+        // `invalid-pattern` there, exactly as a real kernel answers.
+        if g.owner.contains('?') || g.recipient.contains('?') {
+            return Err(golem::permissions::types::PermissionError::InvalidPattern(
+                g.owner.clone(),
+            ));
+        }
+
+        match g.class.as_str() {
+            "filesystem" | "network" | "secret" | "tool" | "agent" => Ok(()),
+            other => Err(golem::permissions::types::PermissionError::UnknownResourceClass(
+                other.to_string(),
+            )),
+        }
+    }
+}
+
 impl golem::core::types::HostSecret for Ctx {
     fn drop(
         &mut self,
@@ -373,6 +793,10 @@ impl golem::core::types::HostPermissionCard for Ctx {
         &mut self,
         _rep: wasmtime::component::Resource<golem::core::types::PermissionCard>,
     ) -> wasmtime::Result<()> {
+        // A dropped card is the guest telling the host it is done with the
+        // capability: `permissionRelease!` is the only effect that does it, so
+        // recording the drop is how a check sees that a handle was given up.
+        self.permission_calls.push(String::from("drop(card)"));
         Ok(())
     }
 }
@@ -2684,13 +3108,16 @@ struct Expectation {
     component: PathBuf,
     agent_type: Option<String>,
     method: Option<String>,
-    /// First message to send, and the reply text it should contain.
+    /// First message to send, and the reply text it should contain. `--reply`
+    /// may be given more than once: every substring has to be in the reply,
+    /// which is how a multi-step command (`permission roundtrip`) is checked in
+    /// one run.
     message: String,
-    reply_contains: Option<String>,
+    reply_contains: Vec<String>,
     /// Second message (defaults to the first), for flows that need two steps
     /// such as connect-then-send, plus the reply it should contain.
     then_message: Option<String>,
-    then_reply_contains: Option<String>,
+    then_reply_contains: Vec<String>,
     /// Substring expected in a log line the agent emitted.
     expect_log: Option<String>,
     /// Substring expected in a WebSocket message the agent sent.
@@ -2723,6 +3150,9 @@ struct Expectation {
     /// Substring expected in the database calls the agent made through
     /// `golem:rdbms` (`postgres open`, `postgres execute`, `mysql query`, …).
     expect_db: Option<String>,
+    /// Substring expected in the permission calls the agent made through
+    /// `golem:permissions` (`self-wallet`, `inspect-card`, `derive`, …).
+    expect_permission: Option<String>,
     /// The first message is expected to trap, with the substring in the trap's
     /// text. The message/reply checks are skipped in that case: a trap is a
     /// failed invocation, not a reply, and the instance is not asked for
@@ -2759,6 +3189,7 @@ fn usage() -> String {
          [--expect-quota SUBSTRING] [--expect-retry SUBSTRING] \
          [--expect-host-call SUBSTRING] [--expect-kv SUBSTRING] \
          [--expect-blob SUBSTRING] [--expect-fs SUBSTRING] [--expect-db SUBSTRING] \
+         [--expect-permission SUBSTRING] \
          [--expect-trap SUBSTRING] \
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
          [--tool-stream NAME] [--tool-stdin TEXT] \
@@ -2774,9 +3205,9 @@ fn parse_args() -> Result<Expectation> {
         agent_type: None,
         method: None,
         message: String::from("increment"),
-        reply_contains: None,
+        reply_contains: Vec::new(),
         then_message: None,
-        then_reply_contains: None,
+        then_reply_contains: Vec::new(),
         expect_log: None,
         expect_sent: None,
         config: None,
@@ -2789,6 +3220,7 @@ fn parse_args() -> Result<Expectation> {
         expect_blob: None,
         expect_fs: None,
         expect_db: None,
+        expect_permission: None,
         expect_trap: None,
         tool: None,
         tool_reply: None,
@@ -2807,9 +3239,13 @@ fn parse_args() -> Result<Expectation> {
             "--message" => {
                 expectation.message = args.next().context("--message needs a value")?
             }
-            "--reply" => expectation.reply_contains = args.next(),
+            "--reply" => expectation
+                .reply_contains
+                .push(args.next().context("--reply needs a value")?),
             "--then-message" => expectation.then_message = args.next(),
-            "--then-reply" => expectation.then_reply_contains = args.next(),
+            "--then-reply" => expectation
+                .then_reply_contains
+                .push(args.next().context("--then-reply needs a value")?),
             "--expect-log" => expectation.expect_log = args.next(),
             "--expect-sent" => expectation.expect_sent = args.next(),
             "--config" => expectation.config = args.next(),
@@ -2822,6 +3258,7 @@ fn parse_args() -> Result<Expectation> {
             "--expect-blob" => expectation.expect_blob = args.next(),
             "--expect-fs" => expectation.expect_fs = args.next(),
             "--expect-db" => expectation.expect_db = args.next(),
+            "--expect-permission" => expectation.expect_permission = args.next(),
             "--expect-trap" => expectation.expect_trap = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
@@ -2968,6 +3405,8 @@ async fn run() -> Result<ExitCode> {
             blob_incoming: Vec::new(),
             fs_calls: Vec::new(),
             db_calls: Vec::new(),
+            permission_calls: Vec::new(),
+            permission_cards: Vec::new(),
             db_rows: Vec::new(),
             db_transactions: Vec::new(),
             db_connections: 0,
@@ -3202,7 +3641,7 @@ async fn run() -> Result<ExitCode> {
             expectation.then_reply_contains.clone(),
         ),
     ] {
-        if expected.is_none() || expectation.expect_trap.is_some() {
+        if expected.is_empty() || expectation.expect_trap.is_some() {
             continue;
         }
         let invoke_result = store
@@ -3221,7 +3660,7 @@ async fn run() -> Result<ExitCode> {
             Ok(Ok(Ok(value))) => {
                 let raw = value.as_ref().and_then(text_of).unwrap_or_default();
                 println!("[{}] = {:?}", label, raw);
-                if let Some(expected) = expected {
+                for expected in &expected {
                     if !raw.contains(expected.as_str()) {
                         failures.push(format!(
                             "{}: reply {:?} does not contain {:?}",
@@ -3503,6 +3942,17 @@ async fn run() -> Result<ExitCode> {
             if !hit {
                 failures.push(format!(
                     "no database call contains {:?} (made: {:?})",
+                    expected, calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_permission {
+            let calls = ctx.permission_calls.clone();
+            let hit = calls.iter().any(|call| call.contains(expected.as_str()));
+            println!("[permission calls] {:?}", calls);
+            if !hit {
+                failures.push(format!(
+                    "no permission call contains {:?} (made: {:?})",
                     expected, calls
                 ));
             }

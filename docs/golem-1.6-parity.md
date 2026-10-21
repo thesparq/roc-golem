@@ -23,6 +23,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | read-only methods | agent metadata | declared for tools; until-write cache |
 | HTTP mounts | agent metadata | filesystem bindings (regular agents), static bindings + OpenAPI provider (routers) |
 | the agent's own filesystem | `wasi:filesystem@0.2.6` (p2) | `readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` / `deleteFile!` / `makeDir!` / `listDir!`; per-agent and durable, provisioned from the manifest's `files:` list |
+| permissions + the principal | `golem:permissions/{types,inspect,derive,revoke,wallet,kernel-introspection}` | `getPrincipal!` and the whole card surface: `permissionsWallet!` / `permissionsWalletVersion!`, `permissionId!` / `permissionParents!` / `permissionExpiresAt!` / `permissionInspect!`, `permissionDerive!` / `permissionDeriveFromWallet!` / `permissionDeriveScope!`, `permissionInstall!` / `permissionRevoke!` / `permissionRelease!`, `permissionListModules!` / `permissionValidateGrant!`; grants and views as JSON, cards as `U32` handles (see item 6) |
 | logging, clocks, random | `wasi:logging`, `wasi:clocks`, … | `logInfo!` … `sleep!`, `now!` |
 
 ## Gaps, in rough order of how much a real app misses them
@@ -71,9 +72,82 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    or return multimodal content, as the TS/Rust SDKs do. Cost: medium — schema
    graph construction (the router work already builds a graph, so the pattern
    exists).
-6. **Permissions** (`golem:permissions/{types,inspect,derive,revoke,wallet,kernel-introspection}`):
+6. ~~**Permissions** (`golem:permissions/{types,inspect,derive,revoke,wallet,kernel-introspection}`):
    cards, grants, and the principal the runtime passes to methods (we accept
-   `Principal` and ignore it). Cost: medium-large.
+   `Principal` and ignore it)~~ — **done**: all six interfaces are imports of
+   `wit/world.wit` now, and the principal is rendered instead of ignored. The
+   effects are `getPrincipal!` (the invocation's principal as JSON),
+   `permissionsWallet!` / `permissionsWalletVersion!`, `permissionId!` /
+   `permissionParents!` / `permissionExpiresAt!` / `permissionInspect!`, the three
+   derivations, `permissionInstall!` / `permissionRevoke!` /
+   `permissionRelease!`, and `permissionListModules!` /
+   `permissionValidateGrant!`. Every function in the six interfaces is
+   synchronous, so nothing here is async and the ABI harness covers the surface
+   (see below). Details worth knowing:
+
+   - **The structured values travel as JSON** in the WIT shape with camelCase
+     names (`host/src/permissions_json.rs`, the `retry_json` / `rdbms_json`
+     convention): a grant is
+     `{"class":…,"owner":…,"recipient":…,"verb":…,"resourceId":…}`, a
+     card view and a derivation's bounds are the four quadrants
+     (`lowerPositive` / `lowerNegative` / `upperPositive` / `upperNegative`,
+     plus `lifespan:{"iso8601":"P30D"}` or `null` for a persistent
+     derivation, and `parents:[<handle>,…]` for `deriveScope!`, which takes no
+     lifespan), a holder is `{"tag":"account"|"app"|"agent","val":…}`, and
+     a `permission-error` becomes the text `<case-name>: <message>`
+     (`not-permitted: …`, `lower-bound-too-broad: …`) the way the database and
+     webhook errors are rendered. The README's "Permissions and the principal"
+     section spells every shape out.
+   - **The principal is JSON** in the shape the Rust SDK's principal serde uses:
+     `{"tag":"anonymous"}`, `{"tag":"golem-user","val":{"accountId":…}}`,
+     `{"tag":"agent","val":{"componentId":…,"agentId":…}}`,
+     `{"tag":"oidc","val":{…}}` with every field the runtime supplies. The
+     `agent` case flattens the WIT's nested `agent-id` record, which is the same
+     object `resolveAgentId!` prints and a `{"tag":"agent"}` holder takes — one
+     agent-id shape everywhere. A tool invocation has no principal (the tool ABI
+     carries none), so `getPrincipal!` answers the JSON literal `null` there
+     rather than inventing an identity.
+   - **Cards are `U32` handles in the host's table**, like WebSocket, quota and
+     database handles. Ownership is explicit: `id` / `parents` / `expires-at` /
+     `inspect` / `derive` / `derive-scope` borrow a handle, `revoke` and
+     `install` consume it (a second use is `unknown permission card handle N`,
+     never a trap), and `permissionRelease!` — the one effect the interfaces have
+     no equivalent for — drops the card, releasing the runtime's own entry, and
+     frees the handle. Roc holds a plain number, so the host cannot see when an
+     app is done with a card: an unreleased handle keeps its card alive for the
+     instance's lifetime, which is documented in `Golem.roc` and the README.
+   - **The runtime, not the platform, decides.** The e2e's permission checks are
+     the runtime's own answers: the default card (this repo declares no
+     `initialCard`, so every agent type gets the broad template card) in the
+     wallet, a narrowing derivation accepted, one refused, a revocation, and an
+     installation the runtime only allows onto agent targets. Two runtime
+     behaviours worth recording: a `derive` request is checked against the
+     parent's lattice and can be *conservatively* refused (a request that retains
+     a grant the card carries still fails when the runtime cannot prove the child
+     stays inside the parent — on the default card that is every `?agent`-owned
+     class, `filesystem` included, while `?env` / `?env/*/*` / `?component` /
+     `?account`-owned ones derive); and `validate-grant` checks *concrete*
+     grants, so a slot (`?agent`) is an `invalid-pattern` there.
+   - **Coverage**: the harness drives `permission roundtrip` on the counter
+     against stubs that keep their own card table — wallet, inspect, id, parents,
+     expires-at, a narrowing derivation, a refused one, a scope card, a revoke,
+     a second revoke, a release and a second release, `validate-grant` both ways
+     — and CI/release run it; the e2e runs the same commands against a real
+     server, plus the principal from a CLI invocation (`golem-user`) and from an
+     RPC one (`agent`, naming the caller). The counter's `permission` commands
+     build their derivation requests from the card's own inspection, so they work
+     against whatever card the runtime hands out.
+   - **Not done, on purpose**: declaring an `initialCard` for one agent type in
+     `golem.yaml` to assert a *denied* action. The counter needs its own
+     filesystem, its tools, agent calls, its quota resource and its retry
+     policies, so a narrow card there would have to grant all of that back and a
+     mistake would surface as an unrelated check failing; a separate agent type
+     that only reads its own filesystem would make the check clean. Recorded here
+     as the follow-up; the enforcement check the e2e does make is the runtime
+     refusing a derivation the default card cannot cover. Also not exposed:
+     passing a card to another agent as a value (`schema-value-tree` carries no
+     permission-card handle in this platform, the same gap as quota tokens) and
+     lending a scope card to an awaited call.
 7. ~~**Resource quotas** (`golem:quota/types`) and **retry policies**
    (`golem:api/retry`)~~ — **done**: the five quota effects (`newQuotaToken!`,
    `quotaReserve!`, `quotaCommit!`, `quotaSplit!`, `quotaMerge!`) and six retry
