@@ -49,12 +49,12 @@ agent = defineAgent({
             "get_count" =>
                 {
                     state,
-                    result: { id: call.id, success: True, output: "{\"count\":${I64.to_str(state.count)}}" },
+                    result: { id: call.id, success: True, output: "{\"count\":${I64.to_str(state.count)}}", stdout: "", stderr: "" },
                 }
             _ =>
                 {
                     state,
-                    result: { id: call.id, success: False, output: "Unknown tool ${call.name}" },
+                    result: { id: call.id, success: False, output: "Unknown tool ${call.name}", stdout: "", stderr: "" },
                 }
         },
     metadata: {
@@ -241,6 +241,80 @@ published under CLI-shaped names (`get_count` → `get-count`) and appear in
 in a fresh instance without the agent's state, so stateless tools (the AI tool
 example's `calculator`) work while stateful ones (`get-count`) fail with an
 honest error — use the agent method surface for those.
+
+### Tool streams: stdin, stdout and stderr
+
+Every tool this platform publishes declares **stdin, stdout and stderr** as
+*optional* streams, so the runtime attaches one only when the caller asks for
+it: `golem tool invoke --stdin <path|-> …` feeds the tool, and `--stdout` /
+`--stderr` (with `--output` / `--stderr-output` to redirect to a file) deliver
+what it wrote. Nothing changes for a plain `golem tool invoke` — no streams are
+attached, so `toolCall.stdin` is `""` and the app's `stdout`/`stderr` text is
+dropped (the result payload is what travels).
+
+An app reads the caller's bytes as text in `toolCall.stdin` and answers with
+two strings:
+
+```roc
+handleToolCall!: |state, call|
+    {
+        state,
+        result: {
+            id: call.id,
+            success: True,
+            output: "{\"echo\": \"${call.arguments}\"}",
+            # Written on the streams the caller attached; "" writes nothing.
+            stdout: call.stdin,
+            stderr: "read ${U64.to_str(Str.count_utf8_bytes(call.stdin))} bytes",
+        },
+    },
+```
+
+The `ai_tool` example's `echo` tool is the worked case, and `tooling/e2e.sh`
+pipes `piped stdin bytes` through `golem tool invoke --stdin - --stdout --output
+… --stderr --stderr-output …` and checks both files.
+
+Three things worth knowing:
+
+- **Output is buffered.** `ToolResult.stdout` / `.stderr` are written *after*
+  `handleToolCall!` returns, not while it runs: the app answers with a whole
+  string, so there is nothing to stream mid-call. True incremental output needs
+  an output channel the app can write to while the call is in flight, which the
+  `Agent` interface cannot express yet — see
+  [tool middleware](#tool-middleware) below and item 11 of
+  `docs/golem-1.6-parity.md`.
+- **Stdin arrives whole, before the app runs**, and a *failed* stdin item (the
+  runtime's `byte-stream-failure`: `cancelled`, `abandoned`,
+  `resource-exhausted`, `failed`) fails the invocation rather than handing the
+  app a truncated input. A stream that ends cleanly is just end-of-input.
+- **Stdin is read verbatim up to the next double quote.** It travels through the
+  same minimal JSON field reader as `arguments` (`parse_tool_call` in
+  `platform/main.roc`), so a pipe containing a `"` is truncated at it and escape
+  sequences are not decoded. Keep tool stdin quote-free until that reader grows
+  escapes.
+
+### Tool middleware
+
+**Not supported, on purpose.** Golem's tool middleware (`golem:tool/middleware`)
+is a *separate component shape*: the executor binds the world
+`golem:tool/tool-middleware-runtime` and the registry recognises a middleware by
+its exported interface name (`tool-middleware-guest`), so an agent component
+cannot be middleware without a second export plus the whole async stream,
+schema-value and `underlying-tool` surface. The platform therefore exposes tool
+*streams* (above) and no middleware; `docs/golem-1.6-parity.md` item 11 records
+what closing it would take.
+
+### Migrating to `ToolResult` with streams
+
+`ToolResult` gained `stdout` and `stderr`, and `ToolCall` gained `stdin` — the
+same kind of break `agentKind`/`httpMount` were earlier in this line. Reading
+`toolCall.stdin` needs no change; **every `handleToolCall!` that constructs a
+`ToolResult` has to add the two fields** (empty strings are the old behaviour):
+
+```roc
+result: { id: call.id, success: True, output: "…" },                    # before
+result: { id: call.id, success: True, output: "…", stdout: "", stderr: "" },  # after
+```
 
 **Config declarations** are supported: apps list keys in their metadata
 (`config: [{ name, secret }]`), which become the agent type's config
@@ -897,9 +971,9 @@ anything is published:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, and the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling) |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next) and the database round trip (params in, rows out, a rolled-back and a committed transaction) included |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface, HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
+| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, the declared tool streams and the tool-call stdin/stdout/stderr JSON contract, and the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling) |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next) and the database round trip (params in, rows out, a rolled-back and a committed transaction) included. `--tool-stream` drives `golem:tool/guest.invoke` itself with stdin bytes and both output writers attached, so the tool streams are checked where the runtime attaches them |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface (and tool stdin/stdout/stderr through `golem tool invoke --stdin/--stdout/--stderr`), HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so

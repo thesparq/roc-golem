@@ -30,6 +30,8 @@ agent = defineAgent({
 				id: toolCall.id,
 				success: False,
 				output: "static-site-agent exposes no tools",
+				stdout: "",
+				stderr: "",
 			},
 		},
 

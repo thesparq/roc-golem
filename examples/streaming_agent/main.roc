@@ -124,6 +124,8 @@ agent = defineAgent({
 						id: toolCall.id,
 						success: True,
 						output: "{\"status\": \"stream_active\", \"sent_count\": ${U64.to_str(state.sent)}}",
+						stdout: "",
+						stderr: "",
 					},
 				}
 
@@ -134,6 +136,8 @@ agent = defineAgent({
 						id: toolCall.id,
 						success: False,
 						output: "{\"error\": \"Unknown tool ${toolCall.name}\"}",
+						stdout: "",
+						stderr: "",
 					},
 				}
 		},

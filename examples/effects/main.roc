@@ -133,6 +133,8 @@ agent = defineAgent({
 				id: toolCall.id,
 				success: False,
 				output: "{\"error\": \"Unknown tool ${toolCall.name}\"}",
+				stdout: "",
+				stderr: "",
 			},
 		},
 

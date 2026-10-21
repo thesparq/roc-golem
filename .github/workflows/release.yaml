@@ -201,10 +201,17 @@ jobs:
             --message "db open not-a-database-url" \
             --reply "db open failed: connection-failure"
 
+          # The tool export itself (`golem:tool/guest.invoke`, the surface
+          # `golem tool invoke` drives) carries its stdin/stdout/stderr as
+          # component-model streams, so the harness supplies the stdin bytes
+          # and captures what the component writes through the two writers.
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
             --message hello --reply "AI assistant" \
-            --tool calculator --tool-reply '{"result": 42}'
+            --tool calculator --tool-reply '{"result": 42}' \
+            --tool-stream echo --tool-stdin "harness stdin bytes" \
+            --expect-tool-stdout "harness stdin bytes" \
+            --expect-tool-stderr "read 19 bytes of stdin"
 
           # The streaming agent is not driven here: the harness can run its
           # async `websocket/client.receive` import (see
