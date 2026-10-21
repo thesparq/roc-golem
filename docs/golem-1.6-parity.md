@@ -8,7 +8,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 
 | Surface | Via | Notes |
 | --- | --- | --- |
-| agent protocol (`golem:agent/guest@2.0.0`) | platform exports | async exports, schema-value trees, agent types, tools |
+| agent protocol (`golem:agent/guest@2.0.0`) | platform exports | async exports, schema-value trees, agent types, tools, multimodal methods (item 5) |
 | outgoing HTTP | `wasi:http/client@0.3.0` (p3) | buffered request/response |
 | WebSockets | `golem:websocket/client` | connect/send/receive/close |
 | config + secrets | `golem:agent/host.get-config-value` | `getConfig!`, `secret: true` declarations |
