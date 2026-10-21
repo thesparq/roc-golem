@@ -288,6 +288,26 @@ runCommand = |state, message| {
 					}
 			}
 
+		"principal-rpc" =>
+		# principal-rpc <target>: calls the target's `permission principal`
+		# command through `rpc!` and reports what the *callee* sees as its
+		# principal. An invocation that came from another agent arrives as an
+		# `agent` principal, so this is what shows the runtime handing the
+		# caller's own identity over instead of the caller's user.
+			match rpc!(command.a, "handle-message", "permission principal") {
+				Ok(reply) =>
+					{
+						state: { ..state, lastRpc: quote_free(reply) },
+						replies: ["RPC principal: ${reply}"],
+					}
+
+				Err(err) =>
+					{
+						state,
+						replies: ["RPC principal failed: ${err}"],
+					}
+			}
+
 		"webhook-create" =>
 		# Creates the promise + webhook pair and stores the callback URL; a POST
 		# to that URL (from outside Golem) completes the promise.
@@ -347,7 +367,7 @@ runCommand = |state, message| {
 		_ =>
 			{
 				state,
-				replies: ["Commands: fetch, rpc, cancel, webhook-create, webhook-await, idempotency, fork <id> <method> <payload>, fire-and-forget <id> <method> <payload>, schedule <id> <method> <payload> <millis>, schedule-cancelable <id> <method> <payload> <millis>, parse-agent-id <id>, make-agent-id <type> <param>"],
+				replies: ["Commands: fetch, rpc, cancel, principal-rpc <id>, webhook-create, webhook-await, idempotency, fork <id> <method> <payload>, fire-and-forget <id> <method> <payload>, schedule <id> <method> <payload> <millis>, schedule-cancelable <id> <method> <payload> <millis>, parse-agent-id <id>, make-agent-id <type> <param>"],
 			}
 	}
 }

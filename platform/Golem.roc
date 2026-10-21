@@ -75,6 +75,21 @@ module [
 	dbBegin!,
 	dbCommit!,
 	dbRollback!,
+	getPrincipal!,
+	permissionsWallet!,
+	permissionsWalletVersion!,
+	permissionId!,
+	permissionParents!,
+	permissionExpiresAt!,
+	permissionInspect!,
+	permissionDerive!,
+	permissionDeriveFromWallet!,
+	permissionDeriveScope!,
+	permissionInstall!,
+	permissionRevoke!,
+	permissionRelease!,
+	permissionListModules!,
+	permissionValidateGrant!,
 ]
 
 import Effect
@@ -567,3 +582,165 @@ dbCommit! = |handle|
 dbRollback! : U32 => Try({}, Str)
 dbRollback! = |handle|
 	Effect.dbRollback!(handle)
+
+## Permissions (`golem:permissions`) and the principal
+##
+## Golem decides what an agent may do with *permission cards*: each card is an
+## unforgeable capability listing grants (`class(owner) @ recipient : verb :
+## resource-id`), the set of cards an agent holds is its *wallet*, and the
+## runtime checks the wallet before an operation that needs one. These effects
+## expose the wallet an app already holds, the inspection/derivation/
+## installation/revocation operations the official SDKs expose, and the
+## kernel's own introspection — they do not create authority: a card can only
+## be narrowed, and an operation the cards do not allow is the runtime's
+## refusal, reported in the effect's `Err`.
+##
+## A `permission-card` is host-side; the app carries it as a `U32` handle, the
+## way it carries a WebSocket or database handle. Ownership is explicit:
+##
+## * `permissionId!` / `permissionParents!` / `permissionExpiresAt!` /
+##   `permissionInspect!` / `permissionDerive!` / `permissionDeriveScope!`
+##   **borrow** the handle — the card stays and can be used again,
+## * `permissionRevoke!` and `permissionInstall!` **consume** it (the interface
+##   takes ownership), so using the same handle twice is an `Err`
+##   (`unknown permission card handle N`), never a use-after-free,
+## * `permissionRelease!` gives a card up without using it as authority: the
+##   card is dropped and the handle is freed. Roc holds a plain number, so the
+##   host cannot see when an app is done with a card — a handle that is neither
+##   consumed nor released stays in the instance for as long as it lives, so
+##   release what you do not keep.
+##
+## The structured values travel as JSON in the WIT shape with camelCase names
+## (`retry_json`'s convention). The README's "Permissions and the principal"
+## section spells every shape out; the short version: a grant is
+## `{"class":…,"owner":…,"recipient":…,"verb":…,"resourceId":…}`, a
+## bounds object is `{"lowerPositive":[…],"lowerNegative":[…],
+## "upperPositive":[…],"upperNegative":[…],"lifespan":{"iso8601":"P30D"}}`
+## (or `null`/absent), a `deriveScope!` request adds `"parents":[<handle>,…]`
+## and takes no lifespan, a holder is
+## `{"tag":"account"|"app"|"agent","val":…}`, and a `permission-error`
+## arrives as `"<case-name>: <message>"` (`not-permitted: …`,
+## `lower-bound-too-broad: …`).
+
+## The principal the runtime handed this invocation, as JSON:
+## `{"tag":"anonymous"}`, `{"tag":"golem-user","val":{"accountId":…}}`,
+## `{"tag":"agent","val":{"componentId":…,"agentId":…}}` (an RPC caller),
+## or `{"tag":"oidc","val":{…}}`. The answer is the JSON literal `null` when
+## the runtime handed none: a tool invocation, which the tool ABI carries no
+## principal for.
+getPrincipal! : {} => Str
+getPrincipal! = |_|
+	Effect.getPrincipal!({})
+
+## Every card installed in the caller's wallet, as a JSON array of
+## `{"tag":"concrete"|"template"|"scope","handle":N}`. A `template` card's
+## grants carry slot variables (`?agent`, `?env`) that resolve for whoever ends
+## up holding it; `scope` is the card the runtime lent this invocation, when it
+## lent one. Each entry's handle is a card this instance now holds, so it is the
+## app's to use — and to release.
+permissionsWallet! : {} => Try(Str, Str)
+permissionsWallet! = |_|
+	Effect.permissionsWallet!({})
+
+## The wallet's version, as `{"walletIdHash":[<bytes>],"generation":N}`. It
+## changes whenever the set of installed cards does, which is how an app can
+## tell that its wallet moved without listing it.
+permissionsWalletVersion! : {} => Try(Str, Str)
+permissionsWalletVersion! = |_|
+	Effect.permissionsWalletVersion!({})
+
+## The card's stable identifier, as a JSON string (its canonical UUID text).
+permissionId! : U32 => Try(Str, Str)
+permissionId! = |handle|
+	Effect.permissionId!(handle)
+
+## The card's parents in the derivation DAG, as a JSON array of UUID strings
+## (`[]` for a card derived from nothing).
+permissionParents! : U32 => Try(Str, Str)
+permissionParents! = |handle|
+	Effect.permissionParents!(handle)
+
+## When the card stops being valid, as
+## `{"seconds":…,"nanoseconds":…}` — or `null` for a card that never expires
+## (for a scope card, the earliest expiry of its root cards).
+permissionExpiresAt! : U32 => Try(Str, Str)
+permissionExpiresAt! = |handle|
+	Effect.permissionExpiresAt!(handle)
+
+## The card's whole grant lattice, as
+## `{"lowerPositive":[…],"lowerNegative":[…],"upperPositive":[…],
+## "upperNegative":[…]}`. Inspection needs the `card:inspect` permission, so a
+## card the caller may hold but not read is reported rather than opened.
+permissionInspect! : U32 => Try(Str, Str)
+permissionInspect! = |handle|
+	Effect.permissionInspect!(handle)
+
+## Derives a narrower child card from the card behind `handle`. The bounds JSON
+## says which lower- and upper-positive grants to retain, which negatives to
+## add, and how long the child lives:
+## `{"lowerPositive":[…],"lowerNegative":[…],"upperPositive":[…],
+## "upperNegative":[…],"lifespan":{"iso8601":"P30D"}}` (`lifespan` may be
+## absent or `null`). A child can only narrow its parent: a grant the parent
+## does not cover is refused (`lower-bound-too-broad` /
+## `upper-bound-too-broad`). `Ok` is the handle of the derived card — it is *not*
+## installed anywhere, and the parent is only borrowed.
+permissionDerive! : U32, Str => Try(U32, Str)
+permissionDerive! = |handle, boundsJson|
+	Effect.permissionDerive!(handle, boundsJson)
+
+## The same, derived from a card the caller's own wallet already holds instead
+## of one named parent. The runtime picks the source card; a request no card in
+## the wallet covers is refused.
+permissionDeriveFromWallet! : Str => Try(U32, Str)
+permissionDeriveFromWallet! = |boundsJson|
+	Effect.permissionDeriveFromWallet!(boundsJson)
+
+## Derives an invocation-local card from the cards whose handles the request
+## names: `{"parents":[<handle>,…],"lowerPositive":[…],"lowerNegative":[…],
+## "upperPositive":[…],"upperNegative":[…]}`, with no lifespan (the card lives
+## exactly as long as the invocation that derived it, and cannot be installed or
+## revoked). The requested grants must be concrete — a slot variable in a
+## scope request is `invalid-pattern` — and the parents are only borrowed.
+permissionDeriveScope! : Str => Try(U32, Str)
+permissionDeriveScope! = |requestJson|
+	Effect.permissionDeriveScope!(requestJson)
+
+## Installs the card behind `handle` onto `holder`, a JSON
+## `{"tag":"agent","val":{"componentId":…,"agentId":…}}` (the shape
+## `resolveAgentId!` and `getPrincipal!` print). The card is consumed by the
+## call, so the handle is spent whether or not the installation succeeded. Only
+## agent targets are supported today: an `account` or `app` holder is refused.
+permissionInstall! : U32, Str => Try({}, Str)
+permissionInstall! = |handle, holderJson|
+	Effect.permissionInstall!(handle, holderJson)
+
+## Revokes the card behind `handle` and every card derived from it, consuming
+## the handle. `Ok` is how many cards the revocation cut, the card itself
+## included. Revoking a card that is already revoked is `card-revoked`, not a
+## success.
+permissionRevoke! : U32 => Try(U32, Str)
+permissionRevoke! = |handle|
+	Effect.permissionRevoke!(handle)
+
+## Gives a card handle up: the card is dropped (which releases the runtime's own
+## entry for it) and the handle is freed for reuse. A handle that was never
+## allocated, or was already consumed by `permissionRevoke!` /
+## `permissionInstall!` / an earlier `permissionRelease!`, is reported.
+permissionRelease! : U32 => Try({}, Str)
+permissionRelease! = |handle|
+	Effect.permissionRelease!(handle)
+
+## Every resource class the permission kernel knows about, as a JSON array of
+## `{"className":…,"verbs":[…]}`, in the order the kernel listed them. This is
+## what tells an app which classes and verbs a grant may name.
+permissionListModules! : {} => Try(Str, Str)
+permissionListModules! = |_|
+	Effect.permissionListModules!({})
+
+## Checks one grant — a JSON `pattern-grant` — against the kernel's schema: its
+## class, owner, recipient, verb and resource-id pattern. `Ok` means the kernel
+## accepts it; anything it rejects comes back in the `Err` channel
+## (`unknown-resource-class: …`, `invalid-verb: …`, `invalid-pattern: …`).
+permissionValidateGrant! : Str => Try({}, Str)
+permissionValidateGrant! = |grantJson|
+	Effect.permissionValidateGrant!(grantJson)

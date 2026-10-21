@@ -15,9 +15,12 @@ cargo run --release -- \
 
 Flags:
 
-- `--reply` matches the app's reply text from one `handle-message` call.
+- `--reply` matches the app's reply text from one `handle-message` call. It may
+  be given more than once: every substring has to be in the reply, which is how a
+  multi-step command (`permission roundtrip`) is checked in one run.
 - `--then-message` / `--then-reply` send a second (possibly different) message,
-  which is how state persistence and multi-step flows are checked.
+  which is how state persistence and multi-step flows are checked. `--then-reply`
+  is repeatable too.
 - `--tool NAME` / `--tool-reply SUBSTRING` invoke a registered tool (which the
   host routes through the app's `handleToolCall!`) and check its result.
 - `--tool-stream NAME` / `--tool-stdin TEXT` invoke `golem:tool/guest.invoke`
@@ -40,12 +43,19 @@ Flags:
   …) calls, `--expect-fs` for the agent's filesystem
   (`wasi:filesystem@0.2.6`: `open-at`, `write`, `read-directory`, …), and
   `--expect-db` for the databases (`golem:rdbms`: `postgres open`,
-  `postgres execute(statement=…, params=…)`, `mysql query`, …). All of
+  `postgres execute(statement=…, params=…)`, `mysql query`, …), and
+  `--expect-permission` for the permission calls (`golem:permissions`:
+  `self-wallet`, `inspect-card`, `derive(parent=…, retain=[…], lifespan=…)`,
+  `derive-scope`, `revoke-card`, `install-card(card=…, target=…)`, and the
+  `drop(card)` a `permissionRelease!` performs). All of
   them are recorded by the stubs, so effect wiring is verified, not just reply
-  text — and the two stores, the filesystem and the database are stubbed with a
+  text — and the two stores, the filesystem, the database and the permission
+  cards are stubbed with a
   small store of their own (a relational one for the database: the statements
   the counter's `db` command sends against a tiny store of committed rows and
-  one copy per open transaction), so a round trip the component drives has to
+  one copy per open transaction; a card table for permissions, so a derivation
+  produces a card the app can inspect, revoke and release), so a round trip the
+  component drives has to
   come back out of it changed (for the filesystem that includes *across* the two
   messages, which is what makes the read a real read).
 - `--expect-trap SUBSTRING` expects the first message to *fail the invocation*,
@@ -143,7 +153,12 @@ connection), `wasi:logging` (recorded), `golem:api/retry` / `golem:quota/types`
 filesystem `wasi:filesystem@0.2.6` (an in-memory directory tree; the preopens
 answer the sandbox root under both `/` and `.` the way Golem does), and the
 three `golem:rdbms` database interfaces (a tiny relational store; see
-`src/main.rs` for the statement shapes it understands). Those
+`src/main.rs` for the statement shapes it understands), and the six
+`golem:permissions` interfaces (a small card table of their own, so a derivation
+produces a card the app can inspect, revoke and release; the two refusals the
+checks drive — an `account` grant in a derivation and a non-agent installation
+target — are answered the way the runtime answers them, everything else is
+accepted, and the `drop` a `permissionRelease!` performs is recorded). Those
 interfaces are synchronous, which is why they can be driven here at all. The
 world also *exports* `golem:tool/guest@0.1.0` next to `golem:agent/guest@2.0.0`,
 so `--tool-stream` can call the tool export; its `tool-output-writer` stubs

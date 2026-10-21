@@ -16,6 +16,17 @@ world harness-world {
     import golem:api/host@1.5.0;
     import golem:api/retry@1.5.0;
     import golem:quota/types@1.5.0;
+    // Permissions: every function in the six `golem:permissions` interfaces is
+    // synchronous, so the stubs here answer them directly and record what the
+    // component asked for. The stub keeps its own small card table, so a
+    // derivation really produces a card the app can inspect, revoke and release
+    // (the e2e run is where the runtime's own enforcement shows up).
+    import golem:permissions/derive@0.1.0;
+    import golem:permissions/inspect@0.1.0;
+    import golem:permissions/kernel-introspection@0.1.0;
+    import golem:permissions/revoke@0.1.0;
+    import golem:permissions/types@0.1.0;
+    import golem:permissions/wallet@0.1.0;
     // The three `golem:rdbms` database interfaces are synchronous too, so the
     // stubs here keep a small relational store of their own (the statement
     // shapes the counter's `db` commands send) and record every call.

@@ -962,6 +962,169 @@ by chunk).
 
 ---
 
+## 🔐 Permissions and the principal
+
+Golem decides what an agent may do with **permission cards**. A card lists
+grants (`class(owner) @ recipient : verb : resource-id`), the set of cards an
+agent holds is its **wallet**, and the runtime checks the wallet before an
+operation that needs one. These effects expose the wallet an app already holds,
+the inspection / derivation / installation / revocation operations the official
+SDKs expose, the kernel's own introspection, and the principal the runtime hands
+every method. They do not create authority: a card can only be narrowed, and an
+operation the cards do not allow is the runtime's refusal, reported in the
+effect's `Err`.
+
+The six `golem:permissions` interfaces are imports of `wit/world.wit` now, and
+every function in them is synchronous, so the effects call them directly (no
+`block_on`, no streams) — which is why the ABI harness can drive them against
+stubs. An agent's *default* card (what an agent type gets when the manifest
+declares no `initialCard`) is a template whose grants carry slots (`?agent`,
+`?env`), and a derived child is a card of its own: deriving never installs
+anything.
+
+| Effect | Backing host function | Notes |
+| --- | --- | --- |
+| `getPrincipal! : {} => Str` | agent protocol | the principal the runtime handed this invocation, as JSON (below); `null` for a tool invocation, which the tool ABI carries no principal for |
+| `permissionsWallet! : {} => Try(Str, Str)` | `golem:permissions/wallet` | the caller's cards, as a JSON array of `{"tag":"concrete"|"template"|"scope","handle":N}`; each entry's handle is a card this instance now holds |
+| `permissionsWalletVersion! : {} => Try(Str, Str)` | `golem:permissions/wallet` | `{"walletIdHash":[<bytes>],"generation":N}`, which changes whenever the set of installed cards does |
+| `permissionId! : U32 => Try(Str, Str)` | `golem:permissions/types` | the card's stable id, as a JSON string (its canonical UUID text) |
+| `permissionParents! : U32 => Try(Str, Str)` | `golem:permissions/types` | the card's parents in the derivation DAG, as a JSON array of UUID strings |
+| `permissionExpiresAt! : U32 => Try(Str, Str)` | `golem:permissions/types` | `{"seconds":…,"nanoseconds":…}`, or `null` for a card that never expires |
+| `permissionInspect! : U32 => Try(Str, Str)` | `golem:permissions/inspect` | the card's four grant quadrants as JSON |
+| `permissionDerive! : U32, Str => Try(U32, Str)` | `golem:permissions/derive` | derives a narrower child from the card; `Ok` is the child's handle, the parent is only borrowed |
+| `permissionDeriveFromWallet! : Str => Try(U32, Str)` | `golem:permissions/derive` | the same, from a card the caller's own wallet holds |
+| `permissionDeriveScope! : Str => Try(U32, Str)` | `golem:permissions/derive` | an invocation-local card from one or more held cards; the request carries `"parents":[<handle>,…]` and no lifespan |
+| `permissionInstall! : U32, Str => Try({}, Str)` | `golem:permissions/wallet` | installs the card onto a holder (agent targets only today); the card is consumed either way |
+| `permissionRevoke! : U32 => Try(U32, Str)` | `golem:permissions/revoke` | revokes the card and everything derived from it, consuming the handle; `Ok` is how many cards the cut took |
+| `permissionRelease! : U32 => Try({}, Str)` | this platform | gives a card handle up: the card is dropped (which releases the runtime's own entry) and the handle is freed |
+| `permissionListModules! : {} => Try(Str, Str)` | `golem:permissions/kernel-introspection` | the kernel's resource classes and their verbs, as a JSON array of `{"className":…,"verbs":[…]}` |
+| `permissionValidateGrant! : Str => Try({}, Str)` | `golem:permissions/kernel-introspection` | checks one *concrete* grant against the kernel's schema; a slot (`?agent`) is an `invalid-pattern` there |
+
+### The JSON shapes
+
+The structured values travel as JSON text in the WIT shape with camelCase names,
+the convention the retry trees and the `db-value` encodings use
+(`host/src/permissions_json.rs` is the mirror):
+
+- a **grant** is
+  `{"class":"filesystem","owner":"?agent","recipient":"?agent","verb":"read","resourceId":"/workspace/**"}`
+  — the five WIT fields, `resource-id` spelled `resourceId`;
+- a **card view** (and a derivation's bounds) is the four quadrants
+  `{"lowerPositive":[…],"lowerNegative":[…],"upperPositive":[…],"upperNegative":[…]}`;
+  a `permissionDerive!` request adds `"lifespan":{"iso8601":"P30D"}` — or
+  `null`, or nothing at all, for a card that never expires;
+- a **`deriveScope!` request** is the same four quadrants plus
+  `"parents":[<handle>, …]`, and takes no lifespan (the WIT `derive-scope`
+  has none, so a `lifespan` there is reported as an unknown field rather than
+  ignored);
+- a **holder** is `{"tag":"account"|"app"|"agent","val":…}`: the two
+  `uuid` payloads are canonical UUID text, and the `agent` one is the
+  `{"componentId":…,"agentId":…}` object below;
+- a **`permission-error`** arrives as the text `<case-name>: <message>` — the
+  rendering the database and webhook errors use — so a refusal reads
+  `not-permitted: …`, `lower-bound-too-broad: …`, `invalid-pattern: …`,
+  `unknown-resource-class: …`.
+
+A **principal** is JSON in the shape the Rust SDK's principal serde uses:
+
+```json
+{"tag":"anonymous"}
+{"tag":"golem-user","val":{"accountId":"51de7d7d-f286-49aa-b79a-96022f7e2df9"}}
+{"tag":"agent","val":{"componentId":"01a15db6-581b-70f0-9c44-fe1330466a22","agentId":"counter-agent(\"c-1\")"}}
+{"tag":"oidc","val":{"sub":…,"issuer":…,"email":…,"name":…,"emailVerified":…,"givenName":…,"familyName":…,"picture":…,"preferredUsername":…,"claims":…}}
+```
+
+The `agent` case flattens the WIT's nested `agent-id` record, so it is the same
+`{"componentId":…,"agentId":…}` object `resolveAgentId!` prints and a
+`{"tag":"agent"}` holder takes — one shape for an agent id everywhere. A CLI
+invocation is a `golem-user` (the CLI's token names an account) and an
+invocation from another agent is that `agent`; an OIDC principal carries every
+field the runtime supplies, with an absent option as `null`.
+
+### Handle ownership
+
+A card is a host-side capability, so the app carries it as a `U32` handle in the
+same kind of table the WebSocket, quota and database handles use. Handles are
+positional (the first card of an instance is 1) and never forgeable: a number
+that was never allocated is an error, not authority. Ownership is explicit,
+because the WIT makes it so:
+
+- `permissionId!` / `permissionParents!` / `permissionExpiresAt!` /
+  `permissionInspect!` / `permissionDerive!` / `permissionDeriveScope!`
+  **borrow** the handle: the card stays and can be used again;
+- `permissionRevoke!` and `permissionInstall!` **consume** it (the interfaces
+  take `own`), so a second use of the same handle is
+  `unknown permission card handle N` — never a trap and never a use-after-free.
+  A failed installation consumes the handle too: the interface transfers
+  ownership before the call runs;
+- `permissionRelease!` gives a card up without using it as authority: the card is
+  dropped (which releases the runtime's own entry for it) and the handle is freed
+  for reuse.
+
+Roc holds a plain number, so the host cannot see when an app is done with a card.
+What that means in practice: **a handle that is neither consumed nor released
+stays in the instance's table, and the card with it, for as long as the instance
+lives.** An app that lists the wallet or derives cards in a loop should release
+the handles it does not keep — `permissionsWallet!` hands out a fresh handle for
+every card it lists, and a card the runtime no longer holds would otherwise be
+kept alive by the table entry.
+
+### What the runtime enforces, and what this platform exposes
+
+The effects are a faithful window onto the runtime, not a policy of their own:
+the wallet, the lattice and every refusal come from Golem, and the platform adds
+only the handle table and the JSON encoding. Two consequences worth knowing:
+
+- **A derivation is checked against the parent's lattice, and the runtime can
+  conservatively refuse one.** A `derive` request that retains a grant the card
+  carries is still refused when the runtime cannot prove the child stays inside
+the parent — the cards reference calls this out ("it can conservatively reject a
+request when slot-bearing denials would be needed to prove that condition"). The
+counter's `permission derive-broad <handle>` command drives a request no card of
+the default lattice covers (an `account` grant) and reports the refusal.
+- **Only agent installation targets are supported** (`not-permitted: install-card
+currently supports only agent targets` for an account or application holder),
+and a scope card is valid only during the invocation that derived it: after that
+it can be inspected and released, but not installed, revoked or used as a
+`derive` parent.
+
+### `initialCard`
+
+No agent type in this repo's `golem.yaml` declares an `initialCard`, so every
+example agent gets the runtime's broad default card for its agent type. A narrow
+card is a real deployment change, not a platform one: the counter needs its own
+filesystem, its tools, agent calls, its quota resource and its retry policies,
+so declaring a card for it would have to grant all of that back — and a mistake
+there would surface as the runtime denying an unrelated check. The permission
+effects are therefore covered without one, and the enforcement check the e2e
+makes is the runtime refusing a derivation the default card cannot cover (see
+`tooling/e2e.sh`). What it would take to go further: an `agents.<type>.initialCard`
+with `lowerBound`/`upperBound` grants for one agent type of its own — a type
+that only reads its own filesystem — and then a denied action asserted against
+it. That is a follow-up, and `docs/golem-1.6-parity.md` item 6 records it.
+
+### Coverage
+
+The ABI harness drives the whole surface on the counter component against stubs
+that keep their own little card table, so a derivation really produces a card the
+app can inspect, revoke and release: `permission roundtrip` lists the wallet,
+inspects the card, derives a narrowing child, has an over-broad derivation
+refused, derives a scope card, revokes the child, tries to revoke it again,
+releases the wallet card and tries to use it again — and the recorded host calls
+show the grants the requests asked to retain and the drop a release performs.
+CI and the release workflow run those checks. The `permission:` checks in
+`tooling/e2e.sh` run the same commands against a real server, where the answers
+are the runtime's own: a `golem-user` principal for a CLI invocation and an
+`agent` principal naming the caller for an RPC one, the default card in the
+wallet, its lattice, a narrowing derivation the runtime accepts, one it refuses,
+a revocation, the handle rules, and an installation onto the agent itself.
+
+Not exposed: nothing in the six interfaces is left out — the one addition is
+`permissionRelease!`, which the interfaces have no equivalent for (dropping a
+card handle is a guest-side operation there).
+
+---
+
 ## ✨ Effects
 
 Every effect is declared in `platform/Effect.roc` and wrapped by `platform/Golem.roc`;
@@ -989,6 +1152,7 @@ apps call them through `pf.Golem`.
 | `blobCreateContainer!` / `blobPut!` / `blobGet!` / `blobHas!` / `blobList!` / `blobDelete!` | `wasi:blobstore` | the environment's blobstore: containers of named objects, bodies as text, and `blobList!`'s object names as a JSON array (see [Key-value and blobstore](#-key-value-and-blobstore)) |
 | `readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` / `deleteFile!` / `makeDir!` / `listDir!` | `wasi:filesystem` (p2) | the agent's *own* filesystem: per-agent and durable, provisioned from the manifest's `files:` list, with paths resolved against the agent's root (see [The agent's own filesystem](#-the-agents-own-filesystem)) |
 | `dbOpen!` / `dbOpenMysql!` / `dbOpenIgnite!` / `dbQuery!` / `dbExecute!` / `dbBegin!` / `dbCommit!` / `dbRollback!` | `golem:rdbms` | the three database engines: connections and transactions as `U32` handles, statements and values as the JSON `db-value` encoding (see [Databases](#-databases)) |
+| `getPrincipal!` / `permissionsWallet!` / `permissionsWalletVersion!` / `permissionId!` / `permissionParents!` / `permissionExpiresAt!` / `permissionInspect!` / `permissionDerive!` / `permissionDeriveFromWallet!` / `permissionDeriveScope!` / `permissionInstall!` / `permissionRevoke!` / `permissionRelease!` / `permissionListModules!` / `permissionValidateGrant!` | `golem:permissions` + the agent protocol | the caller's principal and its cards: grants as JSON, cards as `U32` handles (borrowed, consumed or released), and the kernel's own schema (see [Permissions and the principal](#-permissions-and-the-principal)) |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
@@ -1002,9 +1166,9 @@ anything is published:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, the declared tool streams and the tool-call stdin/stdout/stderr JSON contract, and the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling) |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next) and the database round trip (params in, rows out, a rolled-back and a committed transaction) included. `--tool-stream` drives `golem:tool/guest.invoke` itself with stdin bytes and both output writers attached, so the tool streams are checked where the runtime attaches them |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface (and tool stdin/stdout/stderr through `golem tool invoke --stdin/--stdout/--stderr`), HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
+| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, the declared tool streams and the tool-call stdin/stdout/stderr JSON contract, the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling), and the permission JSON mirror (the grant/view/bounds/holder shapes, every `permission-error` rendering, the principal in all four shapes, and the handle rules' error paths) |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next), the database round trip (params in, rows out, a rolled-back and a committed transaction) and the permission round trip (the wallet, a narrowing derivation, a refused one, a scope card, a revocation, a release) included. `--tool-stream` drives `golem:tool/guest.invoke` itself with stdin bytes and both output writers attached, so the tool streams are checked where the runtime attaches them |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface (and tool stdin/stdout/stderr through `golem tool invoke --stdin/--stdout/--stderr`), HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), the permissions surface (a `golem-user` principal for a CLI invocation and an `agent` principal naming the caller for an RPC one, the default card in the wallet, its lattice, a derivation the runtime accepts and one it refuses, a revocation, the handle rules, and an installation onto the agent itself), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so

@@ -344,4 +344,67 @@ Effect := {}.{
 	dbRollback! : U32 => Try({}, Str)
 	dbRollback! = |handle|
 		Host.rocFxDbRollback!(handle)
+
+	## Permissions (`golem:permissions`) and the principal: every one of these is a
+	## synchronous host call, so nothing is awaited here. Cards are host-side
+	## capabilities the app carries as `U32` handles.
+	getPrincipal! : {} => Str
+	getPrincipal! = |_|
+		Host.rocFxGetPrincipal!({})
+
+	permissionsWallet! : {} => Try(Str, Str)
+	permissionsWallet! = |_|
+		Host.rocFxPermissionsWallet!({})
+
+	permissionsWalletVersion! : {} => Try(Str, Str)
+	permissionsWalletVersion! = |_|
+		Host.rocFxPermissionsWalletVersion!({})
+
+	permissionId! : U32 => Try(Str, Str)
+	permissionId! = |handle|
+		Host.rocFxPermissionId!(handle)
+
+	permissionParents! : U32 => Try(Str, Str)
+	permissionParents! = |handle|
+		Host.rocFxPermissionParents!(handle)
+
+	permissionExpiresAt! : U32 => Try(Str, Str)
+	permissionExpiresAt! = |handle|
+		Host.rocFxPermissionExpiresAt!(handle)
+
+	permissionInspect! : U32 => Try(Str, Str)
+	permissionInspect! = |handle|
+		Host.rocFxPermissionInspect!(handle)
+
+	permissionDerive! : U32, Str => Try(U32, Str)
+	permissionDerive! = |handle, boundsJson|
+		Host.rocFxPermissionDerive!(handle, boundsJson)
+
+	permissionDeriveFromWallet! : Str => Try(U32, Str)
+	permissionDeriveFromWallet! = |boundsJson|
+		Host.rocFxPermissionDeriveFromWallet!(boundsJson)
+
+	permissionDeriveScope! : Str => Try(U32, Str)
+	permissionDeriveScope! = |requestJson|
+		Host.rocFxPermissionDeriveScope!(requestJson)
+
+	permissionInstall! : U32, Str => Try({}, Str)
+	permissionInstall! = |handle, holderJson|
+		Host.rocFxPermissionInstall!(handle, holderJson)
+
+	permissionRevoke! : U32 => Try(U32, Str)
+	permissionRevoke! = |handle|
+		Host.rocFxPermissionRevoke!(handle)
+
+	permissionRelease! : U32 => Try({}, Str)
+	permissionRelease! = |handle|
+		Host.rocFxPermissionRelease!(handle)
+
+	permissionListModules! : {} => Try(Str, Str)
+	permissionListModules! = |_|
+		Host.rocFxPermissionListModules!({})
+
+	permissionValidateGrant! : Str => Try({}, Str)
+	permissionValidateGrant! = |grantJson|
+		Host.rocFxPermissionValidateGrant!(grantJson)
 }
