@@ -660,6 +660,25 @@ check "router: unmapped path answers 404" "404" \
 check "router: openapi provider reaches the deployment spec" "The uploaded index page" \
     "$(fetch "/openapi.yaml")"
 
+# The dynamic handler: a request the static bindings do not match is handed to
+# the app's `handleRequest!`, which answers with a status, headers and a body.
+# Golem builds the response from the value tree the handler returns, and a
+# bodyless answer (204 here) is complete.
+check "router: dynamic handler answers a bodyless response" "204" \
+    "$(fetch_status "/static/ping")"
+check "router: dynamic handler's status reaches the client" "200" \
+    "$(fetch_status "/static/unmatched")"
+check_true "router: dynamic handler's headers reach the client" \
+    "$(fetch_headers "/static/unmatched" | grep -qi '^content-type: text/plain' && echo true || echo false)"
+# A *non-empty* response body does not arrive on Golem 1.6.0: the guest-created
+# stream the body travels in is never delivered to the invocation session, while
+# the same value-tree slot works for a stream the runtime created itself (see
+# docs/router-handler-status.md, which has the measurements). The handler still
+# answers with its head, and the platform logs a warning when the app's body is
+# dropped, so the skip is the documented state rather than a silent one.
+say "SKIP  router: a non-empty response body (blocked on the guest-created stream transfer; see docs/router-handler-status.md)"
+skipped=$((skipped + 1))
+
 say "==> Snapshot-based agent update (incompatible revision)"
 # `counter_v2` adds a tool and a state field, so the agent type changes: Golem
 # leaves an existing agent on its old revision, and `update … manual` carries the

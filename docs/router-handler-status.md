@@ -102,6 +102,9 @@ outside the export call, or the transport id the response value carries is not
 the one the session publishes under, needs executor-side instrumentation to
 settle; it is not something this handler can decide.
 
+The report was filed upstream as
+[golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291).
+
 ### What is in place, and the two ways forward
 
 Working and covered on this branch: the request path (schema graph, `handle`

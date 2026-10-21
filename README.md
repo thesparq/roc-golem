@@ -490,17 +490,48 @@ Router mounts are literal-only (routers have no constructor parameter to capture
 and cannot declare tools; the host refuses those combinations, along with
 `staticBindings` on a regular agent, before Golem sees them.
 
-Still to do: the **dynamic** router handler (`handle(request) -> response`),
-whose request and response bodies are `stream<u8>` values. That needs the schema
-graph to carry streams and the host to read the incoming body and write the
-outgoing one, which the synchronous Roc-facing effects do not model yet — so
-router mounts today serve uploaded files and the OpenAPI document, not computed
-responses.
+### The dynamic router handler
+
+A router can also compute its responses. Declare `httpHandler: HandlesRequests`
+and every request the mount's file mappings do not match is handed to
+`handleRequest!` instead of answering 404:
+
+```roc
+handleRequest!: |state, request|
+        {
+                state,
+                response: {
+                        status: 200,
+                        headers: [{ name: "content-type", value: "text/plain" }],
+                        body: "asked for ${request.method} ${request.path}",
+                },
+        },
+```
+
+The app sees the canonical HTTP envelope: `request.method`, `scheme`,
+`authority`, `path`, `query`, the ordered `headers` (each with a name and a byte
+value), and `body` — the request body, already buffered by the host. The status,
+the headers and the body come back the same way, and Golem owns the framing, so
+an app must not set `content-length`.
+
+**What ships, and the one thing that does not.** The handler is invoked, the
+request is decoded, and the response *head* — status and headers — reaches the
+client; a bodyless answer (a 204, say) is complete. A **non-empty response body
+does not arrive on Golem 1.6.0**: the body travels in a guest-created stream
+(`golem:core/types.schema-value-stream.wrap`), the runtime accepts the write but
+never forwards those items to the invocation session, and the client sees the
+head with an empty body. The platform logs a warning when an app's body is
+dropped rather than failing the invocation, so an app written today keeps
+working once the runtime forwards it. `docs/router-handler-status.md` has the
+measurements (including the control case: the same value-tree slot *does*
+deliver a stream the runtime created itself) and the two ways to fix it
+upstream (reported as [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291)). The e2e covers the bodyless answer and the head, and skips the body
+with that reason.
 
 The `static_site` example is the worked case: `examples/static_site/main.roc`,
 `examples/static_site/static/`, and the `router:` checks in `tooling/e2e.sh`
-(both binding kinds, the immutable ETag, 404, and that the provider document
-reaches the deployment's spec).
+(both binding kinds, the immutable ETag, 404, the provider document reaching the
+deployment's spec, and the dynamic handler's 204 and head).
 
 ---
 

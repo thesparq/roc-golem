@@ -27,12 +27,43 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 
 ## Gaps, in rough order of how much a real app misses them
 
-1. **Dynamic HTTP router handler** (`handle(request) -> response` with
-   `stream<u8>` bodies). Everything but the response body is implemented on
-   `wip/router-handler`; the body needs the export to deliver the response head
-   before writing it (`task.return`-then-continue), which the wit-bindgen fork's
-   generated export does not express. See `docs/router-handler-status.md` there.
-   Cost: fork-level work.
+1. **Dynamic HTTP router handler** (`handle(request) -> response`) — **shipped,
+   with the response body blocked upstream.** The handler is invoked for every
+   request a router mount's file mappings do not match: the request is decoded
+   from the canonical envelope (method, scheme, authority, path, query, ordered
+   byte-valued headers, buffered body) and the app answers with a status,
+   headers and a body. The head reaches the client and a bodyless answer is
+   complete; **a non-empty body does not arrive on Golem 1.6.0**.
+
+   The blocker is precise, and it is not the export machinery, not the head and
+   not timing. A controlled comparison on one local server (this platform's
+   router and the official Rust SDK probe side by side) measured:
+
+   - the SDK probe delivers a body (35 bytes, clean framing); this platform
+     answers 200 with 0 bytes and curl reports a truncated transfer;
+   - this platform's oplog has **no `StreamItems` entry** — the chunk never
+     reaches the invocation session — while the probe's has one between its
+     `StreamSession` and `StreamEnd`;
+   - queuing the write with `spawn_local`, a `yield_async` before it, and a
+     300 ms wait before it (during which the oplog shows the output stream
+     registering) all leave the body empty, and an inline write in the SDK
+     probe deadlocks (504) while this platform's is accepted immediately — so
+     the two "wrapped" streams are not the same thing on the host side;
+   - the value-tree slot itself is fine: returning the **request's** stream (a
+     host-created endpoint) as the response body delivers the client's own
+     upload back (`POST /static/echo` → 200, `echo me`).
+
+   So the transfer of a **guest-created** stream (`schema-value-stream.wrap`)
+   into a returned value tree is what fails; the executor pipes that reader into
+   an `accounted_output_stream_pair` live stream whose items never surface.
+   `docs/router-handler-status.md` is the full record, and
+   `docs/upstream-router-body.md` is the report, filed upstream as
+   [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291). Two ways
+   forward: a host-created body endpoint (the shape
+   `golem:tool/host.create-output` already has for tools, and the one this
+   platform has demonstrated it can deliver), or executor-side instrumentation
+   of the `wrap`/pipe path. The platform logs a warning when an app's body is
+   dropped, so nothing changes for an app once either lands.
 2. **Durable streams** (`golem:agent/durable-streams`): append/read into host
    storage, streaming method inputs/outputs, and the HTTP streaming endpoints the
    SDKs derive from them. Our platform's methods are string-in/string-out.

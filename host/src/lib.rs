@@ -777,14 +777,25 @@ async fn handle_router_request(
     }
     value_nodes[2] = SchemaValueNode::ListValue(header_nodes);
 
-    // The response body is a stream of `list<u8>` chunks. The runtime starts
-    // reading it only after this call returns, so the write runs as a task the
-    // export's executor keeps driving until the body is delivered — that is
-    // what the fork's `spawn_local` is for ("execution after returning"). A
-    // write that still cannot complete is reported through the log rather than
-    // silently truncating the body.
+    // The response body is a stream of `list<u8>` chunks. On Golem 1.6.0 a
+    // *guest-created* stream placed here is accepted but never delivered: the
+    // items do not reach the invocation session, while the same slot works for a
+    // stream the runtime created itself (the measurements are in
+    // `docs/router-handler-status.md`). The write stays — it is the shape the
+    // platform needs once the runtime forwards such a stream — but an app's body
+    // is reported rather than silently dropped, and the README says what a
+    // handler can expect.
     let (mut body_tx, body_rx) = wit_stream::new();
     let body_text = parsed.get("body").and_then(|v| v.as_str()).unwrap_or("");
+    if !body_text.is_empty() {
+        crate::wasi::logging::logging::log(
+            crate::wasi::logging::logging::Level::Warn,
+            "roc-agent",
+            "the app's response body cannot be delivered on Golem 1.6.0: a guest-created \
+             stream in the response value is not forwarded to the invocation session, so \
+             only the status and headers reach the client (docs/router-handler-status.md)",
+        );
+    }
     let mut body_nodes = Vec::new();
     for byte in body_text.bytes() {
         body_nodes.push(value_nodes.len() as i32);
@@ -794,10 +805,9 @@ async fn handle_router_request(
         value_nodes: vec![SchemaValueNode::ListValue(body_nodes)],
         root: 0,
     };
-    // The order matters: handing the read end to the runtime first (`wrap`) lets
-    // it start draining the stream, which is what the write below waits for. The
-    // Rust SDK's router does the same, and a body written *before* the transfer
-    // deadlocks (the stream is a rendezvous).
+    // Handing the read end to the runtime first (`wrap`) is what the SDK's
+    // router does too; a write *before* the transfer deadlocks, because the
+    // stream is a rendezvous.
     let handle = golem::core::types::SchemaValueStream::wrap(body_rx).await;
     let leftover = body_tx.write_all(vec![chunk]).await;
     drop(body_tx);
@@ -4334,6 +4344,106 @@ mod tests {
         assert!(parts.body.is_empty());
 
         assert!(parse_http_request("not a url").is_err());
+    }
+
+    /// The router's `handle` method declares Golem's canonical request and
+    /// response shapes: a request record with the seven envelope fields (its
+    /// body a `stream<list<u8>>`) and a response record of status, headers and
+    /// the same stream. Golem validates the graph when it registers the agent
+    /// type, so a field out of place is a 502 rather than a compile error.
+    #[test]
+    fn test_router_schema_graph_is_golems_canonical_envelope() {
+        let schema = router_schema_graph();
+        let fields = |index: i32| match &schema.graph.type_nodes[index as usize].body {
+            SchemaTypeBody::RecordType(fields) => fields.clone(),
+            other => panic!("expected a record at {index}, got {other:?}"),
+        };
+        let names = |fields: &[NamedFieldType]| {
+            fields
+                .iter()
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let request = fields(schema.request);
+        let response = fields(schema.response);
+        assert_eq!(
+            names(&request),
+            vec!["method", "scheme", "authority", "path", "query", "headers", "body"]
+        );
+        assert_eq!(names(&response), vec!["status", "headers", "body"]);
+        assert_eq!(schema.graph.root, schema.request);
+
+        // The response status is a `u16`, and both bodies are `stream<list<u8>>`:
+        // Golem rebuilds the head from the record's first two fields and relays
+        // the third as the body, so a field out of place is a 502.
+        assert!(matches!(
+            schema.graph.type_nodes[response[0].body as usize].body,
+            SchemaTypeBody::U16Type(None)
+        ));
+        for body in [request[6].body, response[2].body] {
+            match &schema.graph.type_nodes[body as usize].body {
+                SchemaTypeBody::StreamType(Some(inner)) => assert!(matches!(
+                    schema.graph.type_nodes[*inner as usize].body,
+                    SchemaTypeBody::ListType(_)
+                )),
+                other => panic!("expected a typed stream at {body}, got {other:?}"),
+            }
+        }
+    }
+
+    /// The handler's request argument decodes from the parameter record Golem
+    /// passes in, and taking the body out of the tree leaves the stream handle
+    /// with exactly one owner — a resource cannot be cloned, so a second read
+    /// has to find the slot emptied.
+    #[test]
+    fn test_router_request_decodes_and_takes_the_body_stream() {
+        let mut tree = SchemaValueTree {
+            value_nodes: vec![
+                // 0: the parameter record; 1: the request record
+                SchemaValueNode::RecordValue(vec![1]),
+                SchemaValueNode::RecordValue(vec![2, 3, 4, 5, 6, 7, 8]),
+                SchemaValueNode::StringValue(String::from("POST")),
+                SchemaValueNode::StringValue(String::from("https")),
+                SchemaValueNode::StringValue(String::from("example.test")),
+                SchemaValueNode::StringValue(String::from("/static/echo")),
+                SchemaValueNode::OptionValue(Some(9)),
+                SchemaValueNode::ListValue(vec![11]),
+                // 8: the body stream. The handle is leaked rather than dropped
+                // below: outside wasm there is no host for the resource's drop
+                // import to call.
+                SchemaValueNode::StreamValue(unsafe {
+                    golem::core::types::SchemaValueStream::from_handle(7)
+                }),
+                SchemaValueNode::StringValue(String::from("a=1")),
+                SchemaValueNode::OptionValue(None),
+                // 11: one header entry, 13 its name and 14-15 its bytes
+                SchemaValueNode::RecordValue(vec![13, 14]),
+                SchemaValueNode::OptionValue(None),
+                SchemaValueNode::StringValue(String::from("x-token")),
+                SchemaValueNode::ListValue(vec![15]),
+                SchemaValueNode::U8Value(b't'),
+            ],
+            root: 0,
+        };
+
+        let mut request = RouterRequest::from_value_tree(&mut tree).expect("the request decodes");
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.scheme, "https");
+        assert_eq!(request.authority, "example.test");
+        assert_eq!(request.path, "/static/echo");
+        assert_eq!(request.query.as_deref(), Some("a=1"));
+        assert_eq!(
+            request.headers,
+            vec![(String::from("x-token"), String::from("t"))]
+        );
+        let body = core::mem::replace(&mut request.body, SchemaValueNode::OptionValue(None));
+        assert!(matches!(body, SchemaValueNode::StreamValue(_)));
+        core::mem::forget(body);
+        assert!(matches!(
+            tree.value_nodes[8],
+            SchemaValueNode::OptionValue(None)
+        ));
     }
 
     #[test]
