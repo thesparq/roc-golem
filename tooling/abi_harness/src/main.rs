@@ -150,6 +150,46 @@ struct Ctx {
     /// `golem:tool/guest.invoke` call, by resource rep: what the component
     /// wrote through each, and how it closed it.
     tool_outputs: Vec<ToolOutputCapture>,
+    /// External-durable-stream host calls (`golem:agent/durable-streams`) the
+    /// agent made, for `--expect-stream`: the two constructors, the reads, the
+    /// appends, and the `drop`s a `durableStreamRelease!` performs.
+    durable_stream_calls: Vec<String>,
+    /// The harness's own streams: URL → what the component's appends put there.
+    /// A stream exists once it has been appended to — the key-value stub's
+    /// implicit buckets — and a read of a URL that was never written is the
+    /// `not-found` the error check drives.
+    durable_streams: BTreeMap<String, StubStream>,
+    /// The readers and writers the stub handed out, by resource rep: the
+    /// descriptor each constructor was called with, which is what its reads and
+    /// appends are answered against.
+    durable_readers: Vec<StubReader>,
+    durable_writers: Vec<StubWriter>,
+}
+
+/// One stream of the durable-stream stub's store: the content type it was
+/// created with, the payload the appends accumulated (the JSON array text for a
+/// JSON stream, the raw bytes for a byte one), whether a `close` append ended
+/// it, and the offset a read that consumed it advances to.
+struct StubStream {
+    content_type: String,
+    payload: Vec<u8>,
+    closed: bool,
+    next_offset: String,
+}
+
+/// A reader the stub handed out: the immutable descriptor its constructor was
+/// called with.
+struct StubReader {
+    url: String,
+    mode: golem::agent::durable_streams::DurableStreamMode,
+}
+
+/// A writer the stub handed out: the descriptor, producer identity included.
+struct StubWriter {
+    url: String,
+    content_type: String,
+    producer_id: String,
+    producer_epoch: u64,
 }
 
 /// An outgoing request as recorded by the `wasi:http` stubs.
@@ -1107,6 +1147,380 @@ impl golem::websocket::client::HostWebsocketConnectionWithStore<Ctx> for Ctx {
                 String::from("stub-reply"),
             )))
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// External durable streams (`golem:agent/durable-streams`) stubs
+// ---------------------------------------------------------------------------
+//
+// On a real server the host owns the HTTP and the framing, and the service owns
+// the streams; here the stub keeps a small store of its own, so an append the
+// component made is what its next read answers with — the round-trip replies
+// only come back correct if the JSON really went into that store and out of it.
+// Two of the rules the real host applies are mirrored because the checks drive
+// them: a JSON payload needs an `application/json` content type, and reading a
+// stream that was never written (or one the stub does not know) is `not-found`.
+// The offsets are the stub's own opaque tokens, which is all the protocol
+// promises about them.
+
+/// The `durable-stream-mode` of a reader, as `--expect-stream` reads it.
+fn stream_mode_name(mode: golem::agent::durable_streams::DurableStreamMode) -> &'static str {
+    match mode {
+        golem::agent::durable_streams::DurableStreamMode::Json => "json",
+        golem::agent::durable_streams::DurableStreamMode::Bytes => "bytes",
+    }
+}
+
+/// The `durable-stream-transport` of a read request, as `--expect-stream` reads
+/// it.
+fn stream_transport_name(
+    transport: golem::agent::durable_streams::DurableStreamTransport,
+) -> &'static str {
+    match transport {
+        golem::agent::durable_streams::DurableStreamTransport::CatchUp => "catch-up",
+        golem::agent::durable_streams::DurableStreamTransport::LongPoll => "long-poll",
+        golem::agent::durable_streams::DurableStreamTransport::Sse => "sse",
+    }
+}
+
+/// The payload of an empty batch: the protocol's `[]` for a JSON stream, no
+/// bytes at all for a byte one (what the real host's `empty-payload` answers).
+fn stream_empty_payload(mode: golem::agent::durable_streams::DurableStreamMode) -> Vec<u8> {
+    match mode {
+        golem::agent::durable_streams::DurableStreamMode::Json => b"[]".to_vec(),
+        golem::agent::durable_streams::DurableStreamMode::Bytes => Vec::new(),
+    }
+}
+
+/// The append body the host would frame: a JSON payload's values joined into
+/// one array, or the bytes themselves.
+fn stream_append_body(
+    payload: &golem::agent::durable_streams::DurableStreamAppendPayload,
+) -> Vec<u8> {
+    match payload {
+        golem::agent::durable_streams::DurableStreamAppendPayload::Json(values) => {
+            format!("[{}]", values.join(",")).into_bytes()
+        }
+        golem::agent::durable_streams::DurableStreamAppendPayload::Bytes(bytes) => bytes.clone(),
+    }
+}
+
+/// Appends one framed body to a stream's payload the way the reference service
+/// does: the JSON arrays are merged into one array, the byte streams are
+/// concatenated (a byte stream does not preserve append boundaries).
+fn stream_absorb(stream: &mut StubStream, body: &[u8], json: bool) {
+    if json {
+        let inner = String::from_utf8_lossy(body)
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim()
+            .to_string();
+        if inner.is_empty() {
+            return;
+        }
+        let text = String::from_utf8_lossy(&stream.payload).trim().to_string();
+        let merged = if text == "[]" || text.is_empty() {
+            format!("[{inner}]")
+        } else {
+            format!("{},{inner}]", text.trim_end_matches(']'))
+        };
+        stream.payload = merged.into_bytes();
+    } else {
+        stream.payload.extend_from_slice(body);
+    }
+    stream.next_offset = format!("stub-{}", stream.payload.len());
+}
+
+impl golem::agent::durable_streams::Host for Ctx {}
+
+impl golem::agent::durable_streams::HostDurableStreamReader for Ctx {
+    fn new(
+        &mut self,
+        options: golem::agent::durable_streams::DurableStreamReaderOptions,
+        auth: Option<wasmtime::component::Resource<golem::core::types::Secret>>,
+    ) -> wasmtime::component::Resource<golem::agent::durable_streams::DurableStreamReader> {
+        self.durable_stream_calls.push(format!(
+            "reader(url={}, mode={}, timeout-ms={}, auth={})",
+            options.url,
+            stream_mode_name(options.mode),
+            options.timeout_ms,
+            if auth.is_some() { "some" } else { "none" },
+        ));
+        let rep = self.durable_readers.len() as u32;
+        self.durable_readers.push(StubReader {
+            url: options.url,
+            mode: options.mode,
+        });
+        // The stub tracks the descriptor itself, so the handle only carries the
+        // table index.
+        unsafe { wasmtime::component::Resource::new_own(rep) }
+    }
+
+    fn drop(
+        &mut self,
+        rep: wasmtime::component::Resource<golem::agent::durable_streams::DurableStreamReader>,
+    ) -> wasmtime::Result<()> {
+        // What a `durableStreamRelease!` performs: the host's own entry for the
+        // reader is released, which is what `--expect-stream` asserts.
+        match self.durable_readers.get(rep.rep() as usize) {
+            Some(reader) => self
+                .durable_stream_calls
+                .push(format!("drop(reader url={})", reader.url)),
+            None => self
+                .durable_stream_calls
+                .push(format!("drop(reader rep={})", rep.rep())),
+        }
+        Ok(())
+    }
+}
+
+impl golem::agent::durable_streams::HostDurableStreamReaderWithStore<Ctx> for Ctx {
+    fn read(
+        accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        self_: wasmtime::component::Resource<
+            golem::agent::durable_streams::DurableStreamReader,
+        >,
+        request: golem::agent::durable_streams::DurableStreamReadRequest,
+    ) -> impl std::future::Future<
+        Output = Result<
+            golem::agent::durable_streams::DurableStreamBatch,
+            golem::agent::durable_streams::DurableStreamError,
+        >,
+    > + Send {
+        let answer = accessor.with(|mut access| {
+            let ctx = access.get();
+            let Some(reader) = ctx
+                .durable_readers
+                .get(self_.rep() as usize)
+                .map(|reader| (reader.url.clone(), reader.mode))
+            else {
+                return Err(golem::agent::durable_streams::DurableStreamError {
+                    kind: golem::agent::durable_streams::DurableStreamErrorKind::ProtocolError,
+                    message: format!("unknown durable stream reader rep {}", self_.rep()),
+                    retry_after_ms: None,
+                    producer_epoch: None,
+                    expected_sequence: None,
+                });
+            };
+            let (url, mode) = reader;
+            let content_type = match &request.content_type {
+                Some(value) => value.clone(),
+                None => String::from("none"),
+            };
+            let stream = ctx.durable_streams.get(&url).map(|stream| {
+                (
+                    stream.payload.clone(),
+                    stream.content_type.clone(),
+                    stream.closed,
+                    stream.next_offset.clone(),
+                )
+            });
+            let Some((payload, stream_content_type, closed, next_offset)) = stream else {
+                ctx.durable_stream_calls.push(format!(
+                    "read(url={url}, offset={}, transport={}, content-type={content_type}) -> not-found",
+                    request.checkpoint.offset,
+                    stream_transport_name(request.transport),
+                ));
+                return Err(golem::agent::durable_streams::DurableStreamError {
+                    kind: golem::agent::durable_streams::DurableStreamErrorKind::NotFound,
+                    message: String::from("Durable Streams HTTP status 404"),
+                    retry_after_ms: None,
+                    producer_epoch: None,
+                    expected_sequence: None,
+                });
+            };
+            // A read at the stream's own tail answers an empty batch (which is
+            // what advancing a checkpoint to `next` then reads), and `now`
+            // resolves to the tail the same way. A catch-up read that carries
+            // the whole stream is up to date either way.
+            let at_tail = request.checkpoint.offset == next_offset
+                || request.checkpoint.offset == "now";
+            let payload = if at_tail {
+                stream_empty_payload(mode)
+            } else {
+                payload
+            };
+            ctx.durable_stream_calls.push(format!(
+                "read(url={url}, offset={}, transport={}, content-type={content_type}) -> {} bytes, closed={closed}, up-to-date=true",
+                request.checkpoint.offset,
+                stream_transport_name(request.transport),
+                payload.len(),
+            ));
+            Ok(golem::agent::durable_streams::DurableStreamBatch {
+                payload,
+                content_type: stream_content_type,
+                next: golem::agent::durable_streams::DurableStreamCheckpoint {
+                    offset: next_offset,
+                    cursor: None,
+                },
+                up_to_date: true,
+                closed,
+            })
+        });
+        async move { answer }
+    }
+}
+
+impl golem::agent::durable_streams::HostDurableStreamWriter for Ctx {
+    fn new(
+        &mut self,
+        options: golem::agent::durable_streams::DurableStreamWriterOptions,
+        auth: Option<wasmtime::component::Resource<golem::core::types::Secret>>,
+    ) -> wasmtime::component::Resource<golem::agent::durable_streams::DurableStreamWriter> {
+        self.durable_stream_calls.push(format!(
+            "writer(url={}, content-type={}, producer={}, epoch={}, timeout-ms={}, auth={})",
+            options.url,
+            options.content_type,
+            options.producer_id,
+            options.producer_epoch,
+            options.timeout_ms,
+            if auth.is_some() { "some" } else { "none" },
+        ));
+        let rep = self.durable_writers.len() as u32;
+        self.durable_writers.push(StubWriter {
+            url: options.url,
+            content_type: options.content_type,
+            producer_id: options.producer_id,
+            producer_epoch: options.producer_epoch,
+        });
+        unsafe { wasmtime::component::Resource::new_own(rep) }
+    }
+
+    fn drop(
+        &mut self,
+        rep: wasmtime::component::Resource<golem::agent::durable_streams::DurableStreamWriter>,
+    ) -> wasmtime::Result<()> {
+        match self.durable_writers.get(rep.rep() as usize) {
+            Some(writer) => self
+                .durable_stream_calls
+                .push(format!("drop(writer url={})", writer.url)),
+            None => self
+                .durable_stream_calls
+                .push(format!("drop(writer rep={})", rep.rep())),
+        }
+        Ok(())
+    }
+}
+
+impl golem::agent::durable_streams::HostDurableStreamWriterWithStore<Ctx> for Ctx {
+    fn append(
+        accessor: &wasmtime::component::Accessor<Ctx, Ctx>,
+        self_: wasmtime::component::Resource<
+            golem::agent::durable_streams::DurableStreamWriter,
+        >,
+        request: golem::agent::durable_streams::DurableStreamAppendRequest,
+    ) -> impl std::future::Future<
+        Output = Result<
+            golem::agent::durable_streams::DurableStreamAppendReceipt,
+            golem::agent::durable_streams::DurableStreamError,
+        >,
+    > + Send {
+        let answer = accessor.with(|mut access| {
+            let ctx = access.get();
+            let Some(writer) = ctx
+                .durable_writers
+                .get(self_.rep() as usize)
+                .map(|writer| {
+                    (
+                        writer.url.clone(),
+                        writer.content_type.clone(),
+                        writer.producer_id.clone(),
+                        writer.producer_epoch,
+                    )
+                })
+            else {
+                return Err(golem::agent::durable_streams::DurableStreamError {
+                    kind: golem::agent::durable_streams::DurableStreamErrorKind::ProtocolError,
+                    message: format!("unknown durable stream writer rep {}", self_.rep()),
+                    retry_after_ms: None,
+                    producer_epoch: None,
+                    expected_sequence: None,
+                });
+            };
+            let (url, content_type, producer_id, producer_epoch) = writer;
+            let (tag, body) = match &request.payload {
+                golem::agent::durable_streams::DurableStreamAppendPayload::Json(values) => (
+                    format!("json {} value(s)", values.len()),
+                    stream_append_body(&request.payload),
+                ),
+                golem::agent::durable_streams::DurableStreamAppendPayload::Bytes(bytes) => {
+                    (format!("bytes {}", bytes.len()), bytes.clone())
+                }
+            };
+            // The host's own preflight rules: a JSON payload needs an
+            // `application/json` content type, each of its elements has to be
+            // encoded JSON, and an empty append needs `close`.
+            let json = matches!(
+                request.payload,
+                golem::agent::durable_streams::DurableStreamAppendPayload::Json(_)
+            );
+            let refusal = if json && content_type != "application/json" {
+                Some("JSON payload requires application/json")
+            } else if let golem::agent::durable_streams::DurableStreamAppendPayload::Json(values) =
+                &request.payload
+            {
+                match values
+                    .iter()
+                    .find(|value| serde_json::from_str::<serde_json::Value>(value).is_err())
+                {
+                    Some(_) => Some("Invalid JSON append value"),
+                    None if values.is_empty() && !request.close => {
+                        Some("Empty append requires close")
+                    }
+                    None => None,
+                }
+            } else if body.is_empty() && !request.close {
+                Some("Empty append requires close")
+            } else {
+                None
+            };
+            if let Some(message) = refusal {
+                ctx.durable_stream_calls.push(format!(
+                    "append(url={url}, sequence={}, close={}, {tag}) -> invalid-request",
+                    request.sequence, request.close,
+                ));
+                return Err(golem::agent::durable_streams::DurableStreamError {
+                    kind: golem::agent::durable_streams::DurableStreamErrorKind::InvalidRequest,
+                    message: message.to_string(),
+                    retry_after_ms: None,
+                    producer_epoch: None,
+                    expected_sequence: None,
+                });
+            }
+
+            let stream = ctx
+                .durable_streams
+                .entry(url.clone())
+                .or_insert_with(|| StubStream {
+                    content_type: content_type.clone(),
+                    payload: if json {
+                        b"[]".to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    closed: false,
+                    next_offset: String::from("stub-0"),
+                });
+            stream_absorb(stream, &body, json);
+            if request.close {
+                stream.closed = true;
+            }
+            let next_offset = stream.next_offset.clone();
+            let closed = stream.closed;
+            ctx.durable_stream_calls.push(format!(
+                "append(url={url}, producer={producer_id}, sequence={}, close={}, {tag}) -> next={next_offset}, epoch={producer_epoch}, closed={closed}",
+                request.sequence, request.close,
+            ));
+            Ok(golem::agent::durable_streams::DurableStreamAppendReceipt {
+                next_offset: Some(next_offset),
+                epoch: producer_epoch,
+                sequence: request.sequence,
+                closed,
+            })
+        });
+        async move { answer }
     }
 }
 
@@ -3154,6 +3568,10 @@ struct Expectation {
     /// Substring expected in the permission calls the agent made through
     /// `golem:permissions` (`self-wallet`, `inspect-card`, `derive`, …).
     expect_permission: Option<String>,
+    /// Substring expected in the external-durable-stream calls the agent made
+    /// through `golem:agent/durable-streams` (`reader(…)`, `read(…)`,
+    /// `append(…)`, `drop(…)`).
+    expect_stream: Option<String>,
     /// The first message is expected to trap, with the substring in the trap's
     /// text. The message/reply checks are skipped in that case: a trap is a
     /// failed invocation, not a reply, and the instance is not asked for
@@ -3203,7 +3621,7 @@ fn usage() -> String {
          [--expect-quota SUBSTRING] [--expect-retry SUBSTRING] \
          [--expect-host-call SUBSTRING] [--expect-kv SUBSTRING] \
          [--expect-blob SUBSTRING] [--expect-fs SUBSTRING] [--expect-db SUBSTRING] \
-         [--expect-permission SUBSTRING] \
+         [--expect-permission SUBSTRING] [--expect-stream SUBSTRING] \
          [--expect-trap SUBSTRING] \
          [--tool NAME] [--tool-reply SUBSTRING] [--expect-mount PATH] \
          [--tool-stream NAME] [--tool-stdin TEXT] \
@@ -3237,6 +3655,7 @@ fn parse_args() -> Result<Expectation> {
         expect_fs: None,
         expect_db: None,
         expect_permission: None,
+        expect_stream: None,
         expect_trap: None,
         tool: None,
         tool_reply: None,
@@ -3279,6 +3698,7 @@ fn parse_args() -> Result<Expectation> {
             "--expect-fs" => expectation.expect_fs = args.next(),
             "--expect-db" => expectation.expect_db = args.next(),
             "--expect-permission" => expectation.expect_permission = args.next(),
+            "--expect-stream" => expectation.expect_stream = args.next(),
             "--expect-trap" => expectation.expect_trap = args.next(),
             "--tool" => expectation.tool = args.next(),
             "--tool-reply" => expectation.tool_reply = args.next(),
@@ -3590,6 +4010,10 @@ async fn run() -> Result<ExitCode> {
             response_cursor: 0,
             http_request_lines: Vec::new(),
             tool_outputs: Vec::new(),
+            durable_stream_calls: Vec::new(),
+            durable_streams: BTreeMap::new(),
+            durable_readers: Vec::new(),
+            durable_writers: Vec::new(),
         },
     );
     let bindings = HarnessWorld::instantiate_async(&mut store, &component, &linker)
@@ -4196,6 +4620,17 @@ async fn run() -> Result<ExitCode> {
             if !hit {
                 failures.push(format!(
                     "no permission call contains {:?} (made: {:?})",
+                    expected, calls
+                ));
+            }
+        }
+        if let Some(expected) = &expectation.expect_stream {
+            let calls = ctx.durable_stream_calls.clone();
+            let hit = calls.iter().any(|call| call.contains(expected.as_str()));
+            println!("[durable stream calls] {:?}", calls);
+            if !hit {
+                failures.push(format!(
+                    "no durable stream call contains {:?} (made: {:?})",
                     expected, calls
                 ));
             }

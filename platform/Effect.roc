@@ -305,6 +305,36 @@ Effect := {}.{
 		Host.rocFxListDir!(path)
 	}
 
+	## External durable streams (`golem:agent/durable-streams`): a reader and a
+	## writer for a service that speaks the Durable Streams protocol. Both are
+	## host-side resources the app carries as `U32` handles, and every structured
+	## value travels as JSON in the WIT shape (see `Golem.roc` for the shapes and
+	## the README for what the app owns).
+	durableStreamReader! : Str => Try(U32, Str)
+	durableStreamReader! = |optionsJson| {
+		Host.rocFxDurableStreamReader!(optionsJson)
+	}
+
+	durableStreamRead! : U32, Str => Try(Str, Str)
+	durableStreamRead! = |handle, requestJson| {
+		Host.rocFxDurableStreamRead!(handle, requestJson)
+	}
+
+	durableStreamWriter! : Str => Try(U32, Str)
+	durableStreamWriter! = |optionsJson| {
+		Host.rocFxDurableStreamWriter!(optionsJson)
+	}
+
+	durableStreamAppend! : U32, Str => Try(Str, Str)
+	durableStreamAppend! = |handle, requestJson| {
+		Host.rocFxDurableStreamAppend!(handle, requestJson)
+	}
+
+	durableStreamRelease! : U32 => Try({}, Str)
+	durableStreamRelease! = |handle| {
+		Host.rocFxDurableStreamRelease!(handle)
+	}
+
 	## Databases (`golem:rdbms`): three engines, one `open` per interface, and a
 	## shared query/execute/transaction surface. Connections and transactions are
 	## `U32` handles in the host's handle table; a statement's params are a JSON

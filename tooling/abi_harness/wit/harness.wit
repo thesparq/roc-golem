@@ -35,6 +35,12 @@ world harness-world {
     import golem:rdbms/postgres@1.5.0;
     import golem:rdbms/types@1.5.0;
     import golem:agent/common@2.0.0;
+    // External durable streams: the two resources' methods are `async`, which
+    // this harness can drive (see the README), and the stub keeps a small store
+    // of its own so an append the component made is what its next read answers
+    // with — and a read of a stream that does not exist is the `not-found` the
+    // error check drives.
+    import golem:agent/durable-streams@2.0.0;
     import golem:agent/host@2.0.0;
     import golem:tool/common@0.1.0;
     import golem:tool/streams@0.1.0;

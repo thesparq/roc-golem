@@ -1113,6 +1113,128 @@ by chunk).
 
 ---
 
+## 🌊 External durable streams
+
+`golem:agent/durable-streams@2.0.0` is how an agent reads and appends to a
+service that speaks the [Durable Streams
+protocol](https://github.com/durable-streams/durable-streams) — a stream hosted
+by *another* service and addressed by URL, not a Golem method stream. The host
+owns the HTTP, the framing and (when a secret is handed in) the authentication;
+the app owns everything about progress. Nothing here depends on the
+guest-created-stream problem that blocks the router response body: no bytes
+cross a component-model stream.
+
+| Effect | What it does |
+| --- | --- |
+| `durableStreamReader! : Str => Try(U32, Str)` | builds a reader from `{"url": …, "mode": "json"\|"bytes", "timeoutMs": …}` and returns its handle |
+| `durableStreamRead! : U32, Str => Try(Str, Str)` | one read attempt on that reader |
+| `durableStreamWriter! : Str => Try(U32, Str)` | builds a writer from `{"url": …, "contentType": …, "producerId": …, "producerEpoch": …, "timeoutMs": …}` and returns its handle |
+| `durableStreamAppend! : U32, Str => Try(Str, Str)` | one append attempt on that writer |
+| `durableStreamRelease! : U32 => Try({}, Str)` | drops a reader or writer handle |
+
+A reader and a writer are host-side resources the app carries as `U32` handles,
+the way it carries a WebSocket or a permission card. `durableStreamRead!` and
+`durableStreamAppend!` borrow the handle — the same reader or writer stays
+usable for the next call — and `durableStreamRelease!` gives it up. Roc holds a
+plain number, so the host cannot see when an app is done: release what you do
+not keep. Releasing a writer never rolls back an append.
+
+### The JSON shapes
+
+The structured values travel as JSON in the WIT shape with camelCase names (the
+`retry_json` / `rdbms_json` / `permissions_json` convention):
+
+* a read request is `{"checkpoint": {"offset": …, "cursor": …|null},
+  "transport": "catch-up"|"long-poll"|"sse", "contentType": …|null}`
+  (`cursor` and `contentType` may also be absent),
+* a batch — the answer to a read — is `{"payload": …, "payloadBytes": N,
+  "contentType": …, "next": {"offset": …, "cursor": …|null},
+  "upToDate": …, "closed": …}`,
+* an append request is `{"payload": {"tag": "json", "value": ["…", …]},
+  "sequence": N, "close": …}` or `{"payload": {"tag": "bytes",
+  "value": "…"}, …}`,
+* an append receipt is `{"nextOffset": …|null, "epoch": …, "sequence": …,
+  "closed": …}`,
+* a `durable-stream-error` arrives as `"<kind>: <message>"` (`not-found: …`,
+  `sequence-conflict: …`), with `(retryAfterMs=…)`, `(producerEpoch=…)` and
+  `(expectedSequence=…)` appended when the variant carries them, so nothing an
+  app needs for recovery is lost.
+
+A JSON payload's elements are **individually encoded complete values** — the
+host frames the outer array from them — so an app that appends the JSON string
+`one` sends `{"tag":"json","value":["\"one\""]}`: the element text is
+`"one"`, quotes included. An array-valued application message stays one value
+inside that outer batch. A byte payload is the text's UTF-8 bytes.
+
+### What the app owns
+
+This is the part the official SDKs document and these effects keep: **the app
+owns the state.**
+
+* **Checkpoints.** The `offset` and `cursor` are server-generated opaque tokens
+  — pass them back unchanged. `-1` starts from the service's beginning/default
+  position and `now` asks it to resolve the current tail once during catch-up
+  (which is the only transport `now` may be used with). A read answers `next`,
+  and the app advances to it **after consuming the batch**; a partially consumed
+  batch does not advance it. Each effect is one protocol attempt, and a replay
+  of the invocation is answered from the recorded attempt rather than reaching
+  the service again.
+* **Producer identity.** `producerId` + `producerEpoch` are the app's to choose
+  and to keep, and `sequence` counts *requests* for that producer — not messages
+  and not bytes. A higher epoch at sequence 0 fences older ones for the same id.
+  A convenient durable id is `idempotencyKey!`: a replay hands the same key back,
+  which is exactly what an uncertain append's retry needs.
+* **Retry policy.** Nothing here retries: an `Err` is one attempt's outcome. The
+  SDKs' default is eight retries with a bounded exponential delay for the
+  transient kinds (`timeout`, `transport`, `rate-limited`, `unavailable`) and
+  none for the rest; `retryAfterMs` is the service's own wait. Retry an
+  **uncertain** append with the identical producer id, epoch, sequence, payload
+  and close flag — that is the protocol's idempotent request — and send new data
+  under the next sequence. `sequence-conflict`, `fenced` and `producer-diverged`
+  are producer-safety failures: reconcile, do not retry them as transient.
+* **Closure.** Empty data is only valid with `close`, which commits the data and
+  the closure together and consumes a sequence like any append. An empty batch
+  is not the end of a stream; only `closed` is.
+
+### The payload is text
+
+A batch's `payload` is bytes, and this platform carries bytes as lossy-UTF-8
+text — the convention `http!`, the key-value store and the filesystem already
+use. In `json` mode that is exact (the payload is the service's JSON array
+text); in `bytes` mode a byte that is not UTF-8 comes back as the replacement
+character, and `payloadBytes` — the byte count the host really received — is how
+an app notices. Byte streams are a sequence of bytes: the service's HTTP batch
+and append boundaries are not preserved.
+
+### Authentication
+
+Both constructors take the WIT's optional `secret`, and this platform passes
+`none`: it has no secret-*handle* surface yet. `getConfig!` returns a secret's
+value, not the capability the constructor borrows, so an authenticated stream is
+a follow-up rather than something an app can reach today. What it would take:
+a config declaration whose value is surfaced as the `golem:core/types` `secret`
+resource (the handle the constructors borrow — the runtime substitutes the
+credential at the HTTP boundary, so plaintext never crosses into guest memory),
+carried as a `U32` handle the way the other host-side resources are, plus the
+network and secret-`Reveal` authority the runtime already requires for the
+attempt.
+
+### Coverage
+
+The counter example carries `stream roundtrip <url> <first> <second>` (build a
+writer, append two JSON messages with their own sequences, read them back from
+the beginning and again from the checkpoint the first read answered with,
+releasing both handles), `stream append <url> <text>`, `stream read <url>` (the
+verb the `not-found` check drives) and `stream bytes <url> <text>` (a byte
+stream appended and closed in one request). The ABI harness drives all of them
+against a stub that keeps a small stream store of its own — so an append the
+component made is what its next read answers with — and the `stream:` checks in
+`tooling/e2e.sh` run the round trip against the protocol's own reference server
+(the Node package `@durable-streams/server`, started in memory by the e2e; the
+section reports a `SKIP` when Node or the package cannot be had).
+
+---
+
 ## 🔐 Permissions and the principal
 
 Golem decides what an agent may do with **permission cards**. A card lists
@@ -1304,6 +1426,7 @@ apps call them through `pf.Golem`.
 | `readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` / `deleteFile!` / `makeDir!` / `listDir!` | `wasi:filesystem` (p2) | the agent's *own* filesystem: per-agent and durable, provisioned from the manifest's `files:` list, with paths resolved against the agent's root (see [The agent's own filesystem](#-the-agents-own-filesystem)) |
 | `dbOpen!` / `dbOpenMysql!` / `dbOpenIgnite!` / `dbQuery!` / `dbExecute!` / `dbBegin!` / `dbCommit!` / `dbRollback!` | `golem:rdbms` | the three database engines: connections and transactions as `U32` handles, statements and values as the JSON `db-value` encoding (see [Databases](#-databases)) |
 | `getPrincipal!` / `permissionsWallet!` / `permissionsWalletVersion!` / `permissionId!` / `permissionParents!` / `permissionExpiresAt!` / `permissionInspect!` / `permissionDerive!` / `permissionDeriveFromWallet!` / `permissionDeriveScope!` / `permissionInstall!` / `permissionRevoke!` / `permissionRelease!` / `permissionListModules!` / `permissionValidateGrant!` | `golem:permissions` + the agent protocol | the caller's principal and its cards: grants as JSON, cards as `U32` handles (borrowed, consumed or released), and the kernel's own schema (see [Permissions and the principal](#-permissions-and-the-principal)) |
+| `durableStreamReader!` / `durableStreamRead!` / `durableStreamWriter!` / `durableStreamAppend!` / `durableStreamRelease!` | `golem:agent/durable-streams` | external streams that speak the Durable Streams protocol: reader and writer as `U32` handles, batches and receipts and errors as JSON, and checkpoints, producer identity, sequence progress and retry policy owned by the app (see [External durable streams](#-external-durable-streams)) |
 
 The linker only keeps the effects an app actually calls, so a component's import
 list stays as small as the agent's behaviour.
@@ -1317,9 +1440,9 @@ anything is published:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, the declared tool streams and the tool-call stdin/stdout/stderr JSON contract, the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling), the permission JSON mirror (the grant/view/bounds/holder shapes, every `permission-error` rendering, the principal in all four shapes, and the handle rules' error paths), and the multimodal schema (the declared list, both conversion directions, every rejection the host has, and the refusals an app that did not opt in gets) |
-| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next), the database round trip (params in, rows out, a rolled-back and a committed transaction), the permission round trip (the wallet, a narrowing derivation, a refused one, a scope card, a revocation, a release), and the multimodal method (a value tree built from an envelope in, the answer's tree read back as an envelope, plus a value the host refuses and an agent that did not declare the method) included. `--tool-stream` drives `golem:tool/guest.invoke` itself with stdin bytes and both output writers attached, so the tool streams are checked where the runtime attaches them |
-| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface (and tool stdin/stdout/stderr through `golem tool invoke --stdin/--stdout/--stderr`), HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, a multimodal method's text and binary parts through a real invoke, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), the permissions surface (a `golem-user` principal for a CLI invocation and an `agent` principal naming the caller for an RPC one, the default card in the wallet, its lattice, a derivation the runtime accepts and one it refuses, a revocation, the handle rules, and an installation onto the agent itself), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
+| Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, the declared tool streams and the tool-call stdin/stdout/stderr JSON contract, the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling), the permission JSON mirror (the grant/view/bounds/holder shapes, every `permission-error` rendering, the principal in all four shapes, and the handle rules' error paths), the durable-stream JSON mirror (the options, the read request, the batch with its byte length and lossy payload, the append payloads, the receipts, every error kind and its recovery fields, and the option validation), and the multimodal schema (the declared list, both conversion directions, every rejection the host has, and the refusals an app that did not opt in gets) |
+| ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next), the database round trip (params in, rows out, a rolled-back and a committed transaction), the permission round trip (the wallet, a narrowing derivation, a refused one, a scope card, a revocation, a release), the durable-stream round trip (two JSON appends with their sequences, the read that answers them back from the stub's own stream store, the checkpoint the second read continues from, a byte stream that closes, and the `not-found` of a stream that does not exist), and the multimodal method (a value tree built from an envelope in, the answer's tree read back as an envelope, plus a value the host refuses and an agent that did not declare the method) included. `--tool-stream` drives `golem:tool/guest.invoke` itself with stdin bytes and both output writers attached, so the tool streams are checked where the runtime attaches them |
+| End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface (and tool stdin/stdout/stderr through `golem tool invoke --stdin/--stdout/--stderr`), HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, a multimodal method's text and binary parts through a real invoke, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), the permissions surface (a `golem-user` principal for a CLI invocation and an `agent` principal naming the caller for an RPC one, the default card in the wallet, its lattice, a derivation the runtime accepts and one it refuses, a revocation, the handle rules, and an installation onto the agent itself), external durable streams against the protocol's own reference server (the stream created with the protocol's `PUT`, two JSON appends read back from the beginning and again from the checkpoint, a byte stream appended and closed, and the `not-found` of a stream that does not exist), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |
 
 `tooling/e2e.sh` reuses a server already listening on `:9881` and otherwise starts
 one (stopping it again on exit). It creates agents with a run-specific id, so
@@ -1331,6 +1454,14 @@ works — the all-in-one `golem-<target>` binary, not `golem-cli-<target>` — s
 the version matrix in the deploy section; CI and the release workflow install
 `v1.6.0` for it. It reports a `SKIP` line, and a count at the end, for checks
 that cannot run against the pinned server.
+
+The durable-streams section starts the protocol's reference server itself: it
+installs the Node package `@durable-streams/server` into the work directory
+(`E2E_DS_VERSION` pins the version, `E2E_DS_PORT` the port) and runs
+`tooling/durable_streams_server.mjs` from there, reusing a server that is
+already listening. A machine without Node, or one where the package cannot be
+installed, gets a `SKIP` with that reason instead of a failed run; CI and the
+release workflow have Node, so the section runs there.
 
 The ABI smoke test also runs against a debug build of the effects example, since
 the platform has had build-sensitive ABI bugs before.

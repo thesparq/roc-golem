@@ -19,11 +19,17 @@ import pf.Golem exposing [
 	dbRollback!,
 	defineAgent,
 	deleteFile!,
+	durableStreamAppend!,
+	durableStreamRead!,
+	durableStreamReader!,
+	durableStreamRelease!,
+	durableStreamWriter!,
 	fileExists!,
 	fileSize!,
 	getConfig!,
 	getPrincipal!,
 	getRetryPolicies!,
+	idempotencyKey!,
 	kvDelete!,
 	kvExists!,
 	kvGet!,
@@ -232,10 +238,26 @@ agent = defineAgent({
 					replies: [permissionCommand!(command.rest)],
 				}
 
+			"stream" =>
+			# stream <verb> [args]: external durable streams
+			# (`golem:agent/durable-streams`), against a service that speaks the
+			# Durable Streams protocol. `roundtrip <url> <first> <second>` appends
+			# two JSON messages through a writer, then reads them back from the
+			# beginning and again from the checkpoint the read returned;
+			# `append <url> <text>` is one append, `read <url>` one read from the
+			# beginning, and `bytes <url> <text>` a byte-stream round trip that
+			# closes the stream. A URL that does not exist is the service's own
+			# `not-found`, which the commands report. The verbs are in the usage
+			# reply, and the README's "Durable streams" section has the shapes.
+				{
+					state,
+					replies: [streamCommand!(command.rest)],
+				}
+
 			_ =>
 				{
 					state,
-					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>, kv <bucket> <key> <value>, blob <container> <object> <value>, fs <verb> <path> [text], db <verb> [args], permission <verb> [args]"],
+					replies: ["Unknown command '${message}'. Available: increment, decrement, get, quota <units>, retry, trap <reason>, oplog-commit <replicas>, resolve-agent-id <component> <agent-name>, resolve-component-id <component>, kv <bucket> <key> <value>, blob <container> <object> <value>, fs <verb> <path> [text], db <verb> [args], permission <verb> [args], stream <verb> [args]"],
 				}
 		}
 	},
@@ -1152,4 +1174,197 @@ handleOfDerived! = |reply|
 			}
 
 		Err(_) => 0
+	}
+
+## The external durable streams commands (`golem:agent/durable-streams`).
+## The protocol's state belongs to the app, and that is what these commands
+## carry: the producer identity (`streamWriterOptions!`), the sequences they
+## append (0, then 1, on one writer) and the checkpoint they read from next
+## (`nextOffsetOf` of the batch the read answered with). Every step's outcome
+## is in the one reply, so a check sees exactly how far it got — and an error
+## the service reported (`not-found: …`) shows itself in the slot it happened
+## in instead of hiding the rest.
+streamCommand! : Str => Str
+streamCommand! = |args| {
+	{ first: verb, second: url, rest: value } = splitThree(args)
+
+	match verb {
+		"roundtrip" => streamRoundTrip!(url, value)
+		"append" => streamAppend!(url, value)
+		"read" => streamRead!(url)
+		"bytes" => streamBytes!(url, value)
+		_ => "Usage: stream roundtrip <url> <first> <second> | stream append <url> <text> | stream read <url> | stream bytes <url> <text>"
+	}
+}
+
+## The writer options a `stream` command builds for `url`. The producer id is
+## this invocation's durable idempotency key: the app owns producer identity,
+## and a replay of the invocation hands the same id back, so an append retried
+## after a crash repeats the protocol's idempotent request instead of becoming
+## a second producer. `producerEpoch` 0 is the first ownership generation.
+streamWriterOptions! : Str, Str => Str
+streamWriterOptions! = |url, contentType|
+	"{\"url\":${jsonString(url)},\"contentType\":${jsonString(contentType)},\"producerId\":${jsonString(idempotencyKey!({}))},\"producerEpoch\":0,\"timeoutMs\":30000}"
+
+## The reader options: the URL, the mode (`json` or `bytes`) and a whole-attempt
+## deadline inside the WIT's 1..=300000 ms.
+streamReaderOptions! : Str, Str => Str
+streamReaderOptions! = |url, mode|
+	"{\"url\":${jsonString(url)},\"mode\":\"${mode}\",\"timeoutMs\":30000}"
+
+## One read request: from `offset` (opaque, `-1` for the beginning) over
+## `transport`, with the stream's content type left to the service's answer.
+streamReadRequest : Str, Str -> Str
+streamReadRequest = |offset, transport|
+	"{\"checkpoint\":{\"offset\":${jsonString(offset)},\"cursor\":null},\"transport\":\"${transport}\",\"contentType\":null}"
+
+## One append request: a `json` payload is a list of *individually encoded*
+## complete values — each element carries the encoded value, quotes included,
+## because the host frames the outer array from them — and a `bytes` payload is
+## the text's UTF-8 bytes. `sequence` counts requests for the producer and
+## `close` asks the service to commit the data and the closure together.
+streamAppendRequest : Str, Str, U64, Bool -> Str
+streamAppendRequest = |tag, value, sequence, close| {
+	payload = match tag {
+		"bytes" => "{\"tag\":\"bytes\",\"value\":${jsonString(value)}}"
+		# The value is encoded as a JSON string (which is the element text the
+		# host frames), and the request is JSON itself, so it is encoded twice:
+		# `one` becomes the element `"one"`, and the request text carries it as
+		# `"\"one\""`.
+		_ => "{\"tag\":\"json\",\"value\":[${jsonString(jsonString(value))}]}"
+	}
+
+	"{\"payload\":${payload},\"sequence\":${U64.to_str(sequence)},\"close\":${boolText(close)}}"
+}
+
+## One `durableStreamAppend!`'s outcome: the receipt JSON, or `error(<message>)`
+## with the platform's rendered `durable-stream-error`.
+streamAppendOutcome! : U32, Str, Str, U64, Bool => Str
+streamAppendOutcome! = |writer, tag, value, sequence, close|
+	match durableStreamAppend!(writer, streamAppendRequest(tag, value, sequence, close)) {
+		Ok(receipt) => receipt
+		Err(err) => "error(${err})"
+	}
+
+## One `durableStreamRead!`'s outcome: the batch JSON, or `error(<message>)`.
+streamReadOutcome! : U32, Str, Str => Str
+streamReadOutcome! = |reader, offset, transport|
+	match durableStreamRead!(reader, streamReadRequest(offset, transport)) {
+		Ok(batch) => batch
+		Err(err) => "error(${err})"
+	}
+
+## A `durableStreamRelease!`'s outcome, in the same slot style.
+describeStreamRelease! : Try({}, Str) => Str
+describeStreamRelease! = |released|
+	match released {
+		Ok(_) => "released=ok"
+		Err(err) => "released=error(${err})"
+	}
+
+## The `offset` of a batch's `next` checkpoint — the token an app advances to
+## once it has consumed the batch, and the one it hands the next read. An
+## answer that was an error (or carries no checkpoint) reads as `-1`, the
+## protocol's "from the beginning", so the next step shows itself instead of
+## hiding.
+nextOffsetOf : Str -> Str
+nextOffsetOf = |batchJson|
+	match Str.split_first(batchJson, "\"next\":{\"offset\":\"") {
+		Ok({ before: _, after }) =>
+			match Str.split_first(after, "\"") {
+				Ok({ before, after: _ }) => before
+				Err(_) => "-1"
+			}
+
+		Err(_) => "-1"
+	}
+
+## The whole JSON round trip `stream roundtrip <url> <first> <second>` runs:
+## build a writer whose producer id is this invocation's durable idempotency
+## key, append the two values as two messages (sequences 0 and 1 on that one
+## writer), release it, then build a reader, read from the beginning, read
+## again from the checkpoint the first read answered with, and release that.
+## The reply carries both append receipts, both batches, the checkpoint the
+## second read used (`from2`) and both releases.
+streamRoundTrip! : Str, Str => Str
+streamRoundTrip! = |url, values| {
+	{ first: firstValue, second: secondValue, rest: _ } = splitThree(values)
+
+	writerOutcome = match durableStreamWriter!(streamWriterOptions!(url, "application/json")) {
+		Err(err) => "writer error(${err})"
+
+		Ok(writer) => {
+			firstAppend = streamAppendOutcome!(writer, "json", firstValue, 0, False)
+			secondAppend = streamAppendOutcome!(writer, "json", secondValue, 1, False)
+			release = describeStreamRelease!(durableStreamRelease!(writer))
+			"append0=${firstAppend} append1=${secondAppend} ${release}"
+		}
+	}
+
+	readerOutcome = match durableStreamReader!(streamReaderOptions!(url, "json")) {
+		Err(err) => "reader error(${err})"
+
+		Ok(reader) => {
+			firstRead = streamReadOutcome!(reader, "-1", "catch-up")
+			from = nextOffsetOf(firstRead)
+			secondRead = streamReadOutcome!(reader, from, "catch-up")
+			release = describeStreamRelease!(durableStreamRelease!(reader))
+			"read1=${firstRead} from2=${from} read2=${secondRead} ${release}"
+		}
+	}
+
+	"stream ${writerOutcome} ${readerOutcome}"
+}
+
+## `stream append <url> <text>`: one JSON append on a writer this command
+## builds and releases, with sequence 0 and no close. The reply is the receipt.
+streamAppend! : Str, Str => Str
+streamAppend! = |url, value|
+	match durableStreamWriter!(streamWriterOptions!(url, "application/json")) {
+		Err(err) => "stream writer failed: ${err}"
+
+		Ok(writer) => {
+			receipt = streamAppendOutcome!(writer, "json", value, 0, False)
+			"stream append=${receipt} ${describeStreamRelease!(durableStreamRelease!(writer))}"
+		}
+	}
+
+## `stream read <url>`: one read from the beginning in JSON mode, then the
+## reader is released. A URL that names no stream comes back as the service's
+## own `not-found` error.
+streamRead! : Str => Str
+streamRead! = |url|
+	match durableStreamReader!(streamReaderOptions!(url, "json")) {
+		Err(err) => "stream reader failed: ${err}"
+
+		Ok(reader) => {
+			batch = streamReadOutcome!(reader, "-1", "catch-up")
+			"stream read=${batch} ${describeStreamRelease!(durableStreamRelease!(reader))}"
+		}
+	}
+
+## `stream bytes <url> <text>`: a byte-stream round trip — append the text's
+## bytes and close the stream in one request, then read them back in bytes
+## mode, where the batch reports `closed`. A byte stream does not preserve
+## append boundaries, which is why the read answers the bytes and not the
+## appended messages.
+streamBytes! : Str, Str => Str
+streamBytes! = |url, value|
+	match durableStreamWriter!(streamWriterOptions!(url, "application/octet-stream")) {
+		Err(err) => "stream writer failed: ${err}"
+
+		Ok(writer) => {
+			receipt = streamAppendOutcome!(writer, "bytes", value, 0, True)
+			release = describeStreamRelease!(durableStreamRelease!(writer))
+			readOutcome = match durableStreamReader!(streamReaderOptions!(url, "bytes")) {
+				Err(err) => "reader error(${err})"
+
+				Ok(reader) => {
+					batch = streamReadOutcome!(reader, "-1", "catch-up")
+					"read=${batch} ${describeStreamRelease!(durableStreamRelease!(reader))}"
+				}
+			}
+
+			"stream append=${receipt} ${release} ${readOutcome}"
+		}
 	}

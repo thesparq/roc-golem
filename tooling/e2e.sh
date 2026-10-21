@@ -46,6 +46,7 @@ failures=0
 skipped=0
 server_pid=""
 http_pid=""
+ds_pid=""
 
 say() { printf '%s\n' "$*"; }
 
@@ -63,6 +64,10 @@ check() { # check <label> <expected substring> <actual>
 
 cleanup() {
     [[ -n "$http_pid" ]] && kill "$http_pid" 2>/dev/null || true
+    # The durable-streams server detaches into its own session, so match it by
+    # the scratch copy of the script rather than relying on the recorded pid.
+    [[ -n "$ds_pid" ]] && kill "$ds_pid" 2>/dev/null || true
+    pkill -f "$WORK_DIR/durable-streams/server.mjs" 2>/dev/null || true
     if [[ -n "$server_pid" ]]; then
         # `setsid` detaches the server, so match it by its unique data directory
         # rather than relying on the recorded pid.
@@ -648,6 +653,121 @@ check "permission: the derived card installs onto this agent" "permission instal
 check_nospace "permission: the installed card is a concrete card in the wallet" \
     '"tag":"concrete"' \
     "$(invoke "$perm_install_agent" handle-message '"permission wallet"')"
+
+say "==> External durable streams (golem:agent/durable-streams)"
+# The counter's `stream` commands drive the whole surface against a real
+# service: the Durable Streams protocol's own reference server, the Node package
+# `@durable-streams/server`, running in memory here. The stream itself is made
+# with the protocol's `PUT` — the effects read and append to a stream, they do
+# not create one — the writer appends two JSON messages, and the reader reads
+# them back from the beginning and again from the checkpoint the first read
+# answered with. A contributor without Node (or without the package) gets a
+# documented SKIP instead of a red run; the CI runner has Node, so the section
+# runs there.
+DS_VERSION="${E2E_DS_VERSION:-0.3.9}"
+DS_PORT="${E2E_DS_PORT:-4437}"
+DS_BASE="http://127.0.0.1:$DS_PORT"
+
+# Any HTTP answer means a Durable Streams server is listening.
+ds_up() { [[ "$(curl -s -o /dev/null -w '%{http_code}' "$DS_BASE/")" != "000" ]]; }
+
+ds_reason=""
+if ds_up; then
+    say "    reusing the durable-streams server already listening on :$DS_PORT"
+elif ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    ds_reason="node and npm are not on PATH (the reference server is the Node package @durable-streams/server)"
+else
+    mkdir -p "$WORK_DIR/durable-streams"
+    cp "$ROOT_DIR/tooling/durable_streams_server.mjs" "$WORK_DIR/durable-streams/server.mjs"
+    if ! npm install --no-audit --no-fund --silent --prefix "$WORK_DIR/durable-streams" \
+        "@durable-streams/server@$DS_VERSION" \
+        >"$WORK_DIR/durable-streams/npm.log" 2>&1; then
+        ds_reason="npm could not install @durable-streams/server@$DS_VERSION (see $WORK_DIR/durable-streams/npm.log)"
+    else
+        # The script is named by its absolute path so this run's server can be
+        # told apart (and stopped) by that path; node resolves the package from
+        # the script's own directory, which is where npm installed it.
+        setsid node "$WORK_DIR/durable-streams/server.mjs" "$DS_PORT" \
+            >"$WORK_DIR/durable-streams/server.log" 2>&1 < /dev/null &
+        ds_pid=$!
+        for _ in $(seq 1 20); do
+            ds_up && break
+            sleep 0.5
+        done
+        if ds_up; then
+            say "    started the reference server on :$DS_PORT (data in memory)"
+        else
+            ds_reason="the server did not come up (see $WORK_DIR/durable-streams/server.log)"
+        fi
+    fi
+fi
+
+if [[ -n "$ds_reason" ]]; then
+    say "SKIP  stream: the durable-streams round trip ($ds_reason)"
+    skipped=$((skipped + 1))
+else
+    stream_agent="counter-agent(\"$RUN_ID-stream\")"
+    json_stream="$DS_BASE/v1/stream/roc-e2e-${RUN_ID}-orders"
+    bytes_stream="$DS_BASE/v1/stream/roc-e2e-${RUN_ID}-blob"
+    missing_stream="$DS_BASE/v1/stream/roc-e2e-${RUN_ID}-missing"
+
+    # The protocol's own create, which the effects do not perform: a `PUT` with
+    # the stream's media type answers 201.
+    check_true "stream: the protocol's create answers 201" \
+        "$([[ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+            -H 'Content-Type: application/json' "$json_stream")" == "201" ]] && echo true || echo false)"
+
+    # The replies are long, so the checks compare space-free copies (the CLI
+    # only wraps, and a wrap adds whitespace).
+    stream_roundtrip="$(invoke "$stream_agent" handle-message \
+        "$(message_arg "stream roundtrip $json_stream one two")")"
+    stream_roundtrip="${stream_roundtrip// /}"
+    check "stream: the writer's first append reports its sequence" \
+        '"epoch":0,"sequence":0,"closed":false}' "$stream_roundtrip"
+    check "stream: and the second one the next sequence" \
+        '"epoch":0,"sequence":1,"closed":false}' "$stream_roundtrip"
+    # The batch's payload is itself JSON text, so the CLI's one level of
+    # unescaping (`unwrap_cli`) leaves one level behind: the reply carries
+    # `[\\"one\\",\\"two\\"]` where the app saw `[\"one\",\"two\"]`.
+    check "stream: the read returns both appended messages" \
+        '"payload":"[\\"one\\",\\"two\\"]"' "$stream_roundtrip"
+    # The reference server's offsets are zero-padded decimal tokens, so an
+    # offset starting with `0` is one it generated rather than the `-1` the
+    # first read asked from.
+    check "stream: the read answers the service's checkpoint" \
+        '"next":{"offset":"0' "$stream_roundtrip"
+    check "stream: the second read starts from that checkpoint" \
+        'from2=0' "$stream_roundtrip"
+    check "stream: and finds the stream up to date, with an empty batch" \
+        'read2={"payload":"[]","payloadBytes":2,"contentType":"application/json","next":{"offset":"0' \
+        "$stream_roundtrip"
+    check "stream: the writer's handle was released after the appends" \
+        'released=okread1=' "$stream_roundtrip"
+    check "stream: and the reader's after the reads" \
+        '"closed":false}released=ok' "$stream_roundtrip"
+
+    # A URL that names no stream is the service's own answer: `not-found`,
+    # rendered as `<kind>: <message>` in the effect's error channel, which the
+    # invocation survives.
+    check_nospace "stream: a stream that does not exist is the service's not-found" \
+        "stream read=error(not-found:" \
+        "$(invoke "$stream_agent" handle-message "$(message_arg "stream read $missing_stream")")"
+
+    # A byte stream, where an append can close: the receipt says so and the read
+    # answers the bytes with the stream's `closed` flag.
+    check_true "stream: the protocol's create answers 201 for the byte stream" \
+        "$([[ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+            -H 'Content-Type: application/octet-stream' "$bytes_stream")" == "201" ]] && echo true || echo false)"
+    stream_bytes="$(invoke "$stream_agent" handle-message \
+        "$(message_arg "stream bytes $bytes_stream e2e-bytes")")"
+    stream_bytes="${stream_bytes// /}"
+    check "stream: an append that closes is acknowledged as closed" \
+        '"epoch":0,"sequence":0,"closed":true}released=okread={' "$stream_bytes"
+    check "stream: the byte stream reads its bytes back" \
+        'read={"payload":"e2e-bytes","payloadBytes":9' "$stream_bytes"
+    check "stream: and the batch carries the stream's closure" \
+        '"upToDate":true,"closed":true}released=ok' "$stream_bytes"
+fi
 
 say "==> Oplog and execution control (golem:api/host)"
 # What an app can reach on 1.6: fail an invocation (`trap!`), name an external

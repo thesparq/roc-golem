@@ -47,17 +47,32 @@ Flags:
   `--expect-permission` for the permission calls (`golem:permissions`:
   `self-wallet`, `inspect-card`, `derive(parent=…, retain=[…], lifespan=…)`,
   `derive-scope`, `revoke-card`, `install-card(card=…, target=…)`, and the
-  `drop(card)` a `permissionRelease!` performs). All of
+  `drop(card)` a `permissionRelease!` performs), and `--expect-stream` for the
+  external-durable-stream calls (`golem:agent/durable-streams`: `reader(…)`,
+  `writer(…)`, `read(…)`, `append(…)`, and the `drop(…)` a
+  `durableStreamRelease!` performs). All of
   them are recorded by the stubs, so effect wiring is verified, not just reply
   text — and the two stores, the filesystem, the database and the permission
   cards are stubbed with a
   small store of their own (a relational one for the database: the statements
   the counter's `db` command sends against a tiny store of committed rows and
   one copy per open transaction; a card table for permissions, so a derivation
-  produces a card the app can inspect, revoke and release), so a round trip the
+  produces a card the app can inspect, revoke and release; a stream store for
+  durable streams, whose appends are merged the way the reference service
+  merges them), so a round trip the
   component drives has to
   come back out of it changed (for the filesystem that includes *across* the two
   messages, which is what makes the read a real read).
+- The durable-stream stub keeps its streams implicitly, the way the key-value
+  stub keeps its buckets: a stream exists once the component has appended to
+  it, and reading a URL that was never written is the `not-found` the error
+  check drives (a real service answers the same for a stream it does not have).
+  Two of the host's own preflight rules are mirrored so the harness catches
+  them — a JSON payload needs an `application/json` content type, and each
+  element of one has to be encoded JSON — and a read at the stream's own
+  checkpoint answers an empty, up-to-date batch, which is what makes the
+  second read of the round trip mean something. The offsets are the stub's own
+  opaque tokens.
 - `--expect-trap SUBSTRING` expects the first message to *fail the invocation*,
   with SUBSTRING in the trap's text, instead of returning a reply: `trap!` never
   returns, so the reply and tool checks are skipped and nothing else is asked of
@@ -99,7 +114,7 @@ It exits non-zero when any of these fail:
   not contain the expected text,
 - an expected log line, WebSocket send, HTTP request, RPC call, quota call,
   retry-policy call, `golem:api/host` call, key-value call, blobstore call,
-  filesystem call or database call was never recorded,
+  filesystem call, database call or durable-stream call was never recorded,
 - a `--multimodal` answer envelope does not contain an expected substring, or a
   call expected to be refused (`--expect-multimodal-error`) answered instead,
 - a `--tool-stream` call failed, returned an error or trap, answered with
@@ -115,7 +130,10 @@ quota and retry-policy calls, the execution-control calls, the key-value and
 blobstore round trips, which run against the stubs' own stores, the agent
 filesystem round trip, which runs against the stubs' own directory tree, the
 database round trip, which runs against the stubs' own relational store (a
-rolled-back and a committed transaction included), and the multimodal method,
+rolled-back and a committed transaction included), the durable-stream round
+trip, whose appends the stub's own stream store answers back (the JSON payload,
+its byte length, the checkpoint the second read continues from, and the
+`not-found` of a stream that does not exist included), and the multimodal method,
 whose parts the harness builds and whose answer it reads back as the documented
 envelope. The ai_tool checks also drive
 `golem:tool/guest.invoke` with stdin and both output writers (`--tool-stream`),
@@ -141,7 +159,9 @@ Toolchain notes found while porting to 1.6:
   an async host function trap in the harness is out of date: the streaming agent
   passes a `--message connect --then-message receive` run, which calls
   `websocket/client.receive` — a WIT `async func` — under wasmtime 46 with
-  `component-model-async` enabled. What keeps the *effects* agent out is a
+  `component-model-async` enabled, and the counter's `stream` commands drive
+  `durable-stream-reader.read` and `durable-stream-writer.append` the same way
+  (both are `async func`s on a resource). What keeps the *effects* agent out is a
   missing interface rather than an ABI gap: the harness world does not implement
   the p3 `wasi:http` interfaces, so instantiation fails with "a matching
   implementation was not found in the linker" before any call runs.
@@ -194,6 +214,11 @@ concurrent path wasmtime lets a panic inside a host call unwind instead of
 turning it into a guest trap. The stub panics and the harness catches that panic
 itself (`--expect-trap`); the e2e run is what verifies that an invocation really
 fails.
+
+The two durable-stream resources are stubbed in `src/main.rs` rather than
+`src/stubs.rs`: their methods are async imports of a `golem:agent` interface,
+not WASI, so they need the store's own state (the recorded calls and the stream
+table) the way the WebSocket and permission stubs do.
 
 `src/stubs.rs` implements the WASI interfaces by hand. wasmtime's own
 `wasi:http` implementation tracks a newer WASI version (`wasi:http@0.2.12`) than

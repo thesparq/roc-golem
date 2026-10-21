@@ -29,6 +29,9 @@ mod rdbms_json;
 /// The JSON mirror of `golem:permissions` (cards, grants, wallets) and of the
 /// principal the runtime hands every invocation.
 mod permissions_json;
+/// The JSON mirror of `golem:agent/durable-streams` (reader/writer options,
+/// read requests, batches, append requests, receipts, errors).
+mod durable_stream_json;
 
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
@@ -4206,6 +4209,201 @@ pub unsafe extern "C" fn rocFxPermissionValidateGrant(
     )
 }
 
+// External durable streams (`golem:agent/durable-streams`)
+//
+// A reader and a writer for a service that speaks the Durable Streams protocol.
+// The host owns the HTTP, the framing and (for an authenticated stream) the
+// credential; every effect here is one protocol attempt, recorded in the
+// agent's oplog like any other host call, so a replay is answered from the
+// recording instead of reaching the service again. What the app owns —
+// checkpoints, producer identity, sequence progress and retry policy — stays
+// with the app, exactly as the SDKs document (see the README's "Durable
+// streams").
+//
+// Both resources travel as `U32` handles, the way WebSocket connections, quota
+// reservations, database connections and permission cards do. The constructors
+// and both methods are `async` in the WIT; the Roc side calls these effects
+// synchronously, so `block_on` drives them the way `http!` and
+// `websocketReceive!` do.
+
+/// The reader or writer behind a `U32` handle. One table holds both kinds, so a
+/// handle can never be a reader in one call and a writer in another, and
+/// `durableStreamRelease!` takes either.
+enum DurableStreamHandle {
+    Reader(golem::agent::durable_streams::DurableStreamReader),
+    Writer(golem::agent::durable_streams::DurableStreamWriter),
+}
+
+thread_local! {
+    static DURABLE_STREAMS: RefCell<Vec<Option<DurableStreamHandle>>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+fn unknown_durable_stream_handle(handle: u32) -> String {
+    format!("unknown durable stream handle {handle}")
+}
+
+/// Runs `f` against the reader behind `handle`. The table's borrow is held
+/// while the call runs, the way the WebSocket effects hold it; the two kinds of
+/// handle are told apart here, so a handle that names a writer is reported
+/// rather than reaching the host's table as the wrong resource type.
+fn with_durable_stream_reader<T>(
+    handle: u32,
+    f: impl FnOnce(&golem::agent::durable_streams::DurableStreamReader) -> T,
+) -> Result<T, String> {
+    match handle_with(&DURABLE_STREAMS, handle, |stream| match stream {
+        DurableStreamHandle::Reader(reader) => Some(f(reader)),
+        DurableStreamHandle::Writer(_) => None,
+    }) {
+        Some(Some(value)) => Ok(value),
+        Some(None) => Err(format!(
+            "durable stream handle {handle} is a writer, not a reader"
+        )),
+        None => Err(unknown_durable_stream_handle(handle)),
+    }
+}
+
+/// The same for the writer behind `handle`.
+fn with_durable_stream_writer<T>(
+    handle: u32,
+    f: impl FnOnce(&golem::agent::durable_streams::DurableStreamWriter) -> T,
+) -> Result<T, String> {
+    match handle_with(&DURABLE_STREAMS, handle, |stream| match stream {
+        DurableStreamHandle::Reader(_) => None,
+        DurableStreamHandle::Writer(writer) => Some(f(writer)),
+    }) {
+        Some(Some(value)) => Ok(value),
+        Some(None) => Err(format!(
+            "durable stream handle {handle} is a reader, not a writer"
+        )),
+        None => Err(unknown_durable_stream_handle(handle)),
+    }
+}
+
+/// `durableStreamReader!`: builds a reader for `url` from its options JSON
+/// (`{"url":…,"mode":"json"|"bytes","timeoutMs":…}`) and hands back the
+/// `U32` handle the other effects use. Construction records no HTTP call, so it
+/// cannot fail on the service's side; what it does check is the text itself
+/// (the shape, the mode, the 1..=300000 ms deadline).
+///
+/// The second constructor argument the WIT declares is the stream's optional
+/// `secret`; this platform has no secret-handle surface yet, so it passes
+/// `none` — an authenticated stream is a documented follow-up, not a silently
+/// missing feature.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDurableStreamReader(options_json: RocStr) -> RocResult<u32, RocStr> {
+    let options = match durable_stream_json::reader_options_from_json(options_json.as_str()) {
+        Ok(options) => options,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+
+    let reader = golem::agent::durable_streams::DurableStreamReader::new(&options, None);
+    RocResult::ok(handle_store(
+        &DURABLE_STREAMS,
+        DurableStreamHandle::Reader(reader),
+    ))
+}
+
+/// `durableStreamRead!`: one read attempt on the reader behind `handle`, with
+/// the request JSON `{"checkpoint":{"offset":…,"cursor":…|null},
+/// "transport":"catch-up"|"long-poll"|"sse","contentType":…|null}`. `Ok` is
+/// the batch as `{"payload":…,"contentType":…,"next":{…},"upToDate":…,
+/// "closed":…}` — the payload as lossy-UTF-8 text plus its byte length — and
+/// `Err` the rendered `durable-stream-error`. The reader stays usable, so an app
+/// advances its own checkpoint from batch to batch.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDurableStreamRead(
+    handle: u32,
+    request_json: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    let request = match durable_stream_json::read_request_from_json(request_json.as_str()) {
+        Ok(request) => request,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+
+    let outcome = with_durable_stream_reader(handle, |reader| {
+        wit_bindgen::block_on(reader.read(request))
+    });
+
+    match outcome {
+        Ok(Ok(batch)) => RocResult::ok(RocStr::from_str(&durable_stream_json::batch_to_json(&batch))),
+        Ok(Err(error)) => {
+            RocResult::err(RocStr::from_str(&durable_stream_json::error_text(&error)))
+        }
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+/// `durableStreamWriter!`: builds a writer from its options JSON
+/// (`{"url":…,"contentType":…,"producerId":…,"producerEpoch":…,
+/// "timeoutMs":…}`) and hands back its handle. The producer identity is the
+/// app's to choose and to keep: the writer only carries it. The epoch is
+/// checked against the 2^53-1 ceiling the host applies.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDurableStreamWriter(options_json: RocStr) -> RocResult<u32, RocStr> {
+    let options = match durable_stream_json::writer_options_from_json(options_json.as_str()) {
+        Ok(options) => options,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+
+    let writer = golem::agent::durable_streams::DurableStreamWriter::new(&options, None);
+    RocResult::ok(handle_store(
+        &DURABLE_STREAMS,
+        DurableStreamHandle::Writer(writer),
+    ))
+}
+
+/// `durableStreamAppend!`: one append attempt on the writer behind `handle`,
+/// with the request JSON `{"payload":{"tag":"json","value":[…]}|
+/// {"tag":"bytes","value":"…"},"sequence":…,"close":…}`. A JSON payload is
+/// individually encoded complete values (the host frames the outer array); a
+/// byte payload is the text's UTF-8 bytes. `Ok` is the receipt
+/// (`{"nextOffset":…|null,"epoch":…,"sequence":…,"closed":…}`), `Err` the
+/// rendered error. The attempt is protocol-idempotent, so an app that has to
+/// retry an uncertain append repeats the identical sequence, payload and close
+/// flag — the writer stays usable for that, and for the next sequence.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDurableStreamAppend(
+    handle: u32,
+    request_json: RocStr,
+) -> RocResult<RocStr, RocStr> {
+    let request = match durable_stream_json::append_request_from_json(request_json.as_str()) {
+        Ok(request) => request,
+        Err(err) => return RocResult::err(RocStr::from_str(&err)),
+    };
+
+    let outcome = with_durable_stream_writer(handle, |writer| {
+        wit_bindgen::block_on(writer.append(request))
+    });
+
+    match outcome {
+        Ok(Ok(receipt)) => {
+            RocResult::ok(RocStr::from_str(&durable_stream_json::receipt_to_json(&receipt)))
+        }
+        Ok(Err(error)) => {
+            RocResult::err(RocStr::from_str(&durable_stream_json::error_text(&error)))
+        }
+        Err(err) => RocResult::err(RocStr::from_str(&err)),
+    }
+}
+
+/// `durableStreamRelease!`: gives a reader or writer handle up. The resource is
+/// dropped — which releases the host's own entry for it — and the handle is
+/// freed for reuse. Roc holds a plain number, so the host cannot see when an
+/// app is done; release what you do not keep. Releasing a writer never rolls
+/// back an append, and a handle that was never allocated (or was already
+/// released) is reported.
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDurableStreamRelease(handle: u32) -> RocResult<(), RocStr> {
+    match handle_take(&DURABLE_STREAMS, handle) {
+        Some(stream) => {
+            drop(stream);
+            RocResult::ok(())
+        }
+        None => RocResult::err(RocStr::from_str(&unknown_durable_stream_handle(handle))),
+    }
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
@@ -6562,6 +6760,237 @@ mod tests {
             .expect("a complete grant");
             assert_eq!(parsed.verb, "read");
             assert_eq!(parsed.resource_id, "/data/**");
+        }
+    }
+
+    /// A durable stream handle this instance never handed out is reported
+    /// instead of reaching the host (whose calls are stubbed outside wasm, so a
+    /// call would panic here the way it would fail on a real server), and the
+    /// text of each request is read before the handle is looked up.
+    #[test]
+    fn test_durable_stream_unknown_handles() {
+        unsafe {
+            let read_request = || {
+                RocStr::from_str(
+                    r#"{"checkpoint":{"offset":"-1","cursor":null},"transport":"catch-up","contentType":null}"#,
+                )
+            };
+            let append_request = || {
+                RocStr::from_str(r#"{"payload":{"tag":"json","value":["1"]},"sequence":0,"close":false}"#)
+            };
+
+            fn expect_unknown<T>(label: &str, result: Result<T, RocStr>, handle: u32) {
+                match result {
+                    Err(error) => assert_eq!(
+                        error.as_str(),
+                        format!("unknown durable stream handle {handle}"),
+                        "the {label} effect reported something else"
+                    ),
+                    Ok(_) => panic!("the {label} effect answered an unknown handle"),
+                }
+            }
+
+            expect_unknown(
+                "read",
+                crate::rocFxDurableStreamRead(9999, read_request()).into_result(),
+                9999,
+            );
+            expect_unknown(
+                "append",
+                crate::rocFxDurableStreamAppend(9999, append_request()).into_result(),
+                9999,
+            );
+            expect_unknown(
+                "release",
+                crate::rocFxDurableStreamRelease(9999).into_result(),
+                9999,
+            );
+            // `0` is not a handle either: the table is offset by one so that no
+            // real handle is ever zero.
+            expect_unknown(
+                "read",
+                crate::rocFxDurableStreamRead(0, read_request()).into_result(),
+                0,
+            );
+            expect_unknown(
+                "release",
+                crate::rocFxDurableStreamRelease(0).into_result(),
+                0,
+            );
+
+            // A request the text cannot be read as is reported before any handle
+            // is looked up, so a malformed request against an unknown handle
+            // names the request, not the handle.
+            let error = match crate::rocFxDurableStreamRead(9999, RocStr::from_str("not json"))
+                .into_result()
+            {
+                Err(error) => error,
+                Ok(_) => panic!("a malformed read request must be reported"),
+            };
+            assert!(
+                error
+                    .as_str()
+                    .starts_with("invalid durable stream read request JSON"),
+                "unexpected error: {}",
+                error.as_str()
+            );
+            let error = match crate::rocFxDurableStreamAppend(9999, RocStr::from_str("{}"))
+                .into_result()
+            {
+                Err(error) => error,
+                Ok(_) => panic!("a malformed append request must be reported"),
+            };
+            assert!(
+                error
+                    .as_str()
+                    .starts_with("invalid durable stream append request JSON"),
+                "unexpected error: {}",
+                error.as_str()
+            );
+        }
+    }
+
+    /// The option validation the two constructors do before any host call: the
+    /// WIT's deadline range and the producer ceiling. Each one is the effect's
+    /// `Err` with the field and the range spelled out.
+    #[test]
+    fn test_durable_stream_option_validation() {
+        unsafe {
+            let error_of = |result: Result<u32, RocStr>| match result {
+                Err(error) => error.as_str().to_string(),
+                Ok(handle) => panic!("the options were accepted as handle {handle}"),
+            };
+
+            let error = error_of(crate::rocFxDurableStreamReader(RocStr::from_str(
+                r#"{"url":"https://e.test/s","mode":"json","timeoutMs":0}"#,
+            ))
+            .into_result());
+            assert_eq!(
+                error,
+                "invalid durable stream reader timeout: timeoutMs 0 is outside 1..=300000"
+            );
+
+            let error = error_of(crate::rocFxDurableStreamReader(RocStr::from_str(
+                r#"{"url":"https://e.test/s","mode":"events","timeoutMs":10}"#,
+            ))
+            .into_result());
+            assert!(
+                error.starts_with("invalid durable stream reader options JSON"),
+                "unexpected error: {error}"
+            );
+
+            let error = error_of(crate::rocFxDurableStreamWriter(RocStr::from_str(
+                r#"{"url":"https://e.test/s","contentType":"application/json","producerId":"p","producerEpoch":0,"timeoutMs":300001}"#,
+            ))
+            .into_result());
+            assert_eq!(
+                error,
+                "invalid durable stream writer timeout: timeoutMs 300001 is outside 1..=300000"
+            );
+
+            let error = error_of(crate::rocFxDurableStreamWriter(RocStr::from_str(
+                r#"{"url":"https://e.test/s","contentType":"application/json","producerId":"p","producerEpoch":9007199254740992,"timeoutMs":1000}"#,
+            ))
+            .into_result());
+            assert_eq!(
+                error,
+                "invalid durable stream producer identity: producerEpoch 9007199254740992 exceeds 9007199254740991 (2^53-1)"
+            );
+        }
+    }
+
+    /// The durable-stream table holds readers and writers in one table: a
+    /// borrow runs the body of the matching kind and reports the other kind, a
+    /// release frees the handle, and using or releasing a freed handle is
+    /// reported — never a use-after-free.
+    #[test]
+    fn test_durable_stream_handle_rules() {
+        unsafe {
+            // The two resources are the wasm-only host ones, so the test builds
+            // the handles the table holds itself and disarms them: the
+            // `[resource-drop]` a destructor would call is an import, and the
+            // table's own rules are what this pins.
+            let reader = golem::agent::durable_streams::DurableStreamReader::from_handle(1);
+            let _ = reader.take_handle();
+            let writer = golem::agent::durable_streams::DurableStreamWriter::from_handle(2);
+            let _ = writer.take_handle();
+
+            let reader_handle = handle_store(
+                &DURABLE_STREAMS,
+                DurableStreamHandle::Reader(reader),
+            );
+            let writer_handle = handle_store(
+                &DURABLE_STREAMS,
+                DurableStreamHandle::Writer(writer),
+            );
+            assert_ne!(reader_handle, writer_handle);
+
+            assert_eq!(
+                with_durable_stream_reader(reader_handle, |_| "reader"),
+                Ok("reader")
+            );
+            assert_eq!(
+                with_durable_stream_writer(writer_handle, |_| "writer"),
+                Ok("writer")
+            );
+            assert_eq!(
+                with_durable_stream_writer(reader_handle, |_| "writer"),
+                Err(format!(
+                    "durable stream handle {reader_handle} is a reader, not a writer"
+                ))
+            );
+            assert_eq!(
+                with_durable_stream_reader(writer_handle, |_| "reader"),
+                Err(format!(
+                    "durable stream handle {writer_handle} is a writer, not a reader"
+                ))
+            );
+
+            // A borrow leaves both handles usable; a release spends one, and a
+            // second release of the same handle — or any effect that borrows it
+            // — is reported rather than reusing the slot.
+            assert!(crate::rocFxDurableStreamRelease(reader_handle).is_ok());
+            match crate::rocFxDurableStreamRelease(reader_handle).into_result() {
+                Err(error) => assert_eq!(
+                    error.as_str(),
+                    format!("unknown durable stream handle {reader_handle}")
+                ),
+                Ok(()) => panic!("a released handle must not release twice"),
+            }
+            match crate::rocFxDurableStreamRead(
+                reader_handle,
+                RocStr::from_str(
+                    r#"{"checkpoint":{"offset":"-1","cursor":null},"transport":"catch-up","contentType":null}"#,
+                ),
+            )
+            .into_result()
+            {
+                Err(error) => assert_eq!(
+                    error.as_str(),
+                    format!("unknown durable stream handle {reader_handle}")
+                ),
+                Ok(_) => panic!("a released handle must not read"),
+            }
+
+            // The writer is still there, and the freed slot is reused by the
+            // next handle the table stores (nothing else in this suite puts a
+            // durable-stream handle in the table, so the freed slot is the
+            // lowest one).
+            assert_eq!(
+                with_durable_stream_writer(writer_handle, |_| "writer"),
+                Ok("writer")
+            );
+            let replacement = golem::agent::durable_streams::DurableStreamWriter::from_handle(3);
+            let _ = replacement.take_handle();
+            assert_eq!(
+                handle_store(
+                    &DURABLE_STREAMS,
+                    DurableStreamHandle::Writer(replacement)
+                ),
+                reader_handle
+            );
+            assert!(crate::rocFxDurableStreamRelease(reader_handle).is_ok());
+            assert!(crate::rocFxDurableStreamRelease(writer_handle).is_ok());
         }
     }
 }

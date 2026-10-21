@@ -7,6 +7,12 @@ world golem-agent {
     // directly.
     import golem:api/retry@1.5.0;
     import golem:agent/common@2.0.0;
+    // External durable streams: the host owns the HTTP, the framing and (when a
+    // secret handle is handed in) the authentication; the guest gets a reader
+    // and a writer resource and one protocol attempt per call. Both resources'
+    // methods are `async`, so the effects drive them with `block_on` the way
+    // `http!` does, and both travel as `U32` handles.
+    import golem:agent/durable-streams@2.0.0;
     import golem:agent/host@2.0.0;
     import golem:core/types@2.0.0;
     // Resource quotas: `golem:quota/types` is synchronous too; its

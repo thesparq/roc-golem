@@ -67,6 +67,11 @@ module [
 	deleteFile!,
 	makeDir!,
 	listDir!,
+	durableStreamReader!,
+	durableStreamRead!,
+	durableStreamWriter!,
+	durableStreamAppend!,
+	durableStreamRelease!,
 	dbOpen!,
 	dbOpenMysql!,
 	dbOpenIgnite!,
@@ -512,6 +517,106 @@ makeDir! = |path|
 listDir! : Str => Try(Str, Str)
 listDir! = |path|
 	Effect.listDir!(path)
+
+## External durable streams (`golem:agent/durable-streams`): a reader and a
+## writer for a service that speaks the Durable Streams protocol — a stream
+## hosted by another service, addressed by URL. The host owns the HTTP, the
+## framing and (for an authenticated stream) the credential; each effect is one
+## protocol attempt, recorded in the agent's oplog like every other host call,
+## so a replay is answered from the recording instead of reaching the service
+## again.
+##
+## **The app owns the state.** A checkpoint (a server-generated `offset` plus an
+## optional `cursor`), a producer identity (`producerId` + `producerEpoch`), the
+## next `sequence` and the retry policy are the app's to carry, exactly as the
+## official SDKs document; nothing here retries, advances a checkpoint or
+## remembers a pending append for the app. `-1` starts a read from the service's
+## beginning and `now` asks it to resolve the current tail once during catch-up
+## (the checkpoint tokens are opaque: pass them back unchanged).
+##
+## Both resources are host-side; the app carries them as `U32` handles, the way
+## it carries a WebSocket or a permission card. `durableStreamRead!` and
+## `durableStreamAppend!` borrow the handle — the reader or writer stays usable
+## for the next call — and `durableStreamRelease!` gives it up. Roc holds a
+## plain number, so the host cannot see when an app is done; release what you do
+## not keep. Releasing a writer never rolls back an append.
+##
+## The structured values travel as JSON in the WIT shape with camelCase names
+## (`retry_json`'s convention); the README's "Durable streams" section spells
+## every shape out. A batch's `payload` is bytes, and bytes travel as
+## lossy-UTF-8 text (the `http!` convention), so `payloadBytes` — the byte
+## length the host received — is how an app notices that the text lost
+## something. An error arrives as `"<kind>: <message>"` (`not-found: …`,
+## `rate-limited: …`), with `(retryAfterMs=…)`, `(producerEpoch=…)` and
+## `(expectedSequence=…)` appended when the error carries them.
+##
+## Authentication is the one gap: the constructors take the WIT's optional
+## `secret` and this platform passes none, because it has no secret-handle
+## surface yet (`getConfig!` hands an app a secret's *value*, not a handle). An
+## authenticated stream is a follow-up (see the README).
+
+## Builds a reader for `url`: `{"url": …, "mode": "json"|"bytes",
+## "timeoutMs": …}`, where the deadline is the whole attempt's and must be 1
+## through 300000 ms. `Ok` is the handle `durableStreamRead!` and
+## `durableStreamRelease!` work with; `Err` is a text this effect could not read
+## (its shape, its mode, or a deadline outside the range). Construction records
+## no HTTP call, so it does not reach the service — and it does not create the
+## stream: a URL that does not exist yet is reported by the first read.
+## `json` mode reads the service's JSON messages as the raw batch text; `bytes`
+## mode reads a byte stream (whose HTTP batch boundaries are not preserved).
+durableStreamReader! : Str => Try(U32, Str)
+durableStreamReader! = |optionsJson|
+	Effect.durableStreamReader!(optionsJson)
+
+## One read attempt on the reader behind `handle`:
+## `{"checkpoint": {"offset": …, "cursor": …|null},
+## "transport": "catch-up"|"long-poll"|"sse", "contentType": …|null}`. The
+## checkpoint is where to continue from (`{"offset": "-1", "cursor": null}`
+## for the beginning); `contentType` pins the stream's media type, which SSE
+## requires, and must agree with the reader's mode. `Ok` is the batch:
+## `{"payload": …, "payloadBytes": N, "contentType": …, "next": {"offset":
+## …, "cursor": …|null}, "upToDate": …, "closed": …}` — the payload as text
+## plus the byte count, and `next` the checkpoint the app advances to once it
+## has consumed the batch. `upToDate` says the read reached the service's tail
+## and `closed` that the stream ended; an empty payload is not the end unless
+## `closed` is true. An error is never the end of the stream.
+durableStreamRead! : U32, Str => Try(Str, Str)
+durableStreamRead! = |handle, requestJson|
+	Effect.durableStreamRead!(handle, requestJson)
+
+## Builds a writer for `url`: `{"url": …, "contentType": …, "producerId":
+## …, "producerEpoch": …, "timeoutMs": …}`. The producer identity is the app's
+## to choose and to keep (the epoch is the ownership generation: a higher epoch
+## at sequence 0 fences older ones for the same id); the deadline rule is the
+## reader's, and the epoch stays at or below 2^53-1. The writer only carries
+## the identity — retaining it advances no sequence by itself.
+durableStreamWriter! : Str => Try(U32, Str)
+durableStreamWriter! = |optionsJson|
+	Effect.durableStreamWriter!(optionsJson)
+
+## One append attempt on the writer behind `handle`:
+## `{"payload": {"tag": "json", "value": ["…", …]},
+## "sequence": N, "close": …}` for JSON values — each element is one complete
+## encoded value, and the host frames the outer array — or
+## `{"payload": {"tag": "bytes", "value": "…"}, …}`, which appends the
+## text's UTF-8 bytes. `sequence` counts *requests* for this producer, not
+## messages or bytes, and it is the app's to advance: the same sequence,
+## payload and `close` flag sent again is the protocol's idempotent retry of an
+## uncertain append, and new data takes the next sequence. Empty data is only
+## valid with `close` true, which commits the data and the closure together.
+## `Ok` is the receipt `{"nextOffset": …|null, "epoch": …, "sequence": …,
+## "closed": …}` — a duplicate acknowledgement may omit the offset — and the
+## writer stays usable for the next sequence or for the retry.
+durableStreamAppend! : U32, Str => Try(Str, Str)
+durableStreamAppend! = |handle, requestJson|
+	Effect.durableStreamAppend!(handle, requestJson)
+
+## Gives a reader or writer handle up: the resource is dropped and the handle is
+## freed for reuse. A handle that was never allocated, or was already released,
+## is reported (`unknown durable stream handle N`), never a use-after-free.
+durableStreamRelease! : U32 => Try({}, Str)
+durableStreamRelease! = |handle|
+	Effect.durableStreamRelease!(handle)
 
 ## Databases (`golem:rdbms`): three engines — postgres, MySQL and Apache Ignite
 ## 2.x — with one `open` per engine and a shared statement surface. A connection

@@ -255,6 +255,47 @@ jobs:
             --then-reply "permission install: installed" \
             --expect-permission 'install-card(card=0, target=agent(stub-agent("harness")))'
 
+          # External durable streams (`golem:agent/durable-streams`): both
+          # resources' methods are `async` host imports, which this harness
+          # drives (see the README), and the stub keeps a small store of its
+          # own, so the appends the component makes are what its reads answer
+          # with. The reply carries the JSON the effects produce — receipts with
+          # the offset, epoch and sequence, a batch with the payload as text
+          # plus its byte length, and the checkpoint the second read used — and
+          # the recorded call shows the producer identity the app built reached
+          # the host with the options it wrote.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "stream roundtrip http://stub.invalid/v1/stream/orders one two" \
+            --reply 'append0={"nextOffset":"stub-7","epoch":0,"sequence":0,"closed":false}' \
+            --reply 'append1={"nextOffset":"stub-13","epoch":0,"sequence":1,"closed":false}' \
+            --reply 'read1={"payload":"[\"one\",\"two\"]","payloadBytes":13,"contentType":"application/json","next":{"offset":"stub-13","cursor":null},"upToDate":true,"closed":false}' \
+            --reply 'from2=stub-13 read2={"payload":"[]","payloadBytes":2' \
+            --reply 'released=ok' \
+            --expect-stream "writer(url=http://stub.invalid/v1/stream/orders, content-type=application/json, producer=01020304-0506-0708-090a-0b0c0d0e0f10, epoch=0, timeout-ms=30000, auth=none)"
+
+          # A single append, and a byte stream that closes in the same request:
+          # the receipt's `closed` flag comes back true and the read of the
+          # closed stream answers the bytes with `closed` set. The recorded
+          # call shows the `bytes` payload and the close flag reaching the host.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "stream append http://stub.invalid/v1/stream/orders hello" \
+            --reply 'stream append={"nextOffset":"stub-9","epoch":0,"sequence":0,"closed":false} released=ok' \
+            --then-message "stream bytes http://stub.invalid/v1/stream/blob hi" \
+            --then-reply 'stream append={"nextOffset":"stub-2","epoch":0,"sequence":0,"closed":true} released=ok' \
+            --then-reply 'read={"payload":"hi","payloadBytes":2,"contentType":"application/octet-stream","next":{"offset":"stub-2","cursor":null},"upToDate":true,"closed":true}' \
+            --expect-stream "append(url=http://stub.invalid/v1/stream/orders, producer=01020304-0506-0708-090a-0b0c0d0e0f10, sequence=0, close=false, json 1 value(s)) -> next=stub-9, epoch=0, closed=false"
+
+          # A stream that does not exist: the service's own `not-found`,
+          # rendered as `<kind>: <message>` in the effect's error channel, which
+          # the app reports — and the reader is released either way.
+          check "$HARNESS" build/counter_agent.wasm \
+            --type counter-agent --method get_count \
+            --message "stream read http://stub.invalid/v1/stream/missing" \
+            --reply "stream read=error(not-found: Durable Streams HTTP status 404) released=ok" \
+            --expect-stream "read(url=http://stub.invalid/v1/stream/missing, offset=-1, transport=catch-up, content-type=none) -> not-found"
+
           # The tool export itself (`golem:tool/guest.invoke`, the surface
           # `golem tool invoke` drives) carries its stdin/stdout/stderr as
           # component-model streams, so the harness supplies the stdin bytes

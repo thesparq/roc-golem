@@ -23,6 +23,7 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 | read-only methods | agent metadata | declared for tools; until-write cache |
 | HTTP mounts | agent metadata | filesystem bindings (regular agents), static bindings + OpenAPI provider (routers) |
 | the agent's own filesystem | `wasi:filesystem@0.2.6` (p2) | `readFile!` / `writeFile!` / `appendFile!` / `fileExists!` / `fileSize!` / `deleteFile!` / `makeDir!` / `listDir!`; per-agent and durable, provisioned from the manifest's `files:` list |
+| external durable streams | `golem:agent/durable-streams@2.0.0` | `durableStreamReader!` / `durableStreamRead!` / `durableStreamWriter!` / `durableStreamAppend!` / `durableStreamRelease!`; reader and writer as `U32` handles, batches/receipts/errors as JSON, and the app owns checkpoints, producer identity, sequences and retries (see item 2(a)) |
 | permissions + the principal | `golem:permissions/{types,inspect,derive,revoke,wallet,kernel-introspection}` | `getPrincipal!` and the whole card surface: `permissionsWallet!` / `permissionsWalletVersion!`, `permissionId!` / `permissionParents!` / `permissionExpiresAt!` / `permissionInspect!`, `permissionDerive!` / `permissionDeriveFromWallet!` / `permissionDeriveScope!`, `permissionInstall!` / `permissionRevoke!` / `permissionRelease!`, `permissionListModules!` / `permissionValidateGrant!`; grants and views as JSON, cards as `U32` handles (see item 6) |
 | logging, clocks, random | `wasi:logging`, `wasi:clocks`, … | `logInfo!` … `sleep!`, `now!` |
 
@@ -65,37 +66,52 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    platform has demonstrated it can deliver), or executor-side instrumentation
    of the `wrap`/pipe path. The platform logs a warning when an app's body is
    dropped, so nothing changes for an app once either lands.
-2. **Durable streams** — **three slices, one of them worth doing now.** The item
-   is not one feature: the SDKs' "durable streams" is (a) reading and writing
-   *external* services that speak the Durable Streams protocol, (b) agent methods
-   whose parameters or results are streams, and (c) the HTTP streaming endpoints
-   derived from those methods. What this platform can do about each:
+2. **Durable streams** — **slice (a) done, (b) feasible but low value, (c)
+   blocked.** The item is not one feature: the SDKs' "durable streams" is (a)
+   reading and writing *external* services that speak the Durable Streams
+   protocol, (b) agent methods whose parameters or results are streams, and (c)
+   the HTTP streaming endpoints derived from those methods. What this platform
+   can do about each:
 
-   - **(a) External durable streams — the slice to do.**
-     `golem:agent/durable-streams@2.0.0` is vendored
-     (`wit/deps/golem-agent/durable-streams.wit`) and not yet imported. The host
-     owns HTTP, framing and authentication; the guest gets a
-     `durable-stream-reader` (one protocol attempt: a URL, a checkpoint, a mode —
-     json or bytes — a transport — catch-up, long-poll or SSE — a deadline, and
-     optional `secret` auth) and a `durable-stream-writer` (a URL, a content
-     type, a producer id and epoch, a deadline, and `append` with a payload,
-     sequence and close flag). Both are `async`, so the effects drive them with
-     `wit_bindgen::block_on` the way `http!` does, and both are resources, so they
-     travel as `U32` handles like the WebSocket, quota and database ones.
-     Structured values (batches, checkpoints, append receipts, errors) travel as
-     JSON in the WIT's camelCase shape — the `retry_json` / `rdbms_json` /
-     `permissions_json` convention. **Nothing here depends on item 1's blocker:**
-     no bytes cross a component-model stream, the host does the HTTP.
-     - *Testing.* The ABI harness can stub the interface and assert the JSON the
-       effects produce (async host imports work there now — see item 11's note),
-       including one error case. For the e2e there is a **real local service to
-       point at**: the protocol has a reference implementation
-       (`github.com/durable-streams/durable-streams`; the Node package
-       `@durable-streams/server`, or the Caddy-based `durable-streams-server dev`
-       which listens on `http://127.0.0.1:4437/v1/stream/*` with in-memory
-       storage). So the check can create a stream, append through the effect, read
-       it back through the effect and see the checkpoint advance — the same shape
-       as the effects agent's local HTTP server.
+   - **(a) External durable streams — done.**
+     `golem:agent/durable-streams@2.0.0` is imported by the world
+     (`wit/deps/golem-agent/durable-streams.wit`) and exposed as five effects:
+     `durableStreamReader!` / `durableStreamRead!` (a URL, a mode, a deadline;
+     then one attempt with a checkpoint, a transport — catch-up, long-poll or
+     SSE — and an optional content type) and `durableStreamWriter!` /
+     `durableStreamAppend!` (a URL, a content type, a producer id and epoch, a
+     deadline; then one attempt with a payload, a sequence and a close flag),
+     plus `durableStreamRelease!` for the handle. Both resources are `async`,
+     so the effects drive them with `wit_bindgen::block_on` the way `http!`
+     does, and both travel as `U32` handles like the WebSocket, quota and
+     database ones. Structured values (batches, checkpoints, append receipts,
+     errors) travel as JSON in the WIT's camelCase shape — the `retry_json` /
+     `rdbms_json` / `permissions_json` convention — with `payloadBytes` added
+     next to the lossy-UTF-8 payload text. **Nothing here depended on item 1's
+     blocker:** no bytes cross a component-model stream, the host does the HTTP.
+     What the app owns is what the SDKs say it owns: checkpoints, producer
+     identity, sequence progress and retry policy; each effect is one protocol
+     attempt and a replay is answered from the recorded one. The README's
+     "External durable streams" section has the shapes.
+     - *Testing.* The ABI harness stubs both resources and their async methods
+       (see item 11's note on async imports) against a small stream store of its
+       own, so an append the component made is what its next read answers with;
+       the checks assert the JSON of a read, of an append, of a byte stream that
+       closes, and of one error case (`not-found`), and CI and the release
+       workflow run them. The e2e starts the protocol's **own reference server**
+       (`@durable-streams/server`, in memory, the same shape as the effects
+       agent's local HTTP server — the Caddy-based `durable-streams-server dev`
+       would work too), creates the stream with the protocol's `PUT`, appends two
+       JSON messages through the effect, reads them back from the beginning and
+       again from the checkpoint, appends and closes a byte stream, and covers
+       the `not-found` of a stream that does not exist. The section reports a
+       `SKIP` with its reason where Node or the package is unavailable.
+     - *What is deliberately not there.* The constructors pass no `secret`: this
+       platform has no secret-*handle* surface (`getConfig!` hands an app a
+       secret's value, not the capability the constructor borrows), so
+       authenticated streams need a config value surfaced as the
+       `golem:core/types` `secret` resource first. Documented in the README
+       rather than guessed at.
    - **(b) Streaming method inputs — feasible, low value for this surface.** A
      method whose parameter is a stream receives a **host-created** stream, which
      this platform has already proven it can read (the router's request body is
@@ -573,6 +589,8 @@ effect in `platform/Effect.roc`, wrap it in `platform/Golem.roc`, then cover it
 in the ABI harness (recording stubs) or the e2e (real server) — the suites and
 the patterns for both already exist.
 
-Items 1 and 2 are the two that are *not* mechanical: they need the stream/export
-machinery discussed above. Item 11's middleware half is in the same class — it
-needs a second export and a component shape of its own (see item 11).
+Item 1 and item 2's remaining slices ((b) and (c)) are the ones that are *not*
+mechanical: they need the stream/export machinery discussed above. Item 2(a)
+was mechanical — the host does the HTTP, no bytes cross a component-model
+stream — and is done. Item 11's middleware half is in the same class as (b)/(c):
+it needs a second export and a component shape of its own (see item 11).
