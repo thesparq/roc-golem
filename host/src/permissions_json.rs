@@ -194,13 +194,18 @@ pub struct AgentIdJson {
     pub agent_id: String,
 }
 
-/// The agent-id record as JSON. One definition, because the principal, an
-/// `agent` holder and the resolver all print the same object.
-pub fn agent_id_json(id: &core::AgentId) -> String {
-    to_json(&AgentIdJson {
+/// The agent-id record as the object the resolver, an `agent` holder and the
+/// principal all print. One definition, because they all mean the same thing.
+fn agent_id_object(id: &core::AgentId) -> AgentIdJson {
+    AgentIdJson {
         component_id: crate::uuid_string(&id.component_id.uuid),
         agent_id: id.agent_id.clone(),
-    })
+    }
+}
+
+/// The agent-id record as JSON text.
+pub fn agent_id_json(id: &core::AgentId) -> String {
+    to_json(&agent_id_object(id))
 }
 
 impl HolderJson {
@@ -326,11 +331,10 @@ pub fn principal_to_json(principal: &Principal) -> String {
             "tag": "golem-user",
             "val": { "accountId": crate::uuid_string(&user.account_id.uuid) },
         })),
-        Principal::Agent(agent) => {
-            let id: AgentIdJson =
-                serde_json::from_str(&agent_id_json(&agent.agent_id)).expect("the agent-id object");
-            to_json(&serde_json::json!({ "tag": "agent", "val": id }))
-        }
+        Principal::Agent(agent) => to_json(&serde_json::json!({
+            "tag": "agent",
+            "val": agent_id_object(&agent.agent_id),
+        })),
         Principal::Oidc(oidc) => to_json(&serde_json::json!({
             "tag": "oidc",
             "val": oidc_fields(oidc),
