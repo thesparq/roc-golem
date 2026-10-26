@@ -8,47 +8,63 @@ that platform code should consume generated glue rather than hand-rolling ABI
 bindings, because the layout, ownership and refcounting contracts are compiler
 internals.
 
-## The official Rust glue (works, not adopted yet)
+## The official Rust glue (adopted)
 
-`RustGlue.roc` runs against this platform and writes one Rust file:
+`RustGlue.roc` runs against this platform and writes one Rust file, which is
+checked in as `host/src/roc_platform_abi.rs` and compiled by the host crate:
 
 ```bash
-# fetch it from the roc repo at the commit the pinned nightly was built from
-curl -s -o /tmp/RustGlue.roc \
-  https://raw.githubusercontent.com/roc-lang/roc/<nightly-sha>/src/glue/src/RustGlue.roc
-roc glue /tmp/RustGlue.roc tooling/glue/generated platform/main.roc
-# -> tooling/glue/generated/roc_platform_abi.rs
+# fetch the spec from the commit the pinned nightly was built from. The nightly
+# tag carries its commit (`nightly-2026-10-19-601b54c` -> 601b54c...); resolve
+# it with `gh api repos/roc-lang/roc/commits/601b54c --jq .sha` if needed.
+gh api "repos/roc-lang/roc/contents/src/glue/src/RustGlue.roc?ref=<nightly-commit>" \
+  --jq .content | base64 -d > /tmp/RustGlue.roc
+roc glue /tmp/RustGlue.roc /tmp/glue-out platform/main.roc
+cp /tmp/glue-out/roc_platform_abi.rs host/src/roc_platform_abi.rs
 ```
 
-`tooling/glue/generated/roc_platform_abi.rs` is checked in as the reference the
-hand-written ABI is measured against. It contains:
+(The `roc_platform_abi.rs` name is the generator's; the older copy of this
+README pointed at a `tooling/glue/generated/` directory that does not exist in
+this repo.)
 
-- `RocStr`, `RocListWith<T, ELEMENTS_REFCOUNTED>`, `RocDec` and the rest of the
-  ABI-visible types, with the layout documented in the same terms this repo
-  reverse-engineered by hand (capacity shifted left by one, seamless-slice tag
-  in the capacity word, refcount one word before the bytes);
+Regenerating after an effect, an entrypoint or a nightly change is the whole
+procedure — the file is generated, not edited. It contains:
+
+- `RocStr`, `RocListWith<T, ELEMENTS_REFCOUNTED>` (with the `RocList<T>` alias),
+  `RocDec` and the rest of the ABI-visible types, with the layout documented in
+  the same terms this repo reverse-engineered by hand (capacity shifted left by
+  one, seamless-slice tag in the capacity word, refcount one word before the
+  bytes);
 - retain/release plans (`RocStrRelease`, `RocListRelease`, `RocListSpineRelease`,
   `RocOwned`), including the recursive teardown rules;
-- the **hosted symbols** the host must export (`rocFx*`) with the exact direct C
-  ABI signatures and per-argument ownership notes;
+- every **hosted symbol** the host must export (`rocFx*` — 83 of them today) with
+  the exact direct C ABI signatures and per-argument ownership notes;
+- a **shell per result shape** (`HostRocFxRpcInvokeResult` for `Try(Str, Str)`,
+  `HostRocFxFileSizeResult` for `Try(U64, Str)`, ...) with borrow/take accessors
+  for each payload and a release type, deduplicated by shape and aliased by
+  symbol (`HostRocFxWsSendResult = HostRocFxAppendFileResult`);
 - **owning wrappers for the provided entrypoints** (`main_*_owned`) plus
-  `const _: () = assert!(...)` size/alignment checks, which is exactly the call
-  side `host/src/lib.rs` hand-writes with `MaybeUninit` + `mem::forget`.
+  `const _: () = assert!(...)` size/alignment checks.
 
-Adopting it would delete `host/src/roc_std.rs` and the hand-written ownership
-handling, and make a future ABI change a regeneration instead of a rewrite. The
-work, in order:
+### What stays hand-written, and why
 
-1. include the generated file in the host crate (it needs the `no_roc_std_helpers`
-   cfg the platform build sets) and switch `host/src/lib.rs` from
-   `roc_std::RocStr` to the generated type — mechanical, ~40 call sites;
-2. use `main_*_owned` for the entrypoint calls and the generated `decref` for
-   arguments, replacing the manual `mem::forget`/`into_result` dance;
-3. keep the allocator exports (`roc_alloc`/`roc_dealloc`/`roc_realloc`,
-   `cabi_realloc`) — the generated file declares them as externs with the
-   contract spelled out;
-4. re-run the harness and e2e, then delete `roc_std.rs` and the layout constants
-   this repo maintains.
+`host/src/roc_std.rs` is now small on purpose. The generated shells have
+accessors and release plans but **no constructors** — and the host *constructs* a
+result for every effect it answers (181 `RocResult` sites and 7 `RocU64Result`
+ones). Migrating those to the generated types would mean writing the payload
+bytes by hand at each site, so `RocResult<T, E>` and `RocU64Result` stay, and a
+`const _: () = assert!(...)` block ties both to the generated shells
+(`HostRocFxRpcInvokeResult`, `HostRocFxFileSizeResult`) by size, alignment and
+discriminant offset on every target — a layout change on either side fails the
+build. The unused hand-written `RocList` is gone; the generated `RocList<T>`
+alias is the list type if the host ever needs one.
+
+The entrypoint calls in `host/src/lib.rs` still use `MaybeUninit` +
+`mem::forget` rather than the generated `main_*_owned` wrappers, and the host
+still defines the allocator exports (`roc_alloc`/`roc_dealloc`/`roc_realloc`,
+`cabi_realloc`) itself — the generated file declares them as externs with the
+contract spelled out. Switching the calls over is the remaining step if the two
+ever diverge; the wrappers are compiled in the meantime, so they cannot rot.
 
 ## The diagnostic specs
 
@@ -65,10 +81,10 @@ They run on `nightly-2026-09-19-d025939` and **not** on the pinned
 `nightly-2026-10-19-601b54c`: the glue platform's API moved (`pf.FunctionRepr`
 is gone; `pf.FunctionInfo`, `pf.FunctionSignature`, `pf.ProvidedExport` and
 `pf.HostedFunctionInfo` replaced it) and the new compiler's type-module
-convention rejects the `import pf.X exposing [X]` clauses these specs use. Port
-them only if the diagnostic output is still wanted after the official generator
-is adopted — the generator already emits the layout assertions and ownership
-rules that made the table below worth keeping.
+convention rejects the `import pf.X exposing [X]` clauses these specs use. They
+stay for the table below, which records what was reverse-engineered before the
+official generator existed; porting them is optional now that the generator
+emits the layout assertions and ownership rules itself.
 
 ## ABI facts (verified against this platform)
 `abi_facts.roc` output, pointer width 32:
@@ -118,25 +134,16 @@ trap (see the Development status section of the root README).
 
 ## What is still missing
 
-A full Rust generator (the port of the upstream `RustGlue.roc`) that turns those
-facts into Rust structs and call wrappers. The copy of that spec in the older
-`roc-practice/roc-golem` project was written against a July 2026 glue platform
-and does **not** run on the pinned nightly; porting it needs:
+Nothing in the generator's path: `RustGlue.roc` runs on the pinned nightly and is
+what produced the checked-in `host/src/roc_platform_abi.rs` (see the first
+section). What is still *hand-written* is listed there — the result shells' 
+constructors and the entrypoint call sites — and the older port of this spec in
+`roc-practice/roc-golem` is no longer needed for anything; it was written against
+a July 2026 glue platform and would have to be brought up to the current API
+(`TypeRepr` variants, the `AbiLayout` / `AbiTagUnionLayout` moves, the `HostRcPlan`
+refcountedness facts, `TypeTable` as a receiver module) for no purpose.
 
-1. `TypeRepr` gained variants (e.g. `RocI16x8`) — the spec's matches must be
-   exhaustive.
-2. Tag-union facts moved out of `TagUnionRepr` / `TypeTable` into `AbiLayout`
-   (`tag_union_has_payload`, `discriminant_offset`, `discriminant_size`) and
-   `AbiTagUnionLayout`; records and tags now carry explicit sizes, alignments and
-   offsets per pointer width (`AbiLayout.size32/size64`, `alignment32/alignment64`).
-3. Refcountedness is now emitted (`AbiLayout.contains_refcounted`, `HostRcPlan`
-   with `RcNoop` / `RcRefcounted`) — this is the ownership information the
-   hand-written host currently guesses at with header slots before each data
-   pointer.
-4. `TypeTable` is a receiver module (`from_list`, `entries`, `type_info`, ...)
-   that glue scripts are expected to ask questions through.
-
-The glue platform sources for the pinned compiler ship locally under
-`~/.cache/roc/nightly-<version>/src/compiler-platforms/glue/<hash>/`, which is
-the reference for the current API.
+The glue platform sources for the installed compiler ship locally under
+`~/.cache/roc/<version>/src/compiler-platforms/glue/<hash>/`, which is the
+reference for the API a glue script runs against.
 

@@ -1104,14 +1104,14 @@ unsafe impl<T> RocRelease<*mut T> for RocBoxSpineRelease<T> {
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostRocFxRpcInvokeResultTag {
+pub enum HostRocFxAwaitWebhookResultTag {
     Err = 0,
     Ok = 1,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union HostRocFxRpcInvokeResultPayload {
+pub union HostRocFxAwaitWebhookResultPayload {
     pub err: core::mem::ManuallyDrop<RocStr>,
     pub ok: core::mem::ManuallyDrop<RocStr>,
 }
@@ -1119,32 +1119,32 @@ pub union HostRocFxRpcInvokeResultPayload {
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct HostRocFxRpcInvokeResultPayloadAlignment;
+pub struct HostRocFxAwaitWebhookResultPayloadAlignment;
 
 /// Tag union: Try
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostRocFxRpcInvokeResult {
-    pub _payload_alignment: [HostRocFxRpcInvokeResultPayloadAlignment; 0],
+pub struct HostRocFxAwaitWebhookResult {
+    pub _payload_alignment: [HostRocFxAwaitWebhookResultPayloadAlignment; 0],
     pub payload: [u8; 12],
-    pub tag: HostRocFxRpcInvokeResultTag,
+    pub tag: HostRocFxAwaitWebhookResultTag,
 }
 
 /// Tag union: Try
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostRocFxRpcInvokeResult {
-    pub payload: HostRocFxRpcInvokeResultPayload,
-    pub tag: HostRocFxRpcInvokeResultTag,
+pub struct HostRocFxAwaitWebhookResult {
+    pub payload: HostRocFxAwaitWebhookResultPayload,
+    pub tag: HostRocFxAwaitWebhookResultTag,
 }
 
-impl HostRocFxRpcInvokeResult {
+impl HostRocFxAwaitWebhookResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxRpcInvokeResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxAwaitWebhookResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
         unsafe { &*(self.payload.as_ptr() as *const RocStr) }
@@ -1153,7 +1153,7 @@ impl HostRocFxRpcInvokeResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxRpcInvokeResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxAwaitWebhookResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
         unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
@@ -1162,7 +1162,7 @@ impl HostRocFxRpcInvokeResult {
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxRpcInvokeResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxAwaitWebhookResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
@@ -1171,7 +1171,7 @@ impl HostRocFxRpcInvokeResult {
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxRpcInvokeResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxAwaitWebhookResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
@@ -1180,7 +1180,7 @@ impl HostRocFxRpcInvokeResult {
     /// Borrow the `Ok` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxRpcInvokeResultTag::Ok` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxAwaitWebhookResultTag::Ok` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
         unsafe { &*(self.payload.as_ptr() as *const RocStr) }
@@ -1189,7 +1189,7 @@ impl HostRocFxRpcInvokeResult {
     /// Borrow the `Ok` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxRpcInvokeResultTag::Ok` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxAwaitWebhookResultTag::Ok` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
         unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
@@ -1198,7 +1198,7 @@ impl HostRocFxRpcInvokeResult {
     /// Move the `Ok` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxRpcInvokeResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxAwaitWebhookResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
@@ -1207,7 +1207,7 @@ impl HostRocFxRpcInvokeResult {
     /// Move the `Ok` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxRpcInvokeResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxAwaitWebhookResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
@@ -1216,29 +1216,29 @@ impl HostRocFxRpcInvokeResult {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostRocFxRpcInvokeResult>() == 32, "HostRocFxRpcInvokeResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostRocFxAwaitWebhookResult>() == 32, "HostRocFxAwaitWebhookResult size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<HostRocFxRpcInvokeResult>() == 8, "HostRocFxRpcInvokeResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<HostRocFxAwaitWebhookResult>() == 8, "HostRocFxAwaitWebhookResult alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostRocFxRpcInvokeResult, tag) == 24, "HostRocFxRpcInvokeResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostRocFxAwaitWebhookResult, tag) == 24, "HostRocFxAwaitWebhookResult tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostRocFxRpcInvokeResult>() == 16, "HostRocFxRpcInvokeResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostRocFxAwaitWebhookResult>() == 16, "HostRocFxAwaitWebhookResult size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<HostRocFxRpcInvokeResult>() == 4, "HostRocFxRpcInvokeResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<HostRocFxAwaitWebhookResult>() == 4, "HostRocFxAwaitWebhookResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostRocFxRpcInvokeResult, tag) == 12, "HostRocFxRpcInvokeResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostRocFxAwaitWebhookResult, tag) == 12, "HostRocFxAwaitWebhookResult tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostRocFxWsConnectResultTag {
+pub enum HostRocFxDbBeginResultTag {
     Err = 0,
     Ok = 1,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union HostRocFxWsConnectResultPayload {
+pub union HostRocFxDbBeginResultPayload {
     pub err: core::mem::ManuallyDrop<RocStr>,
     pub ok: core::mem::ManuallyDrop<u32>,
 }
@@ -1246,32 +1246,32 @@ pub union HostRocFxWsConnectResultPayload {
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct HostRocFxWsConnectResultPayloadAlignment;
+pub struct HostRocFxDbBeginResultPayloadAlignment;
 
 /// Tag union: Try
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostRocFxWsConnectResult {
-    pub _payload_alignment: [HostRocFxWsConnectResultPayloadAlignment; 0],
+pub struct HostRocFxDbBeginResult {
+    pub _payload_alignment: [HostRocFxDbBeginResultPayloadAlignment; 0],
     pub payload: [u8; 12],
-    pub tag: HostRocFxWsConnectResultTag,
+    pub tag: HostRocFxDbBeginResultTag,
 }
 
 /// Tag union: Try
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostRocFxWsConnectResult {
-    pub payload: HostRocFxWsConnectResultPayload,
-    pub tag: HostRocFxWsConnectResultTag,
+pub struct HostRocFxDbBeginResult {
+    pub payload: HostRocFxDbBeginResultPayload,
+    pub tag: HostRocFxDbBeginResultTag,
 }
 
-impl HostRocFxWsConnectResult {
+impl HostRocFxDbBeginResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsConnectResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxDbBeginResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
         unsafe { &*(self.payload.as_ptr() as *const RocStr) }
@@ -1280,7 +1280,7 @@ impl HostRocFxWsConnectResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsConnectResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxDbBeginResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
         unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
@@ -1289,7 +1289,7 @@ impl HostRocFxWsConnectResult {
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsConnectResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxDbBeginResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
@@ -1298,7 +1298,7 @@ impl HostRocFxWsConnectResult {
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsConnectResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxDbBeginResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
@@ -1307,7 +1307,7 @@ impl HostRocFxWsConnectResult {
     /// Borrow the `Ok` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsConnectResultTag::Ok` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxDbBeginResultTag::Ok` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_ok_unchecked(&self) -> &u32 {
         unsafe { &*(self.payload.as_ptr() as *const u32) }
@@ -1316,7 +1316,7 @@ impl HostRocFxWsConnectResult {
     /// Borrow the `Ok` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsConnectResultTag::Ok` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxDbBeginResultTag::Ok` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_ok_unchecked(&self) -> &u32 {
         unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<u32> as *const u32) }
@@ -1325,7 +1325,7 @@ impl HostRocFxWsConnectResult {
     /// Move the `Ok` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsConnectResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxDbBeginResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_ok_unchecked(&mut self) -> u32 {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const u32) }
@@ -1334,7 +1334,7 @@ impl HostRocFxWsConnectResult {
     /// Move the `Ok` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsConnectResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxDbBeginResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_ok_unchecked(&mut self) -> u32 {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
@@ -1343,29 +1343,29 @@ impl HostRocFxWsConnectResult {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostRocFxWsConnectResult>() == 32, "HostRocFxWsConnectResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostRocFxDbBeginResult>() == 32, "HostRocFxDbBeginResult size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<HostRocFxWsConnectResult>() == 8, "HostRocFxWsConnectResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<HostRocFxDbBeginResult>() == 8, "HostRocFxDbBeginResult alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostRocFxWsConnectResult, tag) == 24, "HostRocFxWsConnectResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostRocFxDbBeginResult, tag) == 24, "HostRocFxDbBeginResult tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostRocFxWsConnectResult>() == 16, "HostRocFxWsConnectResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostRocFxDbBeginResult>() == 16, "HostRocFxDbBeginResult size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<HostRocFxWsConnectResult>() == 4, "HostRocFxWsConnectResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<HostRocFxDbBeginResult>() == 4, "HostRocFxDbBeginResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostRocFxWsConnectResult, tag) == 12, "HostRocFxWsConnectResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostRocFxDbBeginResult, tag) == 12, "HostRocFxDbBeginResult tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostRocFxWsSendResultTag {
+pub enum HostRocFxAppendFileResultTag {
     Err = 0,
     Ok = 1,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union HostRocFxWsSendResultPayload {
+pub union HostRocFxAppendFileResultPayload {
     pub err: core::mem::ManuallyDrop<RocStr>,
     pub ok: [u8; 0],
 }
@@ -1373,32 +1373,32 @@ pub union HostRocFxWsSendResultPayload {
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct HostRocFxWsSendResultPayloadAlignment;
+pub struct HostRocFxAppendFileResultPayloadAlignment;
 
 /// Tag union: Try
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostRocFxWsSendResult {
-    pub _payload_alignment: [HostRocFxWsSendResultPayloadAlignment; 0],
+pub struct HostRocFxAppendFileResult {
+    pub _payload_alignment: [HostRocFxAppendFileResultPayloadAlignment; 0],
     pub payload: [u8; 12],
-    pub tag: HostRocFxWsSendResultTag,
+    pub tag: HostRocFxAppendFileResultTag,
 }
 
 /// Tag union: Try
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostRocFxWsSendResult {
-    pub payload: HostRocFxWsSendResultPayload,
-    pub tag: HostRocFxWsSendResultTag,
+pub struct HostRocFxAppendFileResult {
+    pub payload: HostRocFxAppendFileResultPayload,
+    pub tag: HostRocFxAppendFileResultTag,
 }
 
-impl HostRocFxWsSendResult {
+impl HostRocFxAppendFileResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsSendResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxAppendFileResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
         unsafe { &*(self.payload.as_ptr() as *const RocStr) }
@@ -1407,7 +1407,7 @@ impl HostRocFxWsSendResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsSendResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxAppendFileResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
         unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
@@ -1416,7 +1416,7 @@ impl HostRocFxWsSendResult {
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsSendResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxAppendFileResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
@@ -1425,7 +1425,7 @@ impl HostRocFxWsSendResult {
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostRocFxWsSendResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxAppendFileResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
@@ -1434,62 +1434,62 @@ impl HostRocFxWsSendResult {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostRocFxWsSendResult>() == 32, "HostRocFxWsSendResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostRocFxAppendFileResult>() == 32, "HostRocFxAppendFileResult size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<HostRocFxWsSendResult>() == 8, "HostRocFxWsSendResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<HostRocFxAppendFileResult>() == 8, "HostRocFxAppendFileResult alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostRocFxWsSendResult, tag) == 24, "HostRocFxWsSendResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostRocFxAppendFileResult, tag) == 24, "HostRocFxAppendFileResult tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostRocFxWsSendResult>() == 16, "HostRocFxWsSendResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostRocFxAppendFileResult>() == 16, "HostRocFxAppendFileResult size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<HostRocFxWsSendResult>() == 4, "HostRocFxWsSendResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<HostRocFxAppendFileResult>() == 4, "HostRocFxAppendFileResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostRocFxWsSendResult, tag) == 12, "HostRocFxWsSendResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostRocFxAppendFileResult, tag) == 12, "HostRocFxAppendFileResult tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MainInitForHostResultTag {
+pub enum HostRocFxBlobHasResultTag {
     Err = 0,
     Ok = 1,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union MainInitForHostResultPayload {
+pub union HostRocFxBlobHasResultPayload {
     pub err: core::mem::ManuallyDrop<RocStr>,
-    pub ok: core::mem::ManuallyDrop<RocStr>,
+    pub ok: core::mem::ManuallyDrop<bool>,
 }
 
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct MainInitForHostResultPayloadAlignment;
+pub struct HostRocFxBlobHasResultPayloadAlignment;
 
 /// Tag union: Try
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct MainInitForHostResult {
-    pub _payload_alignment: [MainInitForHostResultPayloadAlignment; 0],
+pub struct HostRocFxBlobHasResult {
+    pub _payload_alignment: [HostRocFxBlobHasResultPayloadAlignment; 0],
     pub payload: [u8; 12],
-    pub tag: MainInitForHostResultTag,
+    pub tag: HostRocFxBlobHasResultTag,
 }
 
 /// Tag union: Try
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct MainInitForHostResult {
-    pub payload: MainInitForHostResultPayload,
-    pub tag: MainInitForHostResultTag,
+pub struct HostRocFxBlobHasResult {
+    pub payload: HostRocFxBlobHasResultPayload,
+    pub tag: HostRocFxBlobHasResultTag,
 }
 
-impl MainInitForHostResult {
+impl HostRocFxBlobHasResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `MainInitForHostResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxBlobHasResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
         unsafe { &*(self.payload.as_ptr() as *const RocStr) }
@@ -1498,7 +1498,7 @@ impl MainInitForHostResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `MainInitForHostResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxBlobHasResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
         unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
@@ -1507,7 +1507,7 @@ impl MainInitForHostResult {
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `MainInitForHostResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxBlobHasResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
@@ -1516,7 +1516,7 @@ impl MainInitForHostResult {
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `MainInitForHostResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostRocFxBlobHasResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
@@ -1525,7 +1525,261 @@ impl MainInitForHostResult {
     /// Borrow the `Ok` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `MainInitForHostResultTag::Ok` and the payload must still be initialized.
+    /// `self.tag` must be `HostRocFxBlobHasResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &bool {
+        unsafe { &*(self.payload.as_ptr() as *const bool) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxBlobHasResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &bool {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<bool> as *const bool) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxBlobHasResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> bool {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const bool) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxBlobHasResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> bool {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostRocFxBlobHasResult>() == 32, "HostRocFxBlobHasResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostRocFxBlobHasResult>() == 8, "HostRocFxBlobHasResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostRocFxBlobHasResult, tag) == 24, "HostRocFxBlobHasResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostRocFxBlobHasResult>() == 16, "HostRocFxBlobHasResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostRocFxBlobHasResult>() == 4, "HostRocFxBlobHasResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostRocFxBlobHasResult, tag) == 12, "HostRocFxBlobHasResult tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostRocFxDbExecuteResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostRocFxDbExecuteResultPayload {
+    pub err: core::mem::ManuallyDrop<RocStr>,
+    pub ok: core::mem::ManuallyDrop<u64>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(8))]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbExecuteResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbExecuteResult {
+    pub _payload_alignment: [HostRocFxDbExecuteResultPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: HostRocFxDbExecuteResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbExecuteResult {
+    pub payload: HostRocFxDbExecuteResultPayload,
+    pub tag: HostRocFxDbExecuteResultTag,
+}
+
+impl HostRocFxDbExecuteResult {
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxDbExecuteResultTag::Err` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxDbExecuteResultTag::Err` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxDbExecuteResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxDbExecuteResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxDbExecuteResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &u64 {
+        unsafe { &*(self.payload.as_ptr() as *const u64) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxDbExecuteResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &u64 {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<u64> as *const u64) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxDbExecuteResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u64) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostRocFxDbExecuteResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostRocFxDbExecuteResult>() == 32, "HostRocFxDbExecuteResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostRocFxDbExecuteResult>() == 8, "HostRocFxDbExecuteResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostRocFxDbExecuteResult, tag) == 24, "HostRocFxDbExecuteResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostRocFxDbExecuteResult>() == 16, "HostRocFxDbExecuteResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostRocFxDbExecuteResult>() == 8, "HostRocFxDbExecuteResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostRocFxDbExecuteResult, tag) == 12, "HostRocFxDbExecuteResult tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainHandleMessageForHostResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union MainHandleMessageForHostResultPayload {
+    pub err: core::mem::ManuallyDrop<RocStr>,
+    pub ok: core::mem::ManuallyDrop<RocStr>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct MainHandleMessageForHostResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MainHandleMessageForHostResult {
+    pub _payload_alignment: [MainHandleMessageForHostResultPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: MainHandleMessageForHostResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MainHandleMessageForHostResult {
+    pub payload: MainHandleMessageForHostResultPayload,
+    pub tag: MainHandleMessageForHostResultTag,
+}
+
+impl MainHandleMessageForHostResult {
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `MainHandleMessageForHostResultTag::Err` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `MainHandleMessageForHostResultTag::Err` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `MainHandleMessageForHostResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `MainHandleMessageForHostResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `MainHandleMessageForHostResultTag::Ok` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
         unsafe { &*(self.payload.as_ptr() as *const RocStr) }
@@ -1534,7 +1788,7 @@ impl MainInitForHostResult {
     /// Borrow the `Ok` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `MainInitForHostResultTag::Ok` and the payload must still be initialized.
+    /// `self.tag` must be `MainHandleMessageForHostResultTag::Ok` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
         unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
@@ -1543,7 +1797,7 @@ impl MainInitForHostResult {
     /// Move the `Ok` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `MainInitForHostResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `MainHandleMessageForHostResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
@@ -1552,7 +1806,7 @@ impl MainInitForHostResult {
     /// Move the `Ok` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `MainInitForHostResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `MainHandleMessageForHostResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
@@ -1561,17 +1815,322 @@ impl MainInitForHostResult {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<MainInitForHostResult>() == 32, "MainInitForHostResult size mismatch");
+const _: () = assert!(core::mem::size_of::<MainHandleMessageForHostResult>() == 32, "MainHandleMessageForHostResult size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<MainInitForHostResult>() == 8, "MainInitForHostResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<MainHandleMessageForHostResult>() == 8, "MainHandleMessageForHostResult alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(MainInitForHostResult, tag) == 24, "MainInitForHostResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(MainHandleMessageForHostResult, tag) == 24, "MainHandleMessageForHostResult tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<MainInitForHostResult>() == 16, "MainInitForHostResult size mismatch");
+const _: () = assert!(core::mem::size_of::<MainHandleMessageForHostResult>() == 16, "MainHandleMessageForHostResult size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<MainInitForHostResult>() == 4, "MainInitForHostResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<MainHandleMessageForHostResult>() == 4, "MainHandleMessageForHostResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(MainInitForHostResult, tag) == 12, "MainInitForHostResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(MainHandleMessageForHostResult, tag) == 12, "MainHandleMessageForHostResult tag offset mismatch");
+
+/// Arguments for Host.rocFxAppendFile!
+/// Roc signature: Str, Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxAppendFileArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxAwaitWebhook!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxAwaitWebhookArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxBlobCreateContainer!
+/// Roc signature: Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxBlobCreateContainerArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxBlobDelete!
+/// Roc signature: Str, Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxBlobDeleteArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxBlobGet!
+/// Roc signature: Str, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxBlobGetArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxBlobHas!
+/// Roc signature: Str, Str => Try(Bool, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxBlobHasArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxBlobList!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxBlobListArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxBlobPut!
+/// Roc signature: Str, Str, Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxBlobPutArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+}
+
+/// Arguments for Host.rocFxDbBegin!
+/// Roc signature: U32 => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbBeginArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxDbCommit!
+/// Roc signature: U32 => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbCommitArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxDbExecute!
+/// Roc signature: U32, Str, Str => Try(U64, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbExecuteArgs {
+    pub arg0: u32,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+}
+
+/// Arguments for Host.rocFxDbOpen!
+/// Roc signature: Str => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbOpenArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxDbOpenIgnite!
+/// Roc signature: Str => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbOpenIgniteArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxDbOpenMysql!
+/// Roc signature: Str => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbOpenMysqlArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxDbQuery!
+/// Roc signature: U32, Str, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbQueryArgs {
+    pub arg0: u32,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+}
+
+/// Arguments for Host.rocFxDbRollback!
+/// Roc signature: U32 => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDbRollbackArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxDeleteFile!
+/// Roc signature: Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDeleteFileArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxDurableStreamAppend!
+/// Roc signature: U32, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDurableStreamAppendArgs {
+    pub arg0: u32,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxDurableStreamRead!
+/// Roc signature: U32, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDurableStreamReadArgs {
+    pub arg0: u32,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxDurableStreamReader!
+/// Roc signature: Str => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDurableStreamReaderArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxDurableStreamRelease!
+/// Roc signature: U32 => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDurableStreamReleaseArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxDurableStreamWriter!
+/// Roc signature: Str => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxDurableStreamWriterArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxFileExists!
+/// Roc signature: Str => Try(Bool, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxFileExistsArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxFileSize!
+/// Roc signature: Str => Try(U64, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxFileSizeArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxGetConfig!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxGetConfigArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxGetRetryPolicy!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxGetRetryPolicyArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxHttpRequest!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxHttpRequestArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxKvDelete!
+/// Roc signature: Str, Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxKvDeleteArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxKvExists!
+/// Roc signature: Str, Str => Try(Bool, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxKvExistsArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxKvGet!
+/// Roc signature: Str, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxKvGetArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxKvSet!
+/// Roc signature: Str, Str, Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxKvSetArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+}
+
+/// Arguments for Host.rocFxListDir!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxListDirArgs {
+    pub arg0: RocStr,
+}
 
 /// Arguments for Host.rocFxLog!
 /// Roc signature: U8, Str => {}
@@ -1581,6 +2140,274 @@ const _: () = assert!(core::mem::offset_of!(MainInitForHostResult, tag) == 12, "
 pub struct HostRocFxLogArgs {
     pub arg0: u8,
     pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxMakeAgentId!
+/// Roc signature: Str, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxMakeAgentIdArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxMakeDir!
+/// Roc signature: Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxMakeDirArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxNewQuotaToken!
+/// Roc signature: Str, U64 => U32
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxNewQuotaTokenArgs {
+    pub arg0: RocStr,
+    pub arg1: u64,
+}
+
+/// Arguments for Host.rocFxNextRetryDelay!
+/// Roc signature: Str, Str, U64, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxNextRetryDelayArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: u64,
+    pub arg3: RocStr,
+}
+
+/// Arguments for Host.rocFxOplogCommit!
+/// Roc signature: U8 => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxOplogCommitArgs {
+    pub arg0: u8,
+}
+
+/// Arguments for Host.rocFxParseAgentId!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxParseAgentIdArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxPermissionDerive!
+/// Roc signature: U32, Str => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionDeriveArgs {
+    pub arg0: u32,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxPermissionDeriveFromWallet!
+/// Roc signature: Str => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionDeriveFromWalletArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxPermissionDeriveScope!
+/// Roc signature: Str => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionDeriveScopeArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxPermissionExpiresAt!
+/// Roc signature: U32 => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionExpiresAtArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxPermissionId!
+/// Roc signature: U32 => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionIdArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxPermissionInspect!
+/// Roc signature: U32 => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionInspectArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxPermissionInstall!
+/// Roc signature: U32, Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionInstallArgs {
+    pub arg0: u32,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxPermissionParents!
+/// Roc signature: U32 => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionParentsArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxPermissionRelease!
+/// Roc signature: U32 => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionReleaseArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxPermissionRevoke!
+/// Roc signature: U32 => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionRevokeArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxPermissionValidateGrant!
+/// Roc signature: Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxPermissionValidateGrantArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxQuotaCommit!
+/// Roc signature: U32, U64 => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxQuotaCommitArgs {
+    pub arg0: u32,
+    pub arg1: u64,
+}
+
+/// Arguments for Host.rocFxQuotaMerge!
+/// Roc signature: U32, U32 => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxQuotaMergeArgs {
+    pub arg0: u32,
+    pub arg1: u32,
+}
+
+/// Arguments for Host.rocFxQuotaReserve!
+/// Roc signature: U32, U64 => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxQuotaReserveArgs {
+    pub arg0: u32,
+    pub arg1: u64,
+}
+
+/// Arguments for Host.rocFxQuotaSplit!
+/// Roc signature: U32, U64 => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxQuotaSplitArgs {
+    pub arg0: u32,
+    pub arg1: u64,
+}
+
+/// Arguments for Host.rocFxReadFile!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxReadFileArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxRemoveRetryPolicy!
+/// Roc signature: Str => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxRemoveRetryPolicyArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxResolveAgentId!
+/// Roc signature: Str, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxResolveAgentIdArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxResolveComponentId!
+/// Roc signature: Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxResolveComponentIdArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxResolveRetryPolicy!
+/// Roc signature: Str, Str, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxResolveRetryPolicyArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+}
+
+/// Arguments for Host.rocFxRpcCancel!
+/// Roc signature: U32 => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxRpcCancelArgs {
+    pub arg0: u32,
+}
+
+/// Arguments for Host.rocFxRpcFireAndForget!
+/// Roc signature: Str, Str, Str => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxRpcFireAndForgetArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
 }
 
 /// Arguments for Host.rocFxRpcInvoke!
@@ -1594,6 +2421,30 @@ pub struct HostRocFxRpcInvokeArgs {
     pub arg2: RocStr,
 }
 
+/// Arguments for Host.rocFxRpcSchedule!
+/// Roc signature: Str, Str, Str, U64 => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxRpcScheduleArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+    pub arg3: u64,
+}
+
+/// Arguments for Host.rocFxRpcScheduleCancelable!
+/// Roc signature: Str, Str, Str, U64 => Try(U32, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxRpcScheduleCancelableArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+    pub arg3: u64,
+}
+
 /// Arguments for Host.rocFxSetPersistence!
 /// Roc signature: U8 => {}
 /// Refcounted fields are owned by the hosted function.
@@ -1603,13 +2454,50 @@ pub struct HostRocFxSetPersistenceArgs {
     pub arg0: u8,
 }
 
-/// Arguments for Host.rocFxHttpRequest!
-/// Roc signature: Str => Try(Str, Str)
+/// Arguments for Host.rocFxSetRetryPolicy!
+/// Roc signature: Str => Try({}, Str)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostRocFxHttpRequestArgs {
+pub struct HostRocFxSetRetryPolicyArgs {
     pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxSleepMillis!
+/// Roc signature: U64 => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxSleepMillisArgs {
+    pub arg0: u64,
+}
+
+/// Arguments for Host.rocFxTrap!
+/// Roc signature: Str => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxTrapArgs {
+    pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxWriteFile!
+/// Roc signature: Str, Str => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxWriteFileArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+}
+
+/// Arguments for Host.rocFxWsClose!
+/// Roc signature: U32 => Try({}, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxWsCloseArgs {
+    pub arg0: u32,
 }
 
 /// Arguments for Host.rocFxWsConnect!
@@ -1619,6 +2507,15 @@ pub struct HostRocFxHttpRequestArgs {
 #[derive(Clone, Copy)]
 pub struct HostRocFxWsConnectArgs {
     pub arg0: RocStr,
+}
+
+/// Arguments for Host.rocFxWsReceive!
+/// Roc signature: U32 => Try(Str, Str)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRocFxWsReceiveArgs {
+    pub arg0: u32,
 }
 
 /// Arguments for Host.rocFxWsSend!
@@ -1631,66 +2528,222 @@ pub struct HostRocFxWsSendArgs {
     pub arg1: RocStr,
 }
 
-/// Arguments for Host.rocFxWsReceive!
-/// Roc signature: U32 => Try(Str, Str)
-/// Refcounted fields are owned by the hosted function.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct HostRocFxWsReceiveArgs {
-    pub arg0: u32,
-}
-
-/// Arguments for Host.rocFxWsClose!
-/// Roc signature: U32 => Try({}, Str)
-/// Refcounted fields are owned by the hosted function.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct HostRocFxWsCloseArgs {
-    pub arg0: u32,
-}
-
-/// Arguments for Host.rocFxSleepMillis!
-/// Roc signature: U64 => {}
-/// Refcounted fields are owned by the hosted function.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct HostRocFxSleepMillisArgs {
-    pub arg0: u64,
-}
-
-/// Arguments for Host.rocFxGetConfig!
-/// Roc signature: Str => Try(Str, Str)
-/// Refcounted fields are owned by the hosted function.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct HostRocFxGetConfigArgs {
-    pub arg0: RocStr,
-}
-
 // Platform Type Aliases
 
-pub type HostRocFxHttpRequestResult = HostRocFxRpcInvokeResult;
-pub type HostRocFxHttpRequestResultPayload = HostRocFxRpcInvokeResultPayload;
-pub type HostRocFxHttpRequestResultTag = HostRocFxRpcInvokeResultTag;
-pub type HostRocFxWsReceiveResult = HostRocFxRpcInvokeResult;
-pub type HostRocFxWsReceiveResultPayload = HostRocFxRpcInvokeResultPayload;
-pub type HostRocFxWsReceiveResultTag = HostRocFxRpcInvokeResultTag;
-pub type HostRocFxWsCloseResult = HostRocFxWsSendResult;
-pub type HostRocFxWsCloseResultPayload = HostRocFxWsSendResultPayload;
-pub type HostRocFxWsCloseResultTag = HostRocFxWsSendResultTag;
-pub type HostRocFxGetConfigResult = HostRocFxRpcInvokeResult;
-pub type HostRocFxGetConfigResultPayload = HostRocFxRpcInvokeResultPayload;
-pub type HostRocFxGetConfigResultTag = HostRocFxRpcInvokeResultTag;
-pub type MainHandleMessageForHostResult = MainInitForHostResult;
-pub type MainHandleMessageForHostResultPayload = MainInitForHostResultPayload;
-pub type MainHandleMessageForHostResultTag = MainInitForHostResultTag;
-pub type MainHandleToolCallForHostResult = MainInitForHostResult;
-pub type MainHandleToolCallForHostResultPayload = MainInitForHostResultPayload;
-pub type MainHandleToolCallForHostResultTag = MainInitForHostResultTag;
+pub type HostRocFxBlobCreateContainerResult = HostRocFxAppendFileResult;
+pub type HostRocFxBlobCreateContainerResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxBlobCreateContainerResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxBlobDeleteResult = HostRocFxAppendFileResult;
+pub type HostRocFxBlobDeleteResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxBlobDeleteResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxBlobGetResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxBlobGetResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxBlobGetResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxBlobListResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxBlobListResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxBlobListResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxBlobPutResult = HostRocFxAppendFileResult;
+pub type HostRocFxBlobPutResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxBlobPutResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxCreateWebhookResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxCreateWebhookResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxCreateWebhookResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxDbCommitResult = HostRocFxAppendFileResult;
+pub type HostRocFxDbCommitResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxDbCommitResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxDbOpenResult = HostRocFxDbBeginResult;
+pub type HostRocFxDbOpenResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxDbOpenResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxDbOpenIgniteResult = HostRocFxDbBeginResult;
+pub type HostRocFxDbOpenIgniteResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxDbOpenIgniteResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxDbOpenMysqlResult = HostRocFxDbBeginResult;
+pub type HostRocFxDbOpenMysqlResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxDbOpenMysqlResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxDbQueryResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxDbQueryResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxDbQueryResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxDbRollbackResult = HostRocFxAppendFileResult;
+pub type HostRocFxDbRollbackResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxDbRollbackResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxDeleteFileResult = HostRocFxAppendFileResult;
+pub type HostRocFxDeleteFileResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxDeleteFileResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxDurableStreamAppendResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxDurableStreamAppendResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxDurableStreamAppendResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxDurableStreamReadResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxDurableStreamReadResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxDurableStreamReadResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxDurableStreamReaderResult = HostRocFxDbBeginResult;
+pub type HostRocFxDurableStreamReaderResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxDurableStreamReaderResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxDurableStreamReleaseResult = HostRocFxAppendFileResult;
+pub type HostRocFxDurableStreamReleaseResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxDurableStreamReleaseResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxDurableStreamWriterResult = HostRocFxDbBeginResult;
+pub type HostRocFxDurableStreamWriterResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxDurableStreamWriterResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxFileExistsResult = HostRocFxBlobHasResult;
+pub type HostRocFxFileExistsResultPayload = HostRocFxBlobHasResultPayload;
+pub type HostRocFxFileExistsResultTag = HostRocFxBlobHasResultTag;
+pub type HostRocFxFileSizeResult = HostRocFxDbExecuteResult;
+pub type HostRocFxFileSizeResultPayload = HostRocFxDbExecuteResultPayload;
+pub type HostRocFxFileSizeResultTag = HostRocFxDbExecuteResultTag;
+pub type HostRocFxForkResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxForkResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxForkResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxGetConfigResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxGetConfigResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxGetConfigResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxGetRetryPolicyResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxGetRetryPolicyResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxGetRetryPolicyResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxHttpRequestResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxHttpRequestResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxHttpRequestResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxKvDeleteResult = HostRocFxAppendFileResult;
+pub type HostRocFxKvDeleteResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxKvDeleteResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxKvExistsResult = HostRocFxBlobHasResult;
+pub type HostRocFxKvExistsResultPayload = HostRocFxBlobHasResultPayload;
+pub type HostRocFxKvExistsResultTag = HostRocFxBlobHasResultTag;
+pub type HostRocFxKvGetResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxKvGetResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxKvGetResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxKvSetResult = HostRocFxAppendFileResult;
+pub type HostRocFxKvSetResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxKvSetResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxListDirResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxListDirResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxListDirResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxMakeAgentIdResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxMakeAgentIdResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxMakeAgentIdResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxMakeDirResult = HostRocFxAppendFileResult;
+pub type HostRocFxMakeDirResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxMakeDirResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxNextRetryDelayResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxNextRetryDelayResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxNextRetryDelayResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxParseAgentIdResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxParseAgentIdResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxParseAgentIdResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxPermissionDeriveResult = HostRocFxDbBeginResult;
+pub type HostRocFxPermissionDeriveResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxPermissionDeriveResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxPermissionDeriveFromWalletResult = HostRocFxDbBeginResult;
+pub type HostRocFxPermissionDeriveFromWalletResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxPermissionDeriveFromWalletResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxPermissionDeriveScopeResult = HostRocFxDbBeginResult;
+pub type HostRocFxPermissionDeriveScopeResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxPermissionDeriveScopeResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxPermissionExpiresAtResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxPermissionExpiresAtResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxPermissionExpiresAtResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxPermissionIdResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxPermissionIdResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxPermissionIdResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxPermissionInspectResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxPermissionInspectResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxPermissionInspectResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxPermissionInstallResult = HostRocFxAppendFileResult;
+pub type HostRocFxPermissionInstallResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxPermissionInstallResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxPermissionListModulesResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxPermissionListModulesResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxPermissionListModulesResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxPermissionParentsResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxPermissionParentsResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxPermissionParentsResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxPermissionReleaseResult = HostRocFxAppendFileResult;
+pub type HostRocFxPermissionReleaseResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxPermissionReleaseResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxPermissionRevokeResult = HostRocFxDbBeginResult;
+pub type HostRocFxPermissionRevokeResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxPermissionRevokeResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxPermissionValidateGrantResult = HostRocFxAppendFileResult;
+pub type HostRocFxPermissionValidateGrantResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxPermissionValidateGrantResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxPermissionsWalletResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxPermissionsWalletResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxPermissionsWalletResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxPermissionsWalletVersionResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxPermissionsWalletVersionResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxPermissionsWalletVersionResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxQuotaCommitResult = HostRocFxAppendFileResult;
+pub type HostRocFxQuotaCommitResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxQuotaCommitResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxQuotaMergeResult = HostRocFxAppendFileResult;
+pub type HostRocFxQuotaMergeResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxQuotaMergeResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxQuotaReserveResult = HostRocFxDbBeginResult;
+pub type HostRocFxQuotaReserveResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxQuotaReserveResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxQuotaSplitResult = HostRocFxDbBeginResult;
+pub type HostRocFxQuotaSplitResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxQuotaSplitResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxReadFileResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxReadFileResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxReadFileResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxResolveAgentIdResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxResolveAgentIdResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxResolveAgentIdResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxResolveComponentIdResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxResolveComponentIdResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxResolveComponentIdResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxResolveRetryPolicyResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxResolveRetryPolicyResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxResolveRetryPolicyResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxRpcCancelResult = HostRocFxAppendFileResult;
+pub type HostRocFxRpcCancelResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxRpcCancelResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxRpcFireAndForgetResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxRpcFireAndForgetResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxRpcFireAndForgetResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxRpcInvokeResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxRpcInvokeResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxRpcInvokeResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxRpcScheduleResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxRpcScheduleResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxRpcScheduleResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxRpcScheduleCancelableResult = HostRocFxDbBeginResult;
+pub type HostRocFxRpcScheduleCancelableResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxRpcScheduleCancelableResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxSetRetryPolicyResult = HostRocFxAppendFileResult;
+pub type HostRocFxSetRetryPolicyResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxSetRetryPolicyResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxWriteFileResult = HostRocFxAppendFileResult;
+pub type HostRocFxWriteFileResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxWriteFileResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxWsCloseResult = HostRocFxAppendFileResult;
+pub type HostRocFxWsCloseResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxWsCloseResultTag = HostRocFxAppendFileResultTag;
+pub type HostRocFxWsConnectResult = HostRocFxDbBeginResult;
+pub type HostRocFxWsConnectResultPayload = HostRocFxDbBeginResultPayload;
+pub type HostRocFxWsConnectResultTag = HostRocFxDbBeginResultTag;
+pub type HostRocFxWsReceiveResult = HostRocFxAwaitWebhookResult;
+pub type HostRocFxWsReceiveResultPayload = HostRocFxAwaitWebhookResultPayload;
+pub type HostRocFxWsReceiveResultTag = HostRocFxAwaitWebhookResultTag;
+pub type HostRocFxWsSendResult = HostRocFxAppendFileResult;
+pub type HostRocFxWsSendResultPayload = HostRocFxAppendFileResultPayload;
+pub type HostRocFxWsSendResultTag = HostRocFxAppendFileResultTag;
+pub type MainHandleMultimodalForHostResult = MainHandleMessageForHostResult;
+pub type MainHandleMultimodalForHostResultPayload = MainHandleMessageForHostResultPayload;
+pub type MainHandleMultimodalForHostResultTag = MainHandleMessageForHostResultTag;
+pub type MainHandleRequestForHostResult = MainHandleMessageForHostResult;
+pub type MainHandleRequestForHostResultPayload = MainHandleMessageForHostResultPayload;
+pub type MainHandleRequestForHostResultTag = MainHandleMessageForHostResultTag;
+pub type MainHandleToolCallForHostResult = MainHandleMessageForHostResult;
+pub type MainHandleToolCallForHostResultPayload = MainHandleMessageForHostResultPayload;
+pub type MainHandleToolCallForHostResultTag = MainHandleMessageForHostResultTag;
+pub type MainInitForHostResult = MainHandleMessageForHostResult;
+pub type MainInitForHostResultPayload = MainHandleMessageForHostResultPayload;
+pub type MainInitForHostResultTag = MainHandleMessageForHostResultTag;
 
 // Generated Refcount Helpers
 
-impl HostRocFxRpcInvokeResult {
+impl HostRocFxAwaitWebhookResult {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -1699,11 +2752,11 @@ impl HostRocFxRpcInvokeResult {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            HostRocFxRpcInvokeResultTag::Err => {
+            HostRocFxAwaitWebhookResultTag::Err => {
                 let payload = unsafe { value.take_payload_err_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
-            HostRocFxRpcInvokeResultTag::Ok => {
+            HostRocFxAwaitWebhookResultTag::Ok => {
                 let payload = unsafe { value.take_payload_ok_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
@@ -1719,11 +2772,11 @@ impl HostRocFxRpcInvokeResult {
         let value = self;
         let _ = amount;
         match value.tag {
-            HostRocFxRpcInvokeResultTag::Err => {
+            HostRocFxAwaitWebhookResultTag::Err => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
-            HostRocFxRpcInvokeResultTag::Ok => {
+            HostRocFxAwaitWebhookResultTag::Ok => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
@@ -1731,15 +2784,15 @@ impl HostRocFxRpcInvokeResult {
     }
 }
 
-pub struct HostRocFxRpcInvokeResultRelease;
+pub struct HostRocFxAwaitWebhookResultRelease;
 
-unsafe impl RocRelease<HostRocFxRpcInvokeResult> for HostRocFxRpcInvokeResultRelease {
-    unsafe fn release(value: HostRocFxRpcInvokeResult, roc_host: &RocHost) {
+unsafe impl RocRelease<HostRocFxAwaitWebhookResult> for HostRocFxAwaitWebhookResultRelease {
+    unsafe fn release(value: HostRocFxAwaitWebhookResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
 
-impl HostRocFxWsConnectResult {
+impl HostRocFxDbBeginResult {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -1748,11 +2801,11 @@ impl HostRocFxWsConnectResult {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            HostRocFxWsConnectResultTag::Err => {
+            HostRocFxDbBeginResultTag::Err => {
                 let payload = unsafe { value.take_payload_err_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
-            HostRocFxWsConnectResultTag::Ok => {},
+            HostRocFxDbBeginResultTag::Ok => {},
         }
     }
 
@@ -1765,24 +2818,24 @@ impl HostRocFxWsConnectResult {
         let value = self;
         let _ = amount;
         match value.tag {
-            HostRocFxWsConnectResultTag::Err => {
+            HostRocFxDbBeginResultTag::Err => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
-            HostRocFxWsConnectResultTag::Ok => {},
+            HostRocFxDbBeginResultTag::Ok => {},
         }
     }
 }
 
-pub struct HostRocFxWsConnectResultRelease;
+pub struct HostRocFxDbBeginResultRelease;
 
-unsafe impl RocRelease<HostRocFxWsConnectResult> for HostRocFxWsConnectResultRelease {
-    unsafe fn release(value: HostRocFxWsConnectResult, roc_host: &RocHost) {
+unsafe impl RocRelease<HostRocFxDbBeginResult> for HostRocFxDbBeginResultRelease {
+    unsafe fn release(value: HostRocFxDbBeginResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
 
-impl HostRocFxWsSendResult {
+impl HostRocFxAppendFileResult {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -1791,11 +2844,11 @@ impl HostRocFxWsSendResult {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            HostRocFxWsSendResultTag::Err => {
+            HostRocFxAppendFileResultTag::Err => {
                 let payload = unsafe { value.take_payload_err_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
-            HostRocFxWsSendResultTag::Ok => {},
+            HostRocFxAppendFileResultTag::Ok => {},
         }
     }
 
@@ -1808,24 +2861,24 @@ impl HostRocFxWsSendResult {
         let value = self;
         let _ = amount;
         match value.tag {
-            HostRocFxWsSendResultTag::Err => {
+            HostRocFxAppendFileResultTag::Err => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
-            HostRocFxWsSendResultTag::Ok => {},
+            HostRocFxAppendFileResultTag::Ok => {},
         }
     }
 }
 
-pub struct HostRocFxWsSendResultRelease;
+pub struct HostRocFxAppendFileResultRelease;
 
-unsafe impl RocRelease<HostRocFxWsSendResult> for HostRocFxWsSendResultRelease {
-    unsafe fn release(value: HostRocFxWsSendResult, roc_host: &RocHost) {
+unsafe impl RocRelease<HostRocFxAppendFileResult> for HostRocFxAppendFileResultRelease {
+    unsafe fn release(value: HostRocFxAppendFileResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
 
-impl MainInitForHostResult {
+impl HostRocFxBlobHasResult {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -1834,11 +2887,97 @@ impl MainInitForHostResult {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            MainInitForHostResultTag::Err => {
+            HostRocFxBlobHasResultTag::Err => {
                 let payload = unsafe { value.take_payload_err_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
-            MainInitForHostResultTag::Ok => {
+            HostRocFxBlobHasResultTag::Ok => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostRocFxBlobHasResultTag::Err => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostRocFxBlobHasResultTag::Ok => {},
+        }
+    }
+}
+
+pub struct HostRocFxBlobHasResultRelease;
+
+unsafe impl RocRelease<HostRocFxBlobHasResult> for HostRocFxBlobHasResultRelease {
+    unsafe fn release(value: HostRocFxBlobHasResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostRocFxDbExecuteResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostRocFxDbExecuteResultTag::Err => {
+                let payload = unsafe { value.take_payload_err_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            HostRocFxDbExecuteResultTag::Ok => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostRocFxDbExecuteResultTag::Err => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostRocFxDbExecuteResultTag::Ok => {},
+        }
+    }
+}
+
+pub struct HostRocFxDbExecuteResultRelease;
+
+unsafe impl RocRelease<HostRocFxDbExecuteResult> for HostRocFxDbExecuteResultRelease {
+    unsafe fn release(value: HostRocFxDbExecuteResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl MainHandleMessageForHostResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            MainHandleMessageForHostResultTag::Err => {
+                let payload = unsafe { value.take_payload_err_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            MainHandleMessageForHostResultTag::Ok => {
                 let payload = unsafe { value.take_payload_ok_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
@@ -1854,11 +2993,11 @@ impl MainInitForHostResult {
         let value = self;
         let _ = amount;
         match value.tag {
-            MainInitForHostResultTag::Err => {
+            MainHandleMessageForHostResultTag::Err => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
-            MainInitForHostResultTag::Ok => {
+            MainHandleMessageForHostResultTag::Ok => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
@@ -1866,10 +3005,10 @@ impl MainInitForHostResult {
     }
 }
 
-pub struct MainInitForHostResultRelease;
+pub struct MainHandleMessageForHostResultRelease;
 
-unsafe impl RocRelease<MainInitForHostResult> for MainInitForHostResultRelease {
-    unsafe fn release(value: MainInitForHostResult, roc_host: &RocHost) {
+unsafe impl RocRelease<MainHandleMessageForHostResult> for MainHandleMessageForHostResultRelease {
+    unsafe fn release(value: MainHandleMessageForHostResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -1938,6 +3077,293 @@ fn direct_roc_host() -> RocHost {
 
 #[allow(improper_ctypes)]
 unsafe extern "C" {
+    /// Hosted symbol for Host.rocFxAppendFile!
+    /// Roc signature: Str, Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxAppendFile(arg0: RocStr, arg1: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxAwaitWebhook!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxAwaitWebhook(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxBlobCreateContainer!
+    /// Roc signature: Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxBlobCreateContainer(arg0: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxBlobDelete!
+    /// Roc signature: Str, Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxBlobDelete(arg0: RocStr, arg1: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxBlobGet!
+    /// Roc signature: Str, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxBlobGet(arg0: RocStr, arg1: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxBlobHas!
+    /// Roc signature: Str, Str => Try(Bool, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxBlobHas(arg0: RocStr, arg1: RocStr) -> HostRocFxBlobHasResult;
+
+    /// Hosted symbol for Host.rocFxBlobList!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxBlobList(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxBlobPut!
+    /// Roc signature: Str, Str, Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxBlobPut(arg0: RocStr, arg1: RocStr, arg2: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxCreateWebhook!
+    /// Roc signature: {} => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxCreateWebhook() -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxDbBegin!
+    /// Roc signature: U32 => Try(U32, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDbBegin(arg0: u32) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxDbCommit!
+    /// Roc signature: U32 => Try({}, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDbCommit(arg0: u32) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxDbExecute!
+    /// Roc signature: U32, Str, Str => Try(U64, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDbExecute(arg0: u32, arg1: RocStr, arg2: RocStr) -> HostRocFxDbExecuteResult;
+
+    /// Hosted symbol for Host.rocFxDbOpen!
+    /// Roc signature: Str => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDbOpen(arg0: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxDbOpenIgnite!
+    /// Roc signature: Str => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDbOpenIgnite(arg0: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxDbOpenMysql!
+    /// Roc signature: Str => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDbOpenMysql(arg0: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxDbQuery!
+    /// Roc signature: U32, Str, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDbQuery(arg0: u32, arg1: RocStr, arg2: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxDbRollback!
+    /// Roc signature: U32 => Try({}, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDbRollback(arg0: u32) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxDeleteFile!
+    /// Roc signature: Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDeleteFile(arg0: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxDurableStreamAppend!
+    /// Roc signature: U32, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDurableStreamAppend(arg0: u32, arg1: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxDurableStreamRead!
+    /// Roc signature: U32, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDurableStreamRead(arg0: u32, arg1: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxDurableStreamReader!
+    /// Roc signature: Str => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDurableStreamReader(arg0: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxDurableStreamRelease!
+    /// Roc signature: U32 => Try({}, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDurableStreamRelease(arg0: u32) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxDurableStreamWriter!
+    /// Roc signature: Str => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxDurableStreamWriter(arg0: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxFileExists!
+    /// Roc signature: Str => Try(Bool, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxFileExists(arg0: RocStr) -> HostRocFxBlobHasResult;
+
+    /// Hosted symbol for Host.rocFxFileSize!
+    /// Roc signature: Str => Try(U64, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxFileSize(arg0: RocStr) -> HostRocFxDbExecuteResult;
+
+    /// Hosted symbol for Host.rocFxFork!
+    /// Roc signature: {} => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxFork() -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxGetConfig!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxGetConfig(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxGetPrincipal!
+    /// Roc signature: {} => Str
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxGetPrincipal() -> RocStr;
+
+    /// Hosted symbol for Host.rocFxGetRetryPolicies!
+    /// Roc signature: {} => Str
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxGetRetryPolicies() -> RocStr;
+
+    /// Hosted symbol for Host.rocFxGetRetryPolicy!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxGetRetryPolicy(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxGetWorkerId!
+    /// Roc signature: {} => Str
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxGetWorkerId() -> RocStr;
+
+    /// Hosted symbol for Host.rocFxHttpRequest!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxHttpRequest(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxIdempotencyKey!
+    /// Roc signature: {} => Str
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxIdempotencyKey() -> RocStr;
+
+    /// Hosted symbol for Host.rocFxKvDelete!
+    /// Roc signature: Str, Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxKvDelete(arg0: RocStr, arg1: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxKvExists!
+    /// Roc signature: Str, Str => Try(Bool, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxKvExists(arg0: RocStr, arg1: RocStr) -> HostRocFxBlobHasResult;
+
+    /// Hosted symbol for Host.rocFxKvGet!
+    /// Roc signature: Str, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxKvGet(arg0: RocStr, arg1: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxKvSet!
+    /// Roc signature: Str, Str, Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxKvSet(arg0: RocStr, arg1: RocStr, arg2: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxListDir!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxListDir(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
     /// Hosted symbol for Host.rocFxLog!
     /// Roc signature: U8, Str => {}
     /// Owned arguments. Release each exactly once before returning, unless it is
@@ -1945,10 +3371,217 @@ unsafe extern "C" {
     ///     unsafe { arg1.decref(roc_host); }
     pub fn rocFxLog(arg0: u8, arg1: RocStr);
 
-    /// Hosted symbol for Host.rocFxGetWorkerId!
-    /// Roc signature: {} => Str
+    /// Hosted symbol for Host.rocFxMakeAgentId!
+    /// Roc signature: Str, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn rocFxGetWorkerId() -> RocStr;
+    pub fn rocFxMakeAgentId(arg0: RocStr, arg1: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxMakeDir!
+    /// Roc signature: Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxMakeDir(arg0: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxNewQuotaToken!
+    /// Roc signature: Str, U64 => U32
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    pub fn rocFxNewQuotaToken(arg0: RocStr, arg1: u64) -> u32;
+
+    /// Hosted symbol for Host.rocFxNextRetryDelay!
+    /// Roc signature: Str, Str, U64, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg3.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxNextRetryDelay(arg0: RocStr, arg1: RocStr, arg2: u64, arg3: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxNowMillis!
+    /// Roc signature: {} => U64
+    pub fn rocFxNowMillis() -> u64;
+
+    /// Hosted symbol for Host.rocFxOplogCommit!
+    /// Roc signature: U8 => {}
+    pub fn rocFxOplogCommit(arg0: u8);
+
+    /// Hosted symbol for Host.rocFxParseAgentId!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxParseAgentId(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxPermissionDerive!
+    /// Roc signature: U32, Str => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionDerive(arg0: u32, arg1: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxPermissionDeriveFromWallet!
+    /// Roc signature: Str => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionDeriveFromWallet(arg0: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxPermissionDeriveScope!
+    /// Roc signature: Str => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionDeriveScope(arg0: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxPermissionExpiresAt!
+    /// Roc signature: U32 => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionExpiresAt(arg0: u32) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxPermissionId!
+    /// Roc signature: U32 => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionId(arg0: u32) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxPermissionInspect!
+    /// Roc signature: U32 => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionInspect(arg0: u32) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxPermissionInstall!
+    /// Roc signature: U32, Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionInstall(arg0: u32, arg1: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxPermissionListModules!
+    /// Roc signature: {} => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionListModules() -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxPermissionParents!
+    /// Roc signature: U32 => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionParents(arg0: u32) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxPermissionRelease!
+    /// Roc signature: U32 => Try({}, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionRelease(arg0: u32) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxPermissionRevoke!
+    /// Roc signature: U32 => Try(U32, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionRevoke(arg0: u32) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxPermissionValidateGrant!
+    /// Roc signature: Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionValidateGrant(arg0: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxPermissionsWallet!
+    /// Roc signature: {} => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionsWallet() -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxPermissionsWalletVersion!
+    /// Roc signature: {} => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxPermissionsWalletVersion() -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxQuotaCommit!
+    /// Roc signature: U32, U64 => Try({}, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxQuotaCommit(arg0: u32, arg1: u64) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxQuotaMerge!
+    /// Roc signature: U32, U32 => Try({}, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxQuotaMerge(arg0: u32, arg1: u32) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxQuotaReserve!
+    /// Roc signature: U32, U64 => Try(U32, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxQuotaReserve(arg0: u32, arg1: u64) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxQuotaSplit!
+    /// Roc signature: U32, U64 => Try(U32, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxQuotaSplit(arg0: u32, arg1: u64) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxReadFile!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxReadFile(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxRemoveRetryPolicy!
+    /// Roc signature: Str => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    pub fn rocFxRemoveRetryPolicy(arg0: RocStr);
+
+    /// Hosted symbol for Host.rocFxResolveAgentId!
+    /// Roc signature: Str, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxResolveAgentId(arg0: RocStr, arg1: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxResolveComponentId!
+    /// Roc signature: Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxResolveComponentId(arg0: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxResolveRetryPolicy!
+    /// Roc signature: Str, Str, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxResolveRetryPolicy(arg0: RocStr, arg1: RocStr, arg2: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxRpcCancel!
+    /// Roc signature: U32 => Try({}, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxRpcCancel(arg0: u32) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxRpcFireAndForget!
+    /// Roc signature: Str, Str, Str => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxRpcFireAndForget(arg0: RocStr, arg1: RocStr, arg2: RocStr) -> HostRocFxAwaitWebhookResult;
 
     /// Hosted symbol for Host.rocFxRpcInvoke!
     /// Roc signature: Str, Str, Str => Try(Str, Str)
@@ -1958,19 +3591,64 @@ unsafe extern "C" {
     ///     unsafe { arg1.decref(roc_host); }
     ///     unsafe { arg2.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn rocFxRpcInvoke(arg0: RocStr, arg1: RocStr, arg2: RocStr) -> HostRocFxRpcInvokeResult;
+    pub fn rocFxRpcInvoke(arg0: RocStr, arg1: RocStr, arg2: RocStr) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxRpcSchedule!
+    /// Roc signature: Str, Str, Str, U64 => Try(Str, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxRpcSchedule(arg0: RocStr, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostRocFxAwaitWebhookResult;
+
+    /// Hosted symbol for Host.rocFxRpcScheduleCancelable!
+    /// Roc signature: Str, Str, Str, U64 => Try(U32, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxRpcScheduleCancelable(arg0: RocStr, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostRocFxDbBeginResult;
 
     /// Hosted symbol for Host.rocFxSetPersistence!
     /// Roc signature: U8 => {}
     pub fn rocFxSetPersistence(arg0: u8);
 
-    /// Hosted symbol for Host.rocFxHttpRequest!
-    /// Roc signature: Str => Try(Str, Str)
+    /// Hosted symbol for Host.rocFxSetRetryPolicy!
+    /// Roc signature: Str => Try({}, Str)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn rocFxHttpRequest(arg0: RocStr) -> HostRocFxRpcInvokeResult;
+    pub fn rocFxSetRetryPolicy(arg0: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxSleepMillis!
+    /// Roc signature: U64 => {}
+    pub fn rocFxSleepMillis(arg0: u64);
+
+    /// Hosted symbol for Host.rocFxTrap!
+    /// Roc signature: Str => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    pub fn rocFxTrap(arg0: RocStr);
+
+    /// Hosted symbol for Host.rocFxWriteFile!
+    /// Roc signature: Str, Str => Try({}, Str)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxWriteFile(arg0: RocStr, arg1: RocStr) -> HostRocFxAppendFileResult;
+
+    /// Hosted symbol for Host.rocFxWsClose!
+    /// Roc signature: U32 => Try({}, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxWsClose(arg0: u32) -> HostRocFxAppendFileResult;
 
     /// Hosted symbol for Host.rocFxWsConnect!
     /// Roc signature: Str => Try(U32, Str)
@@ -1978,7 +3656,12 @@ unsafe extern "C" {
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn rocFxWsConnect(arg0: RocStr) -> HostRocFxWsConnectResult;
+    pub fn rocFxWsConnect(arg0: RocStr) -> HostRocFxDbBeginResult;
+
+    /// Hosted symbol for Host.rocFxWsReceive!
+    /// Roc signature: U32 => Try(Str, Str)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn rocFxWsReceive(arg0: u32) -> HostRocFxAwaitWebhookResult;
 
     /// Hosted symbol for Host.rocFxWsSend!
     /// Roc signature: U32, Str => Try({}, Str)
@@ -1986,33 +3669,7 @@ unsafe extern "C" {
     /// moved into storage or into the result:
     ///     unsafe { arg1.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn rocFxWsSend(arg0: u32, arg1: RocStr) -> HostRocFxWsSendResult;
-
-    /// Hosted symbol for Host.rocFxWsReceive!
-    /// Roc signature: U32 => Try(Str, Str)
-    /// The result is owned by Roc: return exactly one owned reference.
-    pub fn rocFxWsReceive(arg0: u32) -> HostRocFxRpcInvokeResult;
-
-    /// Hosted symbol for Host.rocFxWsClose!
-    /// Roc signature: U32 => Try({}, Str)
-    /// The result is owned by Roc: return exactly one owned reference.
-    pub fn rocFxWsClose(arg0: u32) -> HostRocFxWsSendResult;
-
-    /// Hosted symbol for Host.rocFxSleepMillis!
-    /// Roc signature: U64 => {}
-    pub fn rocFxSleepMillis(arg0: u64);
-
-    /// Hosted symbol for Host.rocFxNowMillis!
-    /// Roc signature: {} => U64
-    pub fn rocFxNowMillis() -> u64;
-
-    /// Hosted symbol for Host.rocFxGetConfig!
-    /// Roc signature: Str => Try(Str, Str)
-    /// Owned arguments. Release each exactly once before returning, unless it is
-    /// moved into storage or into the result:
-    ///     unsafe { arg0.decref(roc_host); }
-    /// The result is owned by Roc: return exactly one owned reference.
-    pub fn rocFxGetConfig(arg0: RocStr) -> HostRocFxRpcInvokeResult;
+    pub fn rocFxWsSend(arg0: u32, arg1: RocStr) -> HostRocFxAppendFileResult;
 
 }
 
@@ -2148,56 +3805,88 @@ pub fn make_roc_host(env: *mut c_void) -> RocHost {
 
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    /// Entrypoint: main_init_for_host!
-    pub fn main_init_for_host_1_exposed_generic(arg0: RocStr) -> MainInitForHostResult;
-
     /// Entrypoint: main_handle_message_for_host!
-    pub fn main_handle_message_for_host_1_exposed_generic(arg0: RocStr, arg1: RocStr) -> MainInitForHostResult;
+    pub fn main_handle_message_for_host_1_exposed_generic(arg0: RocStr, arg1: RocStr) -> MainHandleMessageForHostResult;
+
+    /// Entrypoint: main_handle_multimodal_for_host!
+    pub fn main_handle_multimodal_for_host_1_exposed_generic(arg0: RocStr, arg1: RocStr) -> MainHandleMessageForHostResult;
+
+    /// Entrypoint: main_handle_request_for_host!
+    pub fn main_handle_request_for_host_1_exposed_generic(arg0: RocStr, arg1: RocStr) -> MainHandleMessageForHostResult;
 
     /// Entrypoint: main_handle_tool_call_for_host!
-    pub fn main_handle_tool_call_for_host_1_exposed_generic(arg0: RocStr, arg1: RocStr) -> MainInitForHostResult;
+    pub fn main_handle_tool_call_for_host_1_exposed_generic(arg0: RocStr, arg1: RocStr) -> MainHandleMessageForHostResult;
+
+    /// Entrypoint: main_init_for_host!
+    pub fn main_init_for_host_1_exposed_generic(arg0: RocStr) -> MainHandleMessageForHostResult;
 
     /// Entrypoint: main_metadata_for_host
     pub fn main_metadata_for_host_1_exposed_generic() -> RocStr;
 
 }
 
-const _: () = assert!(core::mem::size_of::<RocOwned<MainInitForHostResult, MainInitForHostResultRelease>>() == core::mem::size_of::<MainInitForHostResult>(), "main_init_for_host_1_exposed_generic owned result size mismatch");
-const _: () = assert!(core::mem::align_of::<RocOwned<MainInitForHostResult, MainInitForHostResultRelease>>() == core::mem::align_of::<MainInitForHostResult>(), "main_init_for_host_1_exposed_generic owned result alignment mismatch");
-
-/// Owning wrapper for `main_init_for_host_1_exposed_generic`. The returned value is recursively
-/// released on Drop with no runtime descriptor or extra storage.
-///
-/// # Safety
-/// The raw entrypoint and its arguments must satisfy the generated host ABI.
-pub unsafe fn main_init_for_host_1_exposed_generic_owned(arg0: RocStr) -> RocOwned<MainInitForHostResult, MainInitForHostResultRelease> {
-    let value = unsafe { main_init_for_host_1_exposed_generic(arg0) };
-    unsafe { RocOwned::from_raw(value) }
-}
-
-const _: () = assert!(core::mem::size_of::<RocOwned<MainInitForHostResult, MainInitForHostResultRelease>>() == core::mem::size_of::<MainInitForHostResult>(), "main_handle_message_for_host_1_exposed_generic owned result size mismatch");
-const _: () = assert!(core::mem::align_of::<RocOwned<MainInitForHostResult, MainInitForHostResultRelease>>() == core::mem::align_of::<MainInitForHostResult>(), "main_handle_message_for_host_1_exposed_generic owned result alignment mismatch");
+const _: () = assert!(core::mem::size_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::size_of::<MainHandleMessageForHostResult>(), "main_handle_message_for_host_1_exposed_generic owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::align_of::<MainHandleMessageForHostResult>(), "main_handle_message_for_host_1_exposed_generic owned result alignment mismatch");
 
 /// Owning wrapper for `main_handle_message_for_host_1_exposed_generic`. The returned value is recursively
 /// released on Drop with no runtime descriptor or extra storage.
 ///
 /// # Safety
 /// The raw entrypoint and its arguments must satisfy the generated host ABI.
-pub unsafe fn main_handle_message_for_host_1_exposed_generic_owned(arg0: RocStr, arg1: RocStr) -> RocOwned<MainInitForHostResult, MainInitForHostResultRelease> {
+pub unsafe fn main_handle_message_for_host_1_exposed_generic_owned(arg0: RocStr, arg1: RocStr) -> RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease> {
     let value = unsafe { main_handle_message_for_host_1_exposed_generic(arg0, arg1) };
     unsafe { RocOwned::from_raw(value) }
 }
 
-const _: () = assert!(core::mem::size_of::<RocOwned<MainInitForHostResult, MainInitForHostResultRelease>>() == core::mem::size_of::<MainInitForHostResult>(), "main_handle_tool_call_for_host_1_exposed_generic owned result size mismatch");
-const _: () = assert!(core::mem::align_of::<RocOwned<MainInitForHostResult, MainInitForHostResultRelease>>() == core::mem::align_of::<MainInitForHostResult>(), "main_handle_tool_call_for_host_1_exposed_generic owned result alignment mismatch");
+const _: () = assert!(core::mem::size_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::size_of::<MainHandleMessageForHostResult>(), "main_handle_multimodal_for_host_1_exposed_generic owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::align_of::<MainHandleMessageForHostResult>(), "main_handle_multimodal_for_host_1_exposed_generic owned result alignment mismatch");
+
+/// Owning wrapper for `main_handle_multimodal_for_host_1_exposed_generic`. The returned value is recursively
+/// released on Drop with no runtime descriptor or extra storage.
+///
+/// # Safety
+/// The raw entrypoint and its arguments must satisfy the generated host ABI.
+pub unsafe fn main_handle_multimodal_for_host_1_exposed_generic_owned(arg0: RocStr, arg1: RocStr) -> RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease> {
+    let value = unsafe { main_handle_multimodal_for_host_1_exposed_generic(arg0, arg1) };
+    unsafe { RocOwned::from_raw(value) }
+}
+
+const _: () = assert!(core::mem::size_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::size_of::<MainHandleMessageForHostResult>(), "main_handle_request_for_host_1_exposed_generic owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::align_of::<MainHandleMessageForHostResult>(), "main_handle_request_for_host_1_exposed_generic owned result alignment mismatch");
+
+/// Owning wrapper for `main_handle_request_for_host_1_exposed_generic`. The returned value is recursively
+/// released on Drop with no runtime descriptor or extra storage.
+///
+/// # Safety
+/// The raw entrypoint and its arguments must satisfy the generated host ABI.
+pub unsafe fn main_handle_request_for_host_1_exposed_generic_owned(arg0: RocStr, arg1: RocStr) -> RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease> {
+    let value = unsafe { main_handle_request_for_host_1_exposed_generic(arg0, arg1) };
+    unsafe { RocOwned::from_raw(value) }
+}
+
+const _: () = assert!(core::mem::size_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::size_of::<MainHandleMessageForHostResult>(), "main_handle_tool_call_for_host_1_exposed_generic owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::align_of::<MainHandleMessageForHostResult>(), "main_handle_tool_call_for_host_1_exposed_generic owned result alignment mismatch");
 
 /// Owning wrapper for `main_handle_tool_call_for_host_1_exposed_generic`. The returned value is recursively
 /// released on Drop with no runtime descriptor or extra storage.
 ///
 /// # Safety
 /// The raw entrypoint and its arguments must satisfy the generated host ABI.
-pub unsafe fn main_handle_tool_call_for_host_1_exposed_generic_owned(arg0: RocStr, arg1: RocStr) -> RocOwned<MainInitForHostResult, MainInitForHostResultRelease> {
+pub unsafe fn main_handle_tool_call_for_host_1_exposed_generic_owned(arg0: RocStr, arg1: RocStr) -> RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease> {
     let value = unsafe { main_handle_tool_call_for_host_1_exposed_generic(arg0, arg1) };
+    unsafe { RocOwned::from_raw(value) }
+}
+
+const _: () = assert!(core::mem::size_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::size_of::<MainHandleMessageForHostResult>(), "main_init_for_host_1_exposed_generic owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease>>() == core::mem::align_of::<MainHandleMessageForHostResult>(), "main_init_for_host_1_exposed_generic owned result alignment mismatch");
+
+/// Owning wrapper for `main_init_for_host_1_exposed_generic`. The returned value is recursively
+/// released on Drop with no runtime descriptor or extra storage.
+///
+/// # Safety
+/// The raw entrypoint and its arguments must satisfy the generated host ABI.
+pub unsafe fn main_init_for_host_1_exposed_generic_owned(arg0: RocStr) -> RocOwned<MainHandleMessageForHostResult, MainHandleMessageForHostResultRelease> {
+    let value = unsafe { main_init_for_host_1_exposed_generic(arg0) };
     unsafe { RocOwned::from_raw(value) }
 }
 

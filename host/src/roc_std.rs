@@ -1,5 +1,4 @@
 use core::alloc::Layout;
-use core::fmt;
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
 use core::slice;
@@ -327,39 +326,15 @@ impl core::fmt::Display for RocStr {
     }
 }
 
-pub struct RocList<T> {
-    ptr: *mut T,
-    len: usize,
-    capacity: usize,
-}
-
-impl<T> RocList<T> {
-    pub fn empty() -> Self {
-        Self {
-            ptr: ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-        }
-    }
-
-    pub fn as_slice(&self) -> &[T] {
-        if self.ptr.is_null() || self.len == 0 {
-            &[]
-        } else {
-            unsafe { slice::from_raw_parts(self.ptr, self.len) }
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
 /// Roc Result (RocResult<T, E>) layout
+///
+/// The host builds a result for every effect it answers, and the generated ABI
+/// emits a *shell* per result shape (`HostRocFxRpcInvokeResult` for
+/// `Try(Str, Str)`, `HostRocFxFileSizeResult` for `Try(U64, Str)`, ...) with
+/// accessors and release plans but no constructors — so the hand-written shell
+/// is what the effects construct, and the `const` block below keeps its layout
+/// tied to the generated one. The generated `RocList<T>` alias is the list type;
+/// nothing in the host builds a list, so there is no hand-written one here.
 #[repr(C)]
 pub struct RocResult<T, E> {
     payload: RocResultPayload<T, E>,
@@ -452,6 +427,35 @@ const _: () = {
     assert!(core::mem::size_of::<RocU64Result>() == 32);
     assert!(core::mem::align_of::<RocU64Result>() == 8);
     assert!(core::mem::offset_of!(RocU64Result, discriminant) == 24);
+};
+
+// The generated shells for the two shapes every effect uses, so a layout change
+// on either side fails the build here instead of corrupting a call at run time.
+// `HostRocFxRpcInvokeResult` is the generator's `Try(Str, Str)` (the alias
+// `HostRocFxHttpRequestResult` points at the same shell), and
+// `HostRocFxFileSizeResult` is its `Try(U64, Str)`.
+const _: () = {
+    type GeneratedStrPair = crate::roc_platform_abi::HostRocFxRpcInvokeResult;
+    assert!(
+        core::mem::size_of::<RocResult<RocStr, RocStr>>()
+            == core::mem::size_of::<GeneratedStrPair>()
+    );
+    assert!(
+        core::mem::align_of::<RocResult<RocStr, RocStr>>()
+            == core::mem::align_of::<GeneratedStrPair>()
+    );
+    assert!(
+        core::mem::offset_of!(RocResult<RocStr, RocStr>, discriminant)
+            == core::mem::offset_of!(GeneratedStrPair, tag)
+    );
+
+    type GeneratedU64Pair = crate::roc_platform_abi::HostRocFxFileSizeResult;
+    assert!(core::mem::size_of::<RocU64Result>() == core::mem::size_of::<GeneratedU64Pair>());
+    assert!(core::mem::align_of::<RocU64Result>() == core::mem::align_of::<GeneratedU64Pair>());
+    assert!(
+        core::mem::offset_of!(RocU64Result, discriminant)
+            == core::mem::offset_of!(GeneratedU64Pair, tag)
+    );
 };
 
 impl RocU64Result {
@@ -651,6 +655,27 @@ mod tests {
             slice::from_raw_parts(&sized as *const _ as *const u8, mem::size_of_val(&sized))
         };
         assert_eq!(bytes[3 * word], 1, "Try uses 1 for Ok");
+
+        // And both shells match the shapes the generator emits for them — the
+        // `const` block above pins this at compile time on every target; this
+        // states the same thing beside the numbers it belongs to.
+        use crate::roc_platform_abi::{HostRocFxFileSizeResult, HostRocFxRpcInvokeResult};
+        assert_eq!(
+            mem::size_of::<RocResult<RocStr, RocStr>>(),
+            mem::size_of::<HostRocFxRpcInvokeResult>()
+        );
+        assert_eq!(
+            mem::align_of::<RocResult<RocStr, RocStr>>(),
+            mem::align_of::<HostRocFxRpcInvokeResult>()
+        );
+        assert_eq!(
+            mem::size_of::<RocU64Result>(),
+            mem::size_of::<HostRocFxFileSizeResult>()
+        );
+        assert_eq!(
+            mem::align_of::<RocU64Result>(),
+            mem::align_of::<HostRocFxFileSizeResult>()
+        );
     }
 
     /// `RocU64Result` carries a `U64` on the way out and a `Str` on the way back,
