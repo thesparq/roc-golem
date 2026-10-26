@@ -334,16 +334,16 @@ jobs:
             --multimodal '[{"tag":"text","value":{"text":"hi"}}]' \
             --expect-multimodal-error "declares no multimodal method"
 
-          # The streaming agent is not driven here: the harness can run its
-          # async `websocket/client.receive` import (see
-          # tooling/abi_harness/README.md), but the e2e job below is what runs
-          # this component against a real server on every change.
-          # check "$HARNESS" build/streaming_agent_agent.wasm \
-          #   --type streaming-agent --method stream_message \
-          #   --message connect --reply "Connected with handle" \
-          #   --expect-log "websocket connected" \
-          #   --then-message hello --then-reply "Sent: hello" \
-          #   --expect-sent hello
+          # The streaming agent imports an async host function
+          # (`websocket/client.receive`), and the harness drives it: the input
+          # stub answers the connect and records the send, so the websocket
+          # effects are checked here as well as in the e2e job below.
+          check "$HARNESS" build/streaming_agent_agent.wasm \
+            --type streaming-agent --method stream_message \
+            --message connect --reply "Connected with handle" \
+            --expect-log "websocket connected" \
+            --then-message hello --then-reply "Sent: hello" \
+            --expect-sent hello
 
           # The effects agent cannot be instantiated by the harness at all: it
           # imports p3 `wasi:http/client@0.3.0` (`wasi:http/client.send`, the

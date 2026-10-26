@@ -167,7 +167,15 @@ Toolchain notes found while porting to 1.6:
   (both are `async func`s on a resource). What keeps the *effects* agent out is a
   missing interface rather than an ABI gap: the harness world does not implement
   the p3 `wasi:http` interfaces, so instantiation fails with "a matching
-  implementation was not found in the linker" before any call runs.
+  implementation was not found in the linker" before any call runs. Covering the
+  effects agent therefore means implementing the p3 `wasi:http` interfaces in the
+  harness host, and that is a job of its own: `types` alone is 429 lines of WIT
+  (fields, request, response, body streams, trailers, error-code), every one of
+  its resources and methods needs a host implementation because a component's
+  imports must all resolve, and `client.send` is an `async func` whose request
+  and response carry `stream<u8>` bodies — so the stub needs the stream plumbing
+  behind a canned response, not just the response. The e2e job stays the effects
+  agent's check until someone does that.
 
 ## Why this exists
 
