@@ -716,7 +716,7 @@ check "initialCard: the declared network grant names one destination" \
     '"class":"network","owner":"","recipient":"' "$perms_card"
 check "initialCard: and only that destination" \
     '"verb":"connect","resourceId":"api.openai.com:443"' "$perms_card"
-check "initialCard: `inspect` itself needed a card:inspect grant" \
+check "initialCard: inspect itself needed a card:inspect grant" \
     '"class":"card","owner":"?account","recipient":"' "$perms_card"
 check "initialCard: the upper bound excludes billing secrets" \
     '"upperNegative":[{"class":"secret","owner":"?env"' "$perms_card"
