@@ -956,13 +956,29 @@ check "router: an unmatched path reaches the handler" "200" \
     "$(fetch_status "/static/unmatched")"
 check "router: dynamic handler's headers reach the client" "content-type: text/plain" \
     "$(fetch_headers "/static/unmatched")"
-# A *non-empty* response body does not arrive on Golem 1.6.0: the guest-created
-# stream the body travels in is never delivered to the invocation session, while
-# the same value-tree slot works for a stream the runtime created itself (see
-# docs/router-handler-status.md, which has the measurements). The handler still
-# answers with its head, and the platform logs a warning when the app's body is
-# dropped, so the skip is the documented state rather than a silent one.
-say "SKIP  router: a non-empty response body (blocked on the guest-created stream transfer; see docs/router-handler-status.md)"
+# The response body arrives too. It travels as `list<u8>` chunks, and each chunk
+# is a value tree of its own — the first version pointed a chunk's list at the
+# response tree's byte nodes, the runtime dropped every item and the client saw
+# an empty body (golemcloud/golem#4291, fixed here in `body_chunks`).
+check "router: the handler's response body reaches the client" \
+    "roc-golem router: GET /static/echoed" \
+    "$(fetch "/static/echoed")"
+check "router: the handler reads the request body and answers with it" \
+    "body='posted payload'" \
+    "$(curl -s -H "Host: $API_DOMAIN" -X POST -d 'posted payload' \
+        "http://127.0.0.1:$API_PORT/static/echoed")"
+# The body is written in bounded chunks, so a large answer exercises more than
+# one of them.
+big_body_bytes="$(python3 -c "print('A'*100000, end='')" \
+    | curl -s -H "Host: $API_DOMAIN" -X POST --data-binary @- \
+        "http://127.0.0.1:$API_PORT/static/big-body" | wc -c)"
+check_true "router: a 100 KB response body arrives in chunks" \
+    "$([[ "$big_body_bytes" -gt 100000 ]] && echo true || echo false)"
+# The request body reaches the app through the same minimal JSON field reader the
+# tool arguments use, which stops at the first `"` — so a posted body containing
+# a quote is truncated before the app sees it. Tracked in the README's dynamic
+# router section and the parity doc; gone once that reader is replaced.
+say "SKIP  router: a request body containing a double quote (the JSON field reader truncates it)"
 skipped=$((skipped + 1))
 
 say "==> Snapshot-based agent update (incompatible revision)"

@@ -29,43 +29,32 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
 
 ## Gaps, in rough order of how much a real app misses them
 
-1. **Dynamic HTTP router handler** (`handle(request) -> response`) — **shipped,
-   with the response body blocked upstream.** The handler is invoked for every
-   request a router mount's file mappings do not match: the request is decoded
-   from the canonical envelope (method, scheme, authority, path, query, ordered
-   byte-valued headers, buffered body) and the app answers with a status,
-   headers and a body. The head reaches the client and a bodyless answer is
-   complete; **a non-empty body does not arrive on Golem 1.6.0**.
+1. ~~**Dynamic HTTP router handler** (`handle(request) -> response`)~~ — **done.**
+   The handler is invoked for every request a router mount's file mappings do not
+   match: the request is decoded from the canonical envelope (method, scheme,
+   authority, path, query, ordered byte-valued headers, buffered body) and the app
+   answers with a status, headers and a body. All of it reaches the client —
+   statuses the app owns (200/204/404), its headers, and a response body of any
+   size, which the host writes as bounded `list<u8>` chunks.
 
-   The blocker is precise, and it is not the export machinery, not the head and
-   not timing. A controlled comparison on one local server (this platform's
-   router and the official Rust SDK probe side by side) measured:
+   **The body was the hard part, and the bug was ours.** This platform shipped
+   the handler with an empty body and an upstream report blaming the runtime's
+   transfer of a guest-created stream (`schema-value-stream.wrap`). A Golem
+   developer read the code and pointed at the real cause: a body *chunk* is a
+   value tree of its own, and the chunk's `ListValue` indexed nodes in the
+   **response** tree around it instead of in itself, so the runtime dropped every
+   item. `body_chunks` builds self-contained chunks now, and
+   `test_router_body_chunks_are_self_contained` pins the invariant.
 
-   - the SDK probe delivers a body (35 bytes, clean framing); this platform
-     answers 200 with 0 bytes and curl reports a truncated transfer;
-   - this platform's oplog has **no `StreamItems` entry** — the chunk never
-     reaches the invocation session — while the probe's has one between its
-     `StreamSession` and `StreamEnd`;
-   - queuing the write with `spawn_local`, a `yield_async` before it, and a
-     300 ms wait before it (during which the oplog shows the output stream
-     registering) all leave the body empty, and an inline write in the SDK
-     probe deadlocks (504) while this platform's is accepted immediately — so
-     the two "wrapped" streams are not the same thing on the host side;
-   - the value-tree slot itself is fine: returning the **request's** stream (a
-     host-created endpoint) as the response body delivers the client's own
-     upload back (`POST /static/echo` → 200, `echo me`).
-
-   So the transfer of a **guest-created** stream (`schema-value-stream.wrap`)
-   into a returned value tree is what fails; the executor pipes that reader into
-   an `accounted_output_stream_pair` live stream whose items never surface.
-   `docs/router-handler-status.md` is the full record, and
-   `docs/upstream-router-body.md` is the report, filed upstream as
-   [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291). Two ways
-   forward: a host-created body endpoint (the shape
-   `golem:tool/host.create-output` already has for tools, and the one this
-   platform has demonstrated it can deliver), or executor-side instrumentation
-   of the `wrap`/pipe path. The platform logs a warning when an app's body is
-   dropped, so nothing changes for an app once either lands.
+   The measurements that fed the wrong diagnosis are kept in
+   `docs/router-handler-status.md` (they were all real — no `StreamItems` entry,
+   timing ruled out, the request-stream control case) together with the correction,
+   and `docs/upstream-router-body.md` is the report as filed and corrected. What
+   survives from it is a diagnostics ask, not a bug: a structural stream error
+   should be visible in normal diagnostics rather than as a generic HTTP body
+   failure. **Known limitation in the same path**: a request body, header value or
+   query string containing a double quote is truncated before the app sees it (the
+   platform's minimal JSON field reader); see the README and item 5's note.
 2. **Durable streams** — **slice (a) done, (b) feasible but low value, (c)
    blocked.** The item is not one feature: the SDKs' "durable streams" is (a)
    reading and writing *external* services that speak the Durable Streams
@@ -124,12 +113,18 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
      break), and the HTTP shape needs the durable-session route options
      (`HttpEndpointDetails.durable_streams`) exposed, which this platform does not
      build today.
-   - **(c) Streaming method outputs and the derived HTTP endpoints — blocked.** A
-     method *result* or an HTTP response *body* that is a stream is a
-     **guest-created** stream in a returned value tree, which Golem 1.6.0 never
-     delivers: measured here, and filed as
-     [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291).
-     Both halves wait on that.
+   - **(c) Streaming method outputs and the derived HTTP endpoints — no longer
+     blocked, just unbuilt.** This was filed as blocked on
+     [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291) —
+     "a guest-created stream in a returned value tree is never delivered" —
+     which turned out to be this platform's bug in the value-tree chunk it wrote
+     (see item 1). A router response body proves the machinery end to end today:
+     a guest-created stream, wrapped, returned in a value tree and written from
+     the handler now reaches the client. What remains is the *surface*: a method
+     whose parameter or result is declared as a stream (another declared method
+     plus hook, like `handleRequest!` / `handleMultimodal!`) and the
+     durable-session route options (`HttpEndpointDetails.durable_streams`) this
+     platform does not build yet.
 3. ~~**Agent-to-agent calls beyond invoke-and-await**~~ — **done**: effects
    `rpcFireAndForget!` (`invoke`), `rpcSchedule!` (`schedule-invocation`),
    `rpcScheduleCancelable!` + `rpcCancel!` (cancelable scheduling), and

@@ -1,4 +1,27 @@
-# Dynamic router handler: status and the response-body blocker
+# Dynamic router handler: status, the response-body blocker, and its resolution
+
+> **Resolved: the bug was ours.** Everything below is the investigation that led
+> to a wrong conclusion — that the runtime never forwards a guest-created stream
+> placed in a returned value tree — filed upstream as
+> [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291). A
+> Golem developer traced it to the code and the cause was mundane: a body *chunk*
+> is a value tree of its own, and the chunk's `ListValue` carried indices into the
+> **response** tree around it instead of into itself, so the runtime dropped every
+> item. `body_chunks` builds self-contained chunks, and a request with a
+> non-empty answer now reaches the client (verified: 50 bytes for a small body,
+> 100,042 for a 100 KB one written as several chunks). The measurements below are
+> kept because they were real and they explain why the error was so hard to see —
+> the only symptom was an empty body.
+>
+> What survives of the upstream report is a diagnostics ask, not a bug: a
+> structural stream error should surface in normal diagnostics rather than as a
+> generic HTTP body failure. That is the generous half of the Golem developer's
+> reply, and it is worth acting on upstream.
+>
+> One limitation remains in the same path and is *not* this issue: a request body,
+> header value or query string containing a double quote is truncated before the
+> app sees it, because the platform parses the host's JSON with a minimal field
+> reader (`platform/main.roc`). See the README.
 
 The request half works and is verified on Golem 1.6.0 (see the commit this file
 came with): the schema graph Golem validates, the `handle` method, decoding the

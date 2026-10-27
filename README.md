@@ -521,26 +521,30 @@ The app sees the canonical HTTP envelope: `request.method`, `scheme`,
 `authority`, `path`, `query`, the ordered `headers` (each with a name and a byte
 value), and `body` — the request body, already buffered by the host. The status,
 the headers and the body come back the same way, and Golem owns the framing, so
-an app must not set `content-length`.
+an app must not set `content-length`. A response body of any size works: the host
+splits it into bounded `list<u8>` chunks, and Golem streams them to the client.
 
-**What ships, and the one thing that does not.** The handler is invoked, the
-request is decoded, and the response *head* — status and headers — reaches the
-client; a bodyless answer (a 204, say) is complete. A **non-empty response body
-does not arrive on Golem 1.6.0**: the body travels in a guest-created stream
-(`golem:core/types.schema-value-stream.wrap`), the runtime accepts the write but
-never forwards those items to the invocation session, and the client sees the
-head with an empty body. The platform logs a warning when an app's body is
-dropped rather than failing the invocation, so an app written today keeps
-working once the runtime forwards it. `docs/router-handler-status.md` has the
-measurements (including the control case: the same value-tree slot *does*
-deliver a stream the runtime created itself) and the two ways to fix it
-upstream (reported as [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291)). The e2e covers the bodyless answer and the head, and skips the body
-with that reason.
+**One rule if you ever write to a body stream yourself**: a chunk is a value tree
+of its own, so its `ListValue` must index nodes *inside that chunk*, not in the
+tree around it. The first version of this handler put the bytes in the response
+tree and pointed a separate chunk at them; the runtime dropped every item and the
+client saw an empty body, which is what
+[golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291) turned
+out to be (a Golem developer spotted it; `docs/router-handler-status.md` keeps
+the measurements and the wrong diagnosis that preceded the fix).
+
+**Known limitation, tracked**: a request body (or header value, or query string)
+containing a double quote is truncated before the app sees it, and a tool's
+`arguments`/`stdin` are cut the same way. Both go through this platform's minimal
+JSON field reader in `platform/main.roc`, which stops at the first `"`; replacing
+it with a real JSON string scan is a pending change. The e2e records the router
+case as a skip rather than pretending it works.
 
 The `static_site` example is the worked case: `examples/static_site/main.roc`,
 `examples/static_site/static/`, and the `router:` checks in `tooling/e2e.sh`
 (both binding kinds, the immutable ETag, 404, the provider document reaching the
-deployment's spec, and the dynamic handler's 204 and head).
+deployment's spec, and the dynamic handler's statuses, headers, body and a
+100 KB answer written as several chunks).
 
 ---
 

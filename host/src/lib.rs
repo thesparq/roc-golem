@@ -792,6 +792,35 @@ async fn read_request_body(body: SchemaValueNode) -> Result<String, AgentError> 
     Ok(text)
 }
 
+/// Splits a response body into the `list<u8>` chunks a router's body stream
+/// carries.
+///
+/// Every chunk is a value tree of its own, so its `ListValue` indexes nodes in
+/// *that* tree — index 0 is the list and 1.. are its bytes. Indexing the tree
+/// around it instead makes the runtime drop the item, which is what
+/// `docs/router-handler-status.md` records and what a Golem developer pointed
+/// out on golemcloud/golem#4291. Bounded chunks keep a large answer from
+/// becoming one value node per byte.
+fn body_chunks(text: &str) -> Vec<SchemaValueTree> {
+    const CHUNK_BYTES: usize = 16 * 1024;
+    text.as_bytes()
+        .chunks(CHUNK_BYTES)
+        .map(|chunk| {
+            let mut nodes: Vec<SchemaValueNode> = Vec::with_capacity(chunk.len() + 1);
+            nodes.push(SchemaValueNode::ListValue(
+                (0..chunk.len()).map(|index| (index + 1) as i32).collect(),
+            ));
+            for byte in chunk {
+                nodes.push(SchemaValueNode::U8Value(*byte));
+            }
+            SchemaValueTree {
+                value_nodes: nodes,
+                root: 0,
+            }
+        })
+        .collect()
+}
+
 /// Serves one request routed to a router's mount: hands the request to the app
 /// and returns its response, with the body wrapped in the `stream<list<u8>>`
 /// the schema declares.
@@ -869,39 +898,21 @@ async fn handle_router_request(
     }
     value_nodes[2] = SchemaValueNode::ListValue(header_nodes);
 
-    // The response body is a stream of `list<u8>` chunks. On Golem 1.6.0 a
-    // *guest-created* stream placed here is accepted but never delivered: the
-    // items do not reach the invocation session, while the same slot works for a
-    // stream the runtime created itself (the measurements are in
-    // `docs/router-handler-status.md`). The write stays — it is the shape the
-    // platform needs once the runtime forwards such a stream — but an app's body
-    // is reported rather than silently dropped, and the README says what a
-    // handler can expect.
+    // The response body is a stream of `list<u8>` chunks, and the app's text is
+    // written as one chunk after the read end is handed over. What does *not*
+    // work is putting the bytes in the response tree and pointing a separate
+    // chunk at them: each chunk's indices have to refer to its own nodes.
     let (mut body_tx, body_rx) = wit_stream::new();
     let body_text = parsed.get("body").and_then(|v| v.as_str()).unwrap_or("");
-    if !body_text.is_empty() {
-        crate::wasi::logging::logging::log(
-            crate::wasi::logging::logging::Level::Warn,
-            "roc-agent",
-            "the app's response body cannot be delivered on Golem 1.6.0: a guest-created \
-             stream in the response value is not forwarded to the invocation session, so \
-             only the status and headers reach the client (docs/router-handler-status.md)",
-        );
-    }
-    let mut body_nodes = Vec::new();
-    for byte in body_text.bytes() {
-        body_nodes.push(value_nodes.len() as i32);
-        value_nodes.push(SchemaValueNode::U8Value(byte));
-    }
-    let chunk = SchemaValueTree {
-        value_nodes: vec![SchemaValueNode::ListValue(body_nodes)],
-        root: 0,
-    };
+    // One chunk is one `list<u8>`, and each chunk is self-contained (see
+    // `body_chunks`): the previous version pointed the chunk's list at the
+    // *response* tree's byte nodes instead, and the runtime dropped every item.
+    let chunks = body_chunks(body_text);
     // Handing the read end to the runtime first (`wrap`) is what the SDK's
     // router does too; a write *before* the transfer deadlocks, because the
     // stream is a rendezvous.
     let handle = golem::core::types::SchemaValueStream::wrap(body_rx).await;
-    let leftover = body_tx.write_all(vec![chunk]).await;
+    let leftover = body_tx.write_all(chunks).await;
     drop(body_tx);
     if !leftover.is_empty() {
         crate::wasi::logging::logging::log(
@@ -5375,6 +5386,50 @@ mod tests {
         assert!(parts.body.is_empty());
 
         assert!(parse_http_request("not a url").is_err());
+    }
+
+    /// A response body travels as `list<u8>` chunks, and each chunk is its own
+    /// value tree: every index its list carries has to be valid in *that* tree.
+    /// The first version pointed the chunk's list at the response tree's byte
+    /// nodes, the runtime dropped every item, and the client saw an empty body
+    /// (golemcloud/golem#4291) — so this pins the invariant rather than the
+    /// symptom.
+    #[test]
+    fn test_router_body_chunks_are_self_contained() {
+        let chunks = body_chunks("hi");
+        assert_eq!(chunks.len(), 1);
+        let chunk = &chunks[0];
+        let items = match &chunk.value_nodes[chunk.root as usize] {
+            SchemaValueNode::ListValue(items) => items.clone(),
+            other => panic!("a chunk's root must be the byte list, got {other:?}"),
+        };
+        for index in &items {
+            assert!(
+                *index >= 0 && (*index as usize) < chunk.value_nodes.len(),
+                "index {index} escapes the chunk (it indexes another tree)"
+            );
+        }
+        let bytes = bytes_of_tree(chunk, &chunk.value_nodes[chunk.root as usize]);
+        assert_eq!(bytes, "hi");
+
+        // Chunks are bounded, and each one is still self-contained.
+        let big = String::from("x").repeat(40 * 1024);
+        let chunks = body_chunks(&big);
+        assert_eq!(chunks.len(), 3);
+        for chunk in &chunks {
+            assert!(chunk.value_nodes.len() <= 16 * 1024 + 1);
+            match &chunk.value_nodes[chunk.root as usize] {
+                SchemaValueNode::ListValue(items) => {
+                    for index in items {
+                        assert!((*index as usize) < chunk.value_nodes.len());
+                    }
+                }
+                other => panic!("a chunk's root must be the byte list, got {other:?}"),
+            }
+        }
+
+        // An empty body writes no chunk: closing the stream is the whole body.
+        assert!(body_chunks("").is_empty());
     }
 
     /// The router's `handle` method declares Golem's canonical request and

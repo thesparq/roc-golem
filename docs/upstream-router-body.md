@@ -1,6 +1,20 @@
 # Upstream report: a guest-created `schema-value-stream` in a returned value tree is never delivered
 
-**Filed upstream as [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291).**
+**Filed upstream as [golemcloud/golem#4291](https://github.com/golemcloud/golem/issues/4291), and answered by a Golem developer: the bug was ours.**
+
+> **Correction, after the reply.** The Golem developer read the handler code and
+> pointed at the actual cause: this platform built each body *chunk* as a value
+> tree holding only its `ListValue`, while that list's indices referred to the
+> **response** tree around it. A chunk's indices must refer to its own
+> `value_nodes`. With self-contained chunks (`body_chunks` in `host/src/lib.rs`)
+> the response body arrives — verified on a real server for a small body, a POST
+> echo, and 100 KB written as several chunks. So the report below is wrong about
+> the runtime: `wrap`, the pipe, the session relay and the client framing were all
+> fine, and the items it lists as "not the response head" were a symptom of the
+> malformed chunk rather than an independent finding. Kept for the measurements
+> and because the misdiagnosis is instructive: the only visible symptom was an
+> empty body. The one request in it that stands is the diagnostics ask — a
+> structural stream error should not look like a generic HTTP body failure.
 
 This is the report for the one thing the dynamic HTTP router handler
 cannot do on Golem 1.6.0 (parity item 1 in `docs/golem-1.6-parity.md`). The
