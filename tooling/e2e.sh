@@ -263,6 +263,18 @@ check "tool: stdin comes back on the tool's stdout" "piped stdin bytes" \
 check "tool: stderr reports what arrived" "read 17 bytes of stdin" \
     "$(cat "$tool_stderr_file" 2>/dev/null || true)"
 
+# A pipe carrying a quote and a backslash takes the same route, and used to be
+# cut at the first `"` before the app ever saw it.
+printf 'quoted "stdin" with a \\ backslash' | "$CLI" $CLI_EXTRA -L -A "$MANIFEST" tool invoke \
+    --agent "ai-tool-agent(\"$RUN_ID\")" echo --stdin - \
+    --stdout --output "$tool_stdout_file" \
+    --stderr --stderr-output "$tool_stderr_file" >/dev/null 2>&1 || true
+check "tool: a quoted stdin comes back on the tool's stdout" \
+    'quoted "stdin" with a \ backslash' \
+    "$(cat "$tool_stdout_file" 2>/dev/null || true)"
+check "tool: stderr counts the quoted stdin" "read 33 bytes of stdin" \
+    "$(cat "$tool_stderr_file" 2>/dev/null || true)"
+
 check "streaming: status" "WebSocket is disconnected" \
     "$(invoke "streaming-agent(\"$RUN_ID\")" handle-message '"status"')"
 
@@ -1048,12 +1060,16 @@ big_body_bytes="$(python3 -c "print('A'*100000, end='')" \
         "http://127.0.0.1:$API_PORT/static/big-body" | wc -c)"
 check_true "router: a 100 KB response body arrives in chunks" \
     "$([[ "$big_body_bytes" -gt 100000 ]] && echo true || echo false)"
-# The request body reaches the app through the same minimal JSON field reader the
-# tool arguments use, which stops at the first `"` — so a posted body containing
-# a quote is truncated before the app sees it. Tracked in the README's dynamic
-# router section and the parity doc; gone once that reader is replaced.
-say "SKIP  router: a request body containing a double quote (the JSON field reader truncates it)"
-skipped=$((skipped + 1))
+# The request body reaches the app through the same JSON field reader the tool
+# arguments use. It now takes a value to its *unescaped* closing quote and
+# decodes the host's escapes, so a body carrying quotes and backslashes — the
+# shape a JSON payload has — arrives whole. The reader used to stop at the first
+# `"`, which is what the skip that stood here recorded.
+quoted_body='{"text":"he said \"hi\"","path":"C:\\tmp"}'
+check "router: a request body with a quote and a backslash arrives whole" \
+    "$quoted_body" \
+    "$(curl -s -H "Host: $API_DOMAIN" -X POST -H 'content-type: application/json' \
+        -d "$quoted_body" "http://127.0.0.1:$API_PORT/static/echoed")"
 
 say "==> Snapshot-based agent update (incompatible revision)"
 # `counter_v2` adds a tool and a state field, so the agent type changes: Golem

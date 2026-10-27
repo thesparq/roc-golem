@@ -52,9 +52,11 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    and `docs/upstream-router-body.md` is the report as filed and corrected. What
    survives from it is a diagnostics ask, not a bug: a structural stream error
    should be visible in normal diagnostics rather than as a generic HTTP body
-   failure. **Known limitation in the same path**: a request body, header value or
-   query string containing a double quote is truncated before the app sees it (the
-   platform's minimal JSON field reader); see the README and item 5's note.
+   failure. **A request body, header value or query string may carry quotes and
+   backslashes**: the platform's JSON field reader takes a value to its
+   *unescaped* closing quote and decodes the host's escapes, so a body that is
+   itself JSON arrives whole (the e2e posts one to check it). Item 11's note
+   carries the other half — the answering side is still worth a look.
 2. **Durable streams** — **slice (a) done, (b) feasible but low value, (c)
    blocked.** The item is not one feature: the SDKs' "durable streams" is (a)
    reading and writing *external* services that speak the Durable Streams
@@ -558,16 +560,24 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
       migration note. There is no cheaper way to do it: the app has to be able
       to *answer* with output text, and a record type that does not name the
       fields cannot carry it.
-    - **Stdin is read verbatim up to the next double quote**, because it travels
-      through the same minimal JSON field reader `arguments` uses; documented as
-      a caveat rather than fixed here.
+    - **Stdin is read verbatim, quotes and backslashes included.** It travels
+      through the same JSON field reader `arguments` uses, which takes a value to
+      its *unescaped* closing quote and decodes the host's escapes (`\"`, `\\`,
+      `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, and `\uXXXX`), so a pipe carrying
+      JSON arrives whole. The answering side keeps the matching gap:
+      `escape_json_str` escapes only `\`, `"`, `\n`, `\r` and `\t`, so a
+      reply carrying another control character below 0x20 goes out as a raw
+      byte, the host's `serde_json` rejects the payload, and the tool's
+      stdout/stderr are dropped. That is an emitter to fix, not the reader.
 
     Covered by the harness (the `golem:tool/streams` stubs now supply stdin bytes
     and record what the component writes through both writers, with the writer's
     terminal — a writer left open reads `abandoned`; `--tool-stream` on the
-    ai_tool example drives it, and CI/release run it) and by the e2e (piping
-    `piped stdin bytes` through `golem tool invoke --stdin - --stdout --output …
-    --stderr --stderr-output …` and checking both files).
+    ai_tool example drives it, and CI/release run it, including one stdin holding
+    quotes, backslashes and the `":"` text of JSON, which is what pins the
+    reader's escapes) and by the e2e (piping `piped stdin bytes` through
+    `golem tool invoke --stdin - --stdout --output ... --stderr --stderr-output
+    ...` and checking both files, and piping a quoted one the same way).
 
     The middleware half is **not** attempted, and cannot be reached from this
     platform's shape: middleware is a *separate component shape*. The executor
