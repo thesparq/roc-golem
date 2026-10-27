@@ -273,10 +273,11 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
      app is done with a card: an unreleased handle keeps its card alive for the
      instance's lifetime, which is documented in `Golem.roc` and the README.
    - **The runtime, not the platform, decides.** The e2e's permission checks are
-     the runtime's own answers: the default card (this repo declares no
-     `initialCard`, so every agent type gets the broad template card) in the
-     wallet, a narrowing derivation accepted, one refused, a revocation, and an
-     installation the runtime only allows onto agent targets. Two runtime
+     the runtime's own answers: the default card (every agent type except the
+     permissions example's declares no `initialCard`, so it gets the broad
+     template card) in the wallet, a narrowing derivation accepted, one refused, a
+     revocation, and an installation the runtime only allows onto agent targets.
+     Two runtime
      behaviours worth recording: a `derive` request is checked against the
      parent's lattice and can be *conservatively* refused (a request that retains
      a grant the card carries still fails when the runtime cannot prove the child
@@ -292,18 +293,49 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
      server, plus the principal from a CLI invocation (`golem-user`) and from an
      RPC one (`agent`, naming the caller). The counter's `permission` commands
      build their derivation requests from the card's own inspection, so they work
-     against whatever card the runtime hands out.
-   - **Not done, on purpose**: declaring an `initialCard` for one agent type in
-     `golem.yaml` to assert a *denied* action. The counter needs its own
-     filesystem, its tools, agent calls, its quota resource and its retry
-     policies, so a narrow card there would have to grant all of that back and a
-     mistake would surface as an unrelated check failing; a separate agent type
-     that only reads its own filesystem would make the check clean. Recorded here
-     as the follow-up; the enforcement check the e2e does make is the runtime
-     refusing a derivation the default card cannot cover. Also not exposed:
-     passing a card to another agent as a value (`schema-value-tree` carries no
-     permission-card handle in this platform, the same gap as quota tokens) and
-     lending a scope card to an awaited call.
+     against whatever card the runtime hands out. The same e2e section's
+     `initialCard:` checks are the other half — the runtime enforcing a
+     *declared* card on the permissions example — and that component, like the
+     effects agent, is e2e-covered rather than harness-covered, because its p3
+     `wasi:http` import keeps the harness from instantiating it.
+   - **A declared `initialCard` is enforced** — the follow-up this item used to
+     record is closed. `examples/permissions` is a component of its own whose
+     agent type, `permissions-agent`, is the one type in `golem.yaml` with an
+     `initialCard`: a narrow card granting
+     `filesystem(?agent) @ ?agent : read : /seed/**`,
+     `network() @ ?agent : connect : api.openai.com:443` and
+     `card(?account) @ ?agent : inspect : *`, with an `upperBound.negative`
+     excluding `billing.*` secrets. A separate component was the point — the
+     counter needs its own filesystem, its tools, agent calls, its quota resource
+     and its retry policies, so a narrow card there would have to grant all of
+     that back. The e2e asserts all three things:
+     - **granted**: `readFile!` of the manifest-provisioned `/seed/allow.txt`
+       answers with its contents;
+     - **denied**: a `writeFile!` outside `/seed/**` answers
+       `Err(not-permitted)` — the card's refusal, where the platform's own path
+       rule would answer `access` — and a `http!` to a host the card does not
+       name answers `Err("HTTP request failed: ErrorCode::HttpRequestDenied")`,
+       the request never leaving the agent. Both are the effect's `Err`, not a
+       trap;
+     - **visible**: the card the runtime issues is a *template* whose grants keep
+       the owner slots (`?agent`, `?env`, `?account`) while the recipient was
+       monomorphized at deploy time into the concrete agent path, and
+       `permissionInspect!` shows the narrow quadrants (and, with them, that no
+       `write` or `delete` verb is granted at all).
+     One behaviour this surfaced: `permissionInspect!` is itself a permission. The
+     default card's `card(?account) @ ?agent : * : *` is what allows it, and a
+     declared card replaces that, so `inspect` answers
+     `not-permitted: card:inspect is not permitted for this agent` unless the card
+     grants `card : inspect` back. `permissionsWallet!` and `permissionId!` are
+     not gated that way. Golem also appends `read`/`stat`/`list` grants for each
+     manifest-provisioned file's path to the type's card; the README's "Declaring
+     an explicit card" section spells all of this out.
+     Still not covered by a probe: the `secret` and `tool` classes (the card's
+     `upperNegative` secret exclusion is asserted as part of the lattice, but no
+     operation reveals a secret) and granting or revoking a card for another
+     agent. Also not exposed: passing a card to another agent as a value
+     (`schema-value-tree` carries no permission-card handle in this platform, the
+     same gap as quota tokens) and lending a scope card to an awaited call.
 7. ~~**Resource quotas** (`golem:quota/types`) and **retry policies**
    (`golem:api/retry`)~~ — **done**: the five quota effects (`newQuotaToken!`,
    `quotaReserve!`, `quotaCommit!`, `quotaSplit!`, `quotaMerge!`) and six retry

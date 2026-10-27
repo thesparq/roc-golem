@@ -127,6 +127,38 @@ agents:
         targetPath: /assets/hello.txt
       - sourcePath: examples/static_site/static/index.html
         targetPath: /index.html
+  # The one agent type in this manifest with an explicit `initialCard`. The card
+  # *replaces* the broad default card every other type here gets, so it is
+  # deliberately tiny: read the file this manifest provisions for the type, and
+  # connect to one network destination. Everything else — a write anywhere, a
+  # connect to any other host — is the runtime's refusal, which the e2e asserts.
+  #
+  # `files:` is the same provisioning the counter's `fs` checks use. Golem also
+  # appends `read`/`stat`/`list` grants for each provisioned file's own path to
+  # the type's card (see the CLI's `resolve_initial_permission`), so the declared
+  # `read : /seed/**` grant and the provisioned file cover each other.
+  permissions-agent:
+    initialCard:
+      lowerBound:
+        positive:
+          - "filesystem(?agent) @ ?agent : read : /seed/**"
+          - "network() @ ?agent : connect : api.openai.com:443"
+          # The default card carries `card(?account) @ ?agent : * : *`, which is
+          # what lets an app inspect its own cards. A declared card replaces it,
+          # so without this grant `permissionInspect!` answers
+          # `not-permitted: card:inspect is not permitted for this agent` — and
+          # then nothing can show the card's own lattice.
+          - "card(?account) @ ?agent : inspect : *"
+      # The other quadrant the docs' card example shows: an upper-bound exclusion
+      # keeps `billing.*` secrets out of reach of any card the agent acquires
+      # later. Nothing in this type reveals a secret, so this one is visible in
+      # the card's lattice rather than exercised by a probe.
+      upperBound:
+        negative:
+          - "secret(?env) @ ?agent : reveal : billing.*"
+    files:
+      - sourcePath: examples/permissions/seed/allow.txt
+        targetPath: /seed/allow.txt
 
 components:
   roc-golem:counter:
@@ -159,3 +191,8 @@ components:
     componentWasm: "../../build/static_site_agent.wasm"
     build:
       - command: "../../tooling/build.sh static_site"
+  roc-golem:permissions:
+    dir: "examples/permissions"
+    componentWasm: "../../build/permissions_agent.wasm"
+    build:
+      - command: "../../tooling/build.sh permissions"

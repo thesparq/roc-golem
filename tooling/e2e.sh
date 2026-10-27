@@ -81,7 +81,7 @@ mkdir -p "$WORK_DIR"
 say "==> Building platform and example components"
 if [[ "${E2E_SKIP_BUILD:-0}" != "1" ]]; then
     "$ROOT_DIR/tooling/build.sh" platform >"$WORK_DIR/build.log" 2>&1
-    for app in counter ai_tool streaming_agent effects site static_site; do
+    for app in counter ai_tool streaming_agent effects site static_site permissions; do
         "$ROOT_DIR/tooling/build.sh" "$app" >>"$WORK_DIR/build.log" 2>&1
     done
 fi
@@ -653,6 +653,80 @@ check "permission: the derived card installs onto this agent" "permission instal
 check_nospace "permission: the installed card is a concrete card in the wallet" \
     '"tag":"concrete"' \
     "$(invoke "$perm_install_agent" handle-message '"permission wallet"')"
+
+say "==> A declared initialCard, enforced (roc-golem:permissions)"
+# The permissions example's agent type is the only one in `golem.yaml` with an
+# `initialCard`, and a declared card *replaces* the broad default card the other
+# types get. This is where the runtime's enforcement of a declared card shows:
+# the read the card grants works, a write outside the granted root and a connect
+# to a host the card does not name are refused, and the card the runtime issued
+# is visible through the permission effects. Both refusals are the effect's
+# `Err`, not a trap: the invocation survives and reports the runtime's own text.
+# The component imports the p3 `wasi:http` interfaces, so — like the effects
+# agent — it is covered here and not by the ABI harness (see
+# tooling/abi_harness/README.md).
+#
+# What the runtime hands this type is a *template* card: an `initialCard`'s owner
+# slots (`?agent`, `?env`, `?account`) survive into the card, while the
+# *recipient* was monomorphized at deploy time into the concrete agent path
+# `<account>/<app>/<env>/<component>/<agent-type>`. Golem also appends
+# `read`/`stat`/`list` grants for each provisioned `files:` path to the card, so
+# the manifest's `read : /seed/**` grant and the provisioned file overlap.
+perms_agent="permissions-agent(\"$RUN_ID-card\")"
+
+check "initialCard: the read the card grants works" \
+    "permission read: provisioned for the permissions agent" \
+    "$(invoke "$perms_agent" handle-message '"read"')"
+
+# The two refusals, one per resource class: a filesystem write outside the
+# granted root (the WASI filesystem answers the errno `not-permitted` — the
+# platform's own path rule would answer `access`, so this is the card's refusal
+# rather than a sandbox escape), and a network connect to a host the card does
+# not name (the p3 http client answers `ErrorCode::HttpRequestDenied` before the
+# request leaves the agent).
+check_nospace "initialCard: a write outside the granted root is refused" \
+    "permission write failed: not-permitted" \
+    "$(invoke "$perms_agent" handle-message '"write"')"
+check_nospace "initialCard: a connect to a host the card does not name is refused" \
+    "permission fetch failed: HTTP request failed: ErrorCode::HttpRequestDenied" \
+    "$(invoke "$perms_agent" handle-message '"fetch"')"
+
+# The card itself in one invocation: the wallet listing, its lattice, its id and
+# a release of the handle. `inspect` is gated by the card class — the default
+# card carries `card(?account) @ ?agent : * : *`, and a declared card replaces
+# it, so the manifest's card grants `card:inspect` back; without that grant
+# `inspect` answers `not-permitted: card:inspect is not permitted for this
+# agent` and nothing could show the lattice. The reply is long and only ever
+# gains whitespace from the CLI's wrapping, so the checks compare space-free
+# copies.
+perms_card="$(invoke "$perms_agent" handle-message '"card"')"
+perms_card="${perms_card// /}"
+check "initialCard: the wallet holds the card as a template" \
+    '"handle":1,"tag":"template"' "$perms_card"
+check "initialCard: inspecting shows the four quadrants" '"lowerPositive":[' "$perms_card"
+check "initialCard: the quadrants the card does not use are empty" \
+    '"lowerNegative":[],"upperPositive":[]' "$perms_card"
+check "initialCard: the grants name slots, which is what makes it a template" \
+    '"owner":"?agent"' "$perms_card"
+check "initialCard: the declared filesystem read is a grant of the card" \
+    '"class":"filesystem","owner":"?agent"' "$perms_card"
+check "initialCard: and it is narrowed to the granted root" \
+    '"verb":"read","resourceId":"/seed/**"' "$perms_card"
+check "initialCard: the declared network grant names one destination" \
+    '"class":"network","owner":"","recipient":"' "$perms_card"
+check "initialCard: and only that destination" \
+    '"verb":"connect","resourceId":"api.openai.com:443"' "$perms_card"
+check "initialCard: `inspect` itself needed a card:inspect grant" \
+    '"class":"card","owner":"?account","recipient":"' "$perms_card"
+check "initialCard: the upper bound excludes billing secrets" \
+    '"upperNegative":[{"class":"secret","owner":"?env"' "$perms_card"
+check "initialCard: the handle was released" "released" "$perms_card"
+check_true "initialCard: the card carries a UUID id" \
+    "$([[ "$perms_card" =~ [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12} ]] && echo true || echo false)"
+# What the two refusals above are about: the card grants no write and no delete,
+# so the visible lattice is the reason the write and the connect are refused.
+check_true "initialCard: the card grants no write and no delete" \
+    "$([[ "$perms_card" != *'"verb":"write"'* && "$perms_card" != *'"verb":"delete"'* ]] && echo true || echo false)"
 
 say "==> External durable streams (golem:agent/durable-streams)"
 # The counter's `stream` commands drive the whole surface against a real

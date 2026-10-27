@@ -171,11 +171,12 @@ case "$COMMAND" in
         build_app "effects"
         build_app "site"
         build_app "static_site"
+        build_app "permissions"
         package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     # `counter_v2` is the e2e's snapshot-update fixture: it is deployed from a
     # derived manifest as the same component, never as part of `all`/`release`.
-    counter|ai_tool|streaming_agent|effects|site|static_site|counter_v2)
+    counter|ai_tool|streaming_agent|effects|site|static_site|permissions|counter_v2)
         build_app "$COMMAND"
         ;;
     all)
@@ -186,13 +187,14 @@ case "$COMMAND" in
         build_app "effects"
         build_app "site"
         build_app "static_site"
+        build_app "permissions"
         package_platform "v0.1.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)
         if [[ -f "$COMMAND" ]]; then
             build_app "$COMMAND"
         else
-            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | effects | site | static_site | counter_v2 | all]" >&2
+            echo "Usage: $0 [platform | app <name_or_file> | package <tag> <repo> | release <tag> <repo> | counter | ai_tool | streaming_agent | effects | site | static_site | permissions | counter_v2 | all]" >&2
             exit 1
         fi
         ;;

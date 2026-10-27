@@ -1365,20 +1365,84 @@ and a scope card is valid only during the invocation that derived it: after that
 it can be inspected and released, but not installed, revoked or used as a
 `derive` parent.
 
-### `initialCard`
+### Declaring an explicit card
 
-No agent type in this repo's `golem.yaml` declares an `initialCard`, so every
-example agent gets the runtime's broad default card for its agent type. A narrow
-card is a real deployment change, not a platform one: the counter needs its own
-filesystem, its tools, agent calls, its quota resource and its retry policies,
-so declaring a card for it would have to grant all of that back — and a mistake
-there would surface as the runtime denying an unrelated check. The permission
-effects are therefore covered without one, and the enforcement check the e2e
-makes is the runtime refusing a derivation the default card cannot cover (see
-`tooling/e2e.sh`). What it would take to go further: an `agents.<type>.initialCard`
-with `lowerBound`/`upperBound` grants for one agent type of its own — a type
-that only reads its own filesystem — and then a denied action asserted against
-it. That is a follow-up, and `docs/golem-1.6-parity.md` item 6 records it.
+`examples/permissions` is a component of its own whose agent type — the only one
+in this repo's `golem.yaml` — declares an `initialCard`:
+
+```yaml
+  permissions-agent:
+    initialCard:
+      lowerBound:
+        positive:
+          - "filesystem(?agent) @ ?agent : read : /seed/**"
+          - "network() @ ?agent : connect : api.openai.com:443"
+          - "card(?account) @ ?agent : inspect : *"
+      upperBound:
+        negative:
+          - "secret(?env) @ ?agent : reveal : billing.*"
+    files:
+      - sourcePath: examples/permissions/seed/allow.txt
+        targetPath: /seed/allow.txt
+```
+
+A grant is `class(owner) @ recipient : verb : resource-id-pattern`. `?agent`,
+`?account` and `?env` are slots that resolve per holder, `*` is a wildcard, and a
+`**` path segment covers any depth. `initialCard` **replaces** the default card,
+so it has to list everything the agent needs — which is why the example is its
+own component. The counter needs its own filesystem, its tools, agent calls, its
+quota resource and its retry policies, so a narrow card there would have to grant
+all of that back, and a mistake would surface as an unrelated check failing.
+
+Two manifest-side facts, both from the CLI's own resolution
+(`cli/golem-cli/src/model/component.rs` in Golem 1.6.0):
+
+- Golem **appends** `read`/`stat`/`list` grants for the path (and `path/**`) of
+every file the type provisions through `files:`, with the file's `permissions`
+(`read-only` by default, so no write and no delete). The example's
+`read : /seed/**` grant and its provisioned `/seed/allow.txt` therefore overlap.
+- The card must fall inside **the deployer's authority** — "an initial card can
+never exceed the authority of the person deploying" — so a card asking for more
+than the deploying account holds fails the deploy
+(`card derivation is not allowed by the creator's cards: ...`) rather than at
+run time.
+
+What the e2e proves against a real server (`tooling/e2e.sh`, the "A declared
+initialCard, enforced" section):
+
+- **Granted:** `readFile!` reads the provisioned `/seed/allow.txt` and reports
+its contents.
+- **Refused:** a `writeFile!` to `/denied.txt` — inside the agent's root but
+outside `/seed/**` — answers `Err("not-permitted")`, the WASI filesystem's
+`not-permitted` errno. That is the *card's* refusal rather than the platform's own
+path rule, which answers `access` for a path above the root. A `http!` to
+`http://denied.invalid:80/` — a host the card does not name — answers
+`Err("HTTP request failed: ErrorCode::HttpRequestDenied")`: the p3 HTTP client
+refuses before the request leaves the agent. Both are the effect's `Err`, never a
+trap, so the invocation survives and reports the runtime's own text.
+- **Visible:** the `card` command lists the wallet (`permissionsWallet!`),
+inspects the card (`permissionInspect!`), names it (`permissionId!`) and releases
+the handle. What the runtime issues for such a type is a **template**: the wallet
+labels it `{"tag":"template"}` because the grants carry owner slots, and
+`inspect` shows those slots (`"owner":"?agent"`) with the *recipient*
+monomorphized at deploy time into the concrete agent path
+`<account>/<app>/<env>/<component>/<agent-type>`. The four quadrants are
+`lowerPositive` — the three declared grants plus the six file grants Golem
+appended — empty `lowerNegative` and `upperPositive`, and an `upperNegative`
+carrying the secret exclusion. A `network()` grant renders its owner as the empty
+string. The checks assert the narrow grants themselves (the `read : /seed/**`
+resource, the one network destination, the `card : inspect` grant) and that the
+lattice carries **no** `write` or `delete` verb, which is what the two refusals
+are about.
+
+One behaviour fell out of building it: **`permissionInspect!` is itself a
+permission.** The default card carries `card(?account) @ ?agent : * : *`, and a
+declared card replaces it, so `inspect` answers
+`not-permitted: card:inspect is not permitted for this agent` unless the card
+grants the `card` class's `inspect` verb back — which is why the example's card
+carries `card(?account) @ ?agent : inspect : *`. `permissionsWallet!` and
+`permissionId!` are not gated that way: the wallet listing and the id answer
+without it.
 
 ### Coverage
 
@@ -1394,7 +1458,12 @@ CI and the release workflow run those checks. The `permission:` checks in
 are the runtime's own: a `golem-user` principal for a CLI invocation and an
 `agent` principal naming the caller for an RPC one, the default card in the
 wallet, its lattice, a narrowing derivation the runtime accepts, one it refuses,
-a revocation, the handle rules, and an installation onto the agent itself.
+a revocation, the handle rules, and an installation onto the agent itself. The
+`initialCard:` checks are the other half of the same section — the runtime
+enforcing a *declared* card, on the permissions example — and, like the effects
+agent, that component is e2e-covered rather than harness-covered: its p3
+`wasi:http` import keeps the harness from instantiating it (see
+`tooling/abi_harness/README.md`).
 
 Not exposed: nothing in the six interfaces is left out — the one addition is
 `permissionRelease!`, which the interfaces have no equivalent for (dropping a
