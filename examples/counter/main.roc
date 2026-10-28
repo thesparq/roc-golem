@@ -376,10 +376,10 @@ splitThree = |text| {
 ## the caller's value tree — one `{"tag":"text"|"binary","value":{…}}` object
 ## per part — and the hook's answer is the envelope the caller's parts become.
 ##
-## This app reads the parts with the platform's simple string helpers (the ones
-## `extract_json_field` and `deserializeState` use: a value is found by its
-## `"field":` prefix and read up to the next quote), reports the count its state
-## carried and what it found, and hands the caller's own parts back, so one call
+## This app reads the parts with its own simple string helpers (a value is found
+## by its `"field":` prefix and read up to the next quote), reports the count its
+## state carried and what it found, and hands the caller's own parts back, so one
+## call
 ## shows both directions carrying text and binary against the agent's state.
 ## `MultimodalEnvelope` in `pf.Types` is the shape the text carries.
 multimodalAnswer : I64, Str -> Str

@@ -298,8 +298,9 @@ Three things worth knowing:
   `resource-exhausted`, `failed`) fails the invocation rather than handing the
   app a truncated input. A stream that ends cleanly is just end-of-input.
 - **Stdin is read verbatim, quotes and backslashes included.** It travels
-  through the same JSON field reader as `arguments` (`extract_json_field` in
-  `platform/main.roc`), which takes a value to its *unescaped* closing quote and
+  through the built-in `Json` codec, the same reader as `arguments`:
+  `parse_tool_call` in `platform/main.roc` parses the host's flat object with
+  `Json.parse`, which takes a value to its *unescaped* closing quote and
   decodes the escapes the host's emitter writes (`\"`, `\\`, `\/`, `\b`,
   `\f`, `\n`, `\r`, `\t`, `\uXXXX`), so a pipe carrying JSON arrives whole.
   The answering side matches it: `escape_json_str` escapes `\`, `"`, `\n`, `\r`,
@@ -541,22 +542,21 @@ out to be (a Golem developer spotted it; `docs/router-handler-status.md` keeps
 the measurements and the wrong diagnosis that preceded the fix).
 
 **A request body, header value or query string may carry quotes and
-backslashes.** The request reaches the app through `extract_json_field` in
-`platform/main.roc`, which walks the host's flat object the way JSON is written:
-it reads each member's key and value whole (so a value carrying the text of a
-field is never mistaken for it), ends a value at its first *unescaped* quote, and
+backslashes.** The request reaches the app through `parse_http_request` in
+`platform/main.roc`, which parses the host's flat object with the built-in `Json`
+codec: it reads each member's key and value whole (so a value carrying the text of
+a field is never mistaken for it), ends a value at its first *unescaped* quote, and
 decodes the escapes the host's emitter writes (`\"`, `\\`, `\/`, `\b`, `\f`,
 `\n`, `\r`, `\t`, and `\uXXXX` — the whole BMP, a surrogate pair as the astral
-character it stands for, an unpaired one as U+FFFD). A body that is itself JSON
-arrives intact, and so do a tool call's `arguments` and `stdin`: the same reader
-serves all of them. `tooling/e2e.sh` posts a body carrying quotes and backslashes
+character it stands for). A body that is itself JSON arrives intact, and so do a
+tool call's `arguments` and `stdin`: the same reader serves all of them. `tooling/e2e.sh` posts a body carrying quotes and backslashes
 and checks the handler echoes it back, and the harness drives a tool argument the
 same way.
 
-The reader is for the flat object of string fields the host writes; anything else
-— a nested object, a number, an unterminated or malformed escape — reads as
-`NotFound`, which the callers turn into their own default. The platform's own
-emitter, `escape_json_str`, escapes every control character below 0x20 as well —
+Each field is optional (`Try(Str, [Missing])`): an absent field, or a payload that
+is not that flat object at all, reads as `""` — the default the callers have
+always used. The platform's own emitter, `escape_json_str`, escapes every control
+character below 0x20 as well —
 `\`, `"`, `\n`, `\r` and `\t` in their short forms, the rest as `\u00XX`, the
 form `serde_json` writes — so an answer (a reply, a response body, a tool's
 stdout) carrying one survives the host's parse.
@@ -643,10 +643,10 @@ flattened: that encoding wraps every value in `{"kind":…,"value":…}` and nam
 a variant's case by index, while the envelope names the modality directly in
 `tag` — the word the platform's other JSON vocabularies already use
 (`db-value`'s `{"tag":"int4","value":1}`, a principal's
-`{"tag":"agent","val":…}`). It is also what a hand-written Roc reader can
-walk: the counter example's `firstField` / `firstBytes` helpers are
-`Str.split_first` lookups, with the platform's usual limits (a value containing a
-quote of its own needs more care than those take).
+`{"tag":"agent","val":…}`). It is also what simple string lookups can walk: the counter
+example's `firstField` / `firstBytes` helpers are `Str.split_first` lookups, with
+the usual limits (a value containing a quote of its own needs more care than those
+take).
 
 Everything the host cannot read is reported as the invocation's **error**, never
 as a trap: on the way in, a value tree that is not the parameter record and its
@@ -1534,7 +1534,7 @@ anything is published:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Platform reader tests | `roc test platform/main.roc` | the platform's own Roc code, which the Rust tests cannot reach: the JSON field reader's member scan, its unescaped closing quote, every escape `serde_json` writes (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`) and `\uXXXX` across the BMP including a surrogate pair and both lone surrogates — cases an end-to-end run cannot reach, because the host writes non-ASCII as raw UTF-8. 27 `expect`s |
+| Platform code tests | `roc test platform/main.roc` | the platform's own Roc code, which the Rust tests cannot reach: how `parse_tool_call` and `parse_http_request` map the host's flat payloads onto `ToolCall` and `HttpRequest` through the built-in `Json` codec — the default for an absent field, a value carrying another field's text, the host's escapes (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`) and `\uXXXX` across the BMP. 16 `expect`s |
 | Host unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | the Rust side of the ABI: `RocStr`/`Result` layouts, allocator round-trips, URL and method parsing, agent-type discovery against a stubbed guest, the `httpMount` metadata mapping, the declared tool streams and the tool-call stdin/stdout/stderr JSON contract, the `db-value` JSON mirror (the round trip per engine, the result rendering, the handle handling), the permission JSON mirror (the grant/view/bounds/holder shapes, every `permission-error` rendering, the principal in all four shapes, and the handle rules' error paths), the durable-stream JSON mirror (the options, the read request, the batch with its byte length and lossy payload, the append payloads, the receipts, every error kind and its recovery fields, and the option validation), the multimodal schema (the declared list, both conversion directions, every rejection the host has, and the refusals an app that did not opt in gets), and the router's body chunks (that each chunk's list indexes nodes inside that chunk, the bound, and the empty case) |
 | ABI smoke test | `tooling/abi_harness` (see its README for the flags) | a real component instantiated outside Golem: agent metadata (including the mount path), `initialize`, message round-trips with state, tool calls, and that the effects an app uses reach the host — the host side of those is stubbed and recorded, quota, retry, oplog/execution-control calls (`trap`, `oplog-commit`, the resolvers), the key-value/blobstore round trips, the agent-filesystem round trip (write in one invocation, read in the next), the database round trip (params in, rows out, a rolled-back and a committed transaction), the permission round trip (the wallet, a narrowing derivation, a refused one, a scope card, a revocation, a release), the durable-stream round trip (two JSON appends with their sequences, the read that answers them back from the stub's own stream store, the checkpoint the second read continues from, a byte stream that closes, and the `not-found` of a stream that does not exist), and the multimodal method (a value tree built from an envelope in, the answer's tree read back as an envelope, plus a value the host refuses and an agent that did not declare the method) included. `--tool-stream` drives `golem:tool/guest.invoke` itself with stdin bytes and both output writers attached, so the tool streams are checked where the runtime attaches them |
 | End-to-end | `GOLEM_CLI=/path/to/golem ./tooling/e2e.sh` | all of the above plus a real Golem server: deploy, invoke, rendered results, durable state across invocations, the tool surface (and tool stdin/stdout/stderr through `golem tool invoke --stdin/--stdout/--stderr`), HTTP mounts served out of an agent's filesystem, an HTTP router's uploaded files and OpenAPI document, a snapshot-based agent update across an incompatible revision, agent-to-agent calls into another component (RPC, fire-and-forget, scheduled and cancelable invocations, agent-id helpers), a webhook created from an agent and completed by a POST (204/404), a quota reservation that fits and one the resource rejects, a multimodal method's text and binary parts through a real invoke, retry policies read, resolved and walked, key-value and blobstore round trips through the environment's own stores, the agent's own filesystem (a manifest-provisioned file read back, a write in one invocation read in a later one, listings, and the path rule), the database opens of all three engines plus the failure path with no server behind the address (and, with `E2E_DATABASE_URL` set, a real postgres round trip through a rolled-back and a committed transaction), the permissions surface (a `golem-user` principal for a CLI invocation and an `agent` principal naming the caller for an RPC one, the default card in the wallet, its lattice, a derivation the runtime accepts and one it refuses, a revocation, the handle rules, and an installation onto the agent itself), external durable streams against the protocol's own reference server (the stream created with the protocol's `PUT`, two JSON appends read back from the beginning and again from the checkpoint, a byte stream appended and closed, and the `not-found` of a stream that does not exist), and `golem:api/host`'s execution control: a trapped invocation, `oplog-commit`, both resolvers, a fork seen from the original and from the copy, and idempotency keys across invocations and a replay. No stubs |

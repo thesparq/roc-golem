@@ -476,10 +476,10 @@ config_starts_with_http = |config|
 		Err(_) => False
 	}
 
-## Minimal JSON field reader, matching the style used by the platform's own
-## hooks: it looks for `"field":"` first and takes everything up to the closing
-## quote, and falls back to reading a bare (numeric) value up to `,` or `}`,
-## which is what the HTTP response's `status` is.
+## A minimal JSON field reader for this example: it looks for `"field":"` first
+## and takes everything up to the closing quote, and falls back to reading a bare
+## (numeric) value up to `,` or `}`, which is what the HTTP response's `status`
+## is.
 extract_json_str : Str, Str -> Try(Str, [NotFound])
 extract_json_str = |json, field|
 	match Str.split_first(json, "\"${field}\":\"") {

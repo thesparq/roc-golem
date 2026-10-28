@@ -52,11 +52,11 @@ jobs:
       - name: Run Host Unit Tests
         run: cargo test --manifest-path host/Cargo.toml --lib
 
-      - name: Run Platform Reader Unit Tests
-        # The JSON field reader's own tests (`roc test`): the member scan, the
-        # unescaped closing quote, and every escape the host's emitter writes.
-        # The `\uXXXX` and surrogate cases only exist here — the host writes
-        # non-ASCII as raw UTF-8, so an end-to-end run never reaches them.
+      - name: Run Platform Unit Tests
+        # The platform's own Roc tests (`roc test`): how the host's flat payloads
+        # map onto `ToolCall` and `HttpRequest` through the built-in `Json`
+        # codec (defaults for absent fields, a value carrying another field's
+        # text, and a control character across the emitter / reader round trip).
         #
         # `roc test` exits 2 when it reports a *warning*, and this platform's
         # files still carry module headers, which Roc deprecates (see the
@@ -328,11 +328,11 @@ jobs:
             --expect-tool-stderr "read 19 bytes of stdin"
 
           # A tool call's arguments are JSON, so in real use they are full of
-          # quotes and backslashes — and the field reader used to end the value
-          # at its first `"`. The `--tool-stdin` path goes through the same
-          # reader the tool call's `arguments` field does, and the ai tool's
-          # `echo` answers with the bytes it read, so the argument has to come
-          # back whole (a quote, a backslash, and the `":"` text of JSON).
+          # quotes and backslashes. The `--tool-stdin` path is parsed by the same
+          # built-in `Json` codec as the tool call's `arguments` field does, and
+          # the ai tool's `echo` answers with the bytes it read, so the argument
+          # has to come back whole (a quote, a backslash, and the `":"` text of
+          # JSON).
           check "$HARNESS" build/ai_tool_agent.wasm \
             --type ai-tool-agent --method calculator \
             --message hello --reply "AI assistant" \

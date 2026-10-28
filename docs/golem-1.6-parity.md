@@ -53,8 +53,9 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
    survives from it is a diagnostics ask, not a bug: a structural stream error
    should be visible in normal diagnostics rather than as a generic HTTP body
    failure. **A request body, header value or query string may carry quotes and
-   backslashes**: the platform's JSON field reader takes a value to its
-   *unescaped* closing quote and decodes the host's escapes, so a body that is
+   backslashes**: the platform parses the request with the built-in `Json`
+   codec, which takes a value to its *unescaped* closing quote and decodes the
+   host's escapes, so a body that is
    itself JSON arrives whole (the e2e posts one to check it). Item 11's note
    carries the other half — the answering side is still worth a look.
 2. **Durable streams** — **slice (a) done, (b) feasible but low value, (c)
@@ -561,8 +562,9 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
       to *answer* with output text, and a record type that does not name the
       fields cannot carry it.
     - **Stdin is read verbatim, quotes and backslashes included.** It travels
-      through the same JSON field reader `arguments` uses, which takes a value to
-      its *unescaped* closing quote and decodes the host's escapes (`\"`, `\\`,
+      through the built-in `Json` codec, the same reader `arguments` uses,
+      which takes a value to its *unescaped* closing quote and decodes the
+      host's escapes (`\"`, `\\`,
       `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, and `\uXXXX`), so a pipe carrying
       JSON arrives whole — and the answering side matches it:
       `escape_json_str` escapes every control character below 0x20 (as `\u00XX`,
