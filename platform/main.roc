@@ -399,15 +399,397 @@ parse_tool_call = |raw_json| {
 	{ id, name, arguments, stdin }
 }
 
+# Reads one field out of the flat JSON object the host builds for a hook call:
+# a compact object of string fields (`{"method":"GET","body":"..."}`), written
+# by `serde_json`'s `to_string()`. Every field this platform reads — a tool
+# call's `id`, `name`, `arguments` and `stdin`, a router request's `method`,
+# `scheme`, `authority`, `path`, `query`, `headersJson` and `body` — is one JSON
+# string.
+#
+# This walks the object's members the way JSON is written instead of searching
+# the text for a `"name":"` substring:
+#
+#   - a value ends at its first *unescaped* quote, so a quote inside it (which
+#     the host writes as `\"`) does not end it early, and a value that itself
+#     contains the text `"name":"` cannot be mistaken for the field,
+#   - the escapes the host's emitter writes are decoded back to the text they
+#     stood for, and
+#   - a missing field, a malformed escape, or an object that is not the flat
+#     shape above all read the same to a caller: `NotFound`.
+#
+# The value scan splits at quotes rather than walking bytes, so a value with no
+# escapes — the common case, and the 100 KB router body the e2e posts — costs a
+# pass, not a copy per byte.
 extract_json_field : Str, Str -> Try(Str, [NotFound])
 extract_json_field = |json, field_name| {
-	target = "\"${field_name}\":\""
-	match Str.split_first(json, target) {
-		Ok({ before: _, after }) =>
-			match Str.split_first(after, "\"") {
-				Ok({ before, after: _ }) => Ok(before)
-				Err(_) => Err(NotFound)
-			}
-		Err(_) => Err(NotFound)
+	match Str.split_first(json, "{") {
+		Ok({ before: "", after: body }) => scan_members(body, field_name)
+		_ => Err(NotFound)
 	}
 }
+
+# Walks the object's members from the first key: `"key":"value"`, repeated with
+# a `,` between them. The walk reads each member's key and value whole, so a
+# value's own text can never be read as a key. It returns at the key it was
+# asked for; the end of the object without that key is `NotFound`.
+scan_members : Str, Str -> Try(Str, [NotFound])
+scan_members = |text, field_name| {
+	if Str.starts_with(text, "}") {
+		Err(NotFound)
+	} else {
+		match read_json_string(text) {
+			Err(_) => Err(NotFound)
+			Ok({ value: key, rest: after_key }) =>
+				match after_separator(after_key, ":") {
+					Err(_) => Err(NotFound)
+					Ok(after_colon) =>
+						match read_json_string(after_colon) {
+							Err(_) => Err(NotFound)
+							Ok({ value, rest: after_value }) =>
+								if key == field_name {
+									Ok(value)
+								} else {
+									match after_separator(after_value, ",") {
+										Ok(next) => scan_members(next, field_name)
+										Err(_) => Err(NotFound)
+									}
+								}
+						}
+				}
+		}
+	}
+}
+
+# The text after a separator that has to be at the current position.
+after_separator : Str, Str -> Try(Str, [NotFound])
+after_separator = |text, separator| {
+	match Str.split_first(text, separator) {
+		Ok({ before: "", after }) => Ok(after)
+		_ => Err(NotFound)
+	}
+}
+
+# Reads the JSON string at the start of `text` (which has to begin with its
+# opening quote) and returns the text it stood for, plus the text after its
+# closing quote.
+read_json_string : Str -> Try({ value : Str, rest : Str }, [NotFound])
+read_json_string = |text| {
+	match Str.split_first(text, "\"") {
+		Ok({ before: "", after: body }) => read_string_body(body)
+		_ => Err(NotFound)
+	}
+}
+
+# `body` starts at the string's first character, just past its opening quote.
+read_string_body : Str -> Try({ value : Str, rest : Str }, [NotFound])
+read_string_body = |body| {
+	segments = Str.split_on(body, "\"")
+	match string_end(segments) {
+		Err(_) => Err(NotFound)
+		Ok(index) =>
+			match decode_json_escapes(Str.join_with(List.take_first(segments, index), "\"")) {
+				Err(_) => Err(NotFound)
+				Ok(value) => Ok({ value, rest: Str.join_with(List.drop_first(segments, index), "\"") })
+			}
+	}
+}
+
+# The index into `segments` of the piece that follows the string's *unescaped*
+# closing quote. `segments` is the body split at every `"`, so the quote before
+# `segments[j]` is escaped exactly when `segments[j - 1]` ends with an odd run of
+# backslashes; the first piece whose predecessor does not is the closing quote.
+# A string whose every quote is escaped (or which has none) never closes.
+string_end : List(Str) -> Try(U64, [NotFound])
+string_end = |segments| {
+	quotes = List.len(segments) - 1
+	escaped = escaped_quote_run(segments, 0, quotes)
+	if escaped < quotes {
+		Ok(escaped + 1)
+	} else {
+		Err(NotFound)
+	}
+}
+
+# How many of the pieces before the first `limit` quotes end in an odd run of
+# backslashes, i.e. how many leading quotes are escaped.
+escaped_quote_run : List(Str), U64, U64 -> U64
+escaped_quote_run = |segments, index, limit| {
+	if index >= limit {
+		index
+	} else if ends_with_odd_backslashes(List.get(segments, index) ?? "") {
+		escaped_quote_run(segments, index + 1, limit)
+	} else {
+		index
+	}
+}
+
+# Whether `text`'s trailing run of backslashes is odd, which is what makes the
+# quote after it escaped rather than the string's end.
+ends_with_odd_backslashes : Str -> Bool
+ends_with_odd_backslashes = |text| {
+	if Str.ends_with(text, "\\") {
+		match Str.split_last(text, "\\") {
+			Ok({ before, after: _ }) => !ends_with_odd_backslashes(before)
+			Err(_) => False
+		}
+	} else {
+		False
+	}
+}
+
+# Decodes the escapes `serde_json`'s compact emitter writes: `\"`, `\\`, `\/`,
+# `\b`, `\f`, `\n`, `\r`, `\t`, and `\uXXXX` (any BMP code point, one to three
+# UTF-8 bytes; a surrogate is paired with the `\uYYYY` after it, and an unpaired
+# one becomes U+FFFD so the result is always valid UTF-8). A malformed escape is
+# `NotFound` rather than a trap.
+#
+# A raw body splits at `\\` pairs first — one literal backslash each — so the
+# runs that are left hold only single escapes and each decodes on its own. A
+# value with no backslashes at all is one run of that split and costs one pass.
+decode_json_escapes : Str -> Try(Str, [NotFound])
+decode_json_escapes = |raw| {
+	runs = List.map(Str.split_on(raw, "\\\\"), decode_run_escapes)
+	if List.contains(List.map(runs, result_ok), False) {
+		Err(NotFound)
+	} else {
+		Ok(Str.join_with(List.map(runs, |result| result ?? ""), "\\"))
+	}
+}
+
+# The escapes in one run between `\\` pairs. Every `\` in it starts an escape
+# and no two are adjacent, so it splits at each `\` into a literal head followed
+# by one piece per escape.
+decode_run_escapes : Str -> Try(Str, [NotFound])
+decode_run_escapes = |run| {
+	parts = Str.split_on(run, "\\")
+	decoded = List.map_with_index(parts, |part, index| decode_escaped_part(parts, part, index))
+	if List.contains(List.map(decoded, result_ok), False) {
+		Err(NotFound)
+	} else {
+		Ok(Str.join_with(List.map(decoded, |result| result ?? ""), ""))
+	}
+}
+
+result_ok : Try(a, e) -> Bool
+result_ok = |result| match result {
+	Ok(_) => True
+	Err(_) => False
+}
+
+# One piece of a string body split at backslashes. Piece 0 is the raw text
+# before the first backslash; every other piece begins with the character that
+# backslash escaped, followed by more raw text. `parts` is the whole split, so a
+# `\uXXXX` high surrogate can reach the piece that may hold its low half.
+decode_escaped_part : List(Str), Str, U64 -> Try(Str, [NotFound])
+decode_escaped_part = |parts, part, index| {
+	if index == 0 {
+		Ok(part)
+	} else {
+		bytes = Str.to_utf8(part)
+		code = Str.from_utf8_lossy(List.take_first(bytes, 1))
+		tail = Str.from_utf8_lossy(List.drop_first(bytes, 1))
+		if code == "n" {
+			Ok(Str.concat(char_of_code_point(10), tail))
+		} else if code == "t" {
+			Ok(Str.concat(char_of_code_point(9), tail))
+		} else if code == "r" {
+			Ok(Str.concat(char_of_code_point(13), tail))
+		} else if code == "b" {
+			Ok(Str.concat(char_of_code_point(8), tail))
+		} else if code == "f" {
+			Ok(Str.concat(char_of_code_point(12), tail))
+		} else if code == "\"" {
+			Ok(Str.concat("\"", tail))
+		} else if code == "\\" {
+			Ok(Str.concat("\\", tail))
+		} else if code == "/" {
+			Ok(Str.concat("/", tail))
+		} else if code == "u" {
+			decode_unicode_part(parts, index)
+		} else {
+			Err(NotFound)
+		}
+	}
+}
+
+# A `\uXXXX` piece: the code point it names and the raw text after its four
+# digits. A high surrogate takes the following piece's low surrogate as its
+# pair; a low surrogate that no high half claimed is U+FFFD on its own.
+decode_unicode_part : List(Str), U64 -> Try(Str, [NotFound])
+decode_unicode_part = |parts, index| {
+	match unicode_part(parts, index) {
+		Err(_) => Err(NotFound)
+		Ok({ point, rest }) =>
+			if is_high_surrogate(point) {
+				match unicode_part(parts, index + 1) {
+					Ok({ point: low, rest: low_rest }) =>
+						if is_low_surrogate(low) {
+							Ok(Str.concat(Str.concat(astral_char(point, low), rest), low_rest))
+						} else {
+							Ok(Str.concat(replacement_char, rest))
+						}
+					Err(_) => Ok(Str.concat(replacement_char, rest))
+				}
+			} else if is_low_surrogate(point) {
+				if high_surrogate_before(parts, index) {
+					# Already written with the high half that claimed it.
+					Ok("")
+				} else {
+					Ok(Str.concat(replacement_char, rest))
+				}
+			} else {
+				Ok(Str.concat(char_of_code_point(point), rest))
+			}
+	}
+}
+
+# The code point `\uXXXX` names and the raw text after its four digits, or
+# `NotFound` when the piece is not four hex digits after a `u`.
+unicode_part : List(Str), U64 -> Try({ point : U64, rest : Str }, [NotFound])
+unicode_part = |parts, index| {
+	bytes = Str.to_utf8(List.get(parts, index) ?? "")
+	rest_bytes = List.drop_first(bytes, 1)
+	if Str.from_utf8_lossy(List.take_first(bytes, 1)) == "u" and List.len(rest_bytes) >= 4 {
+		match hex_code_point(List.take_first(rest_bytes, 4), 0, 0) {
+			Err(_) => Err(NotFound)
+			Ok(point) => Ok({ point, rest: Str.from_utf8_lossy(List.drop_first(rest_bytes, 4)) })
+		}
+	} else {
+		Err(NotFound)
+	}
+}
+
+# Whether the piece before `index` is a `\uXXXX` high surrogate, which means
+# this piece's low half was already written with it.
+high_surrogate_before : List(Str), U64 -> Bool
+high_surrogate_before = |parts, index| {
+	if index == 0 {
+		False
+	} else {
+		match unicode_part(parts, index - 1) {
+			Ok({ point, rest: _ }) => is_high_surrogate(point)
+			Err(_) => False
+		}
+	}
+}
+
+# The value of four ASCII hex-digit bytes, read left to right.
+hex_code_point : List(U8), U64, U64 -> Try(U64, [NotFound])
+hex_code_point = |digits, index, value| {
+	if index >= 4 {
+		Ok(value)
+	} else {
+		match hex_digit(List.get(digits, index) ?? 255) {
+			Err(_) => Err(NotFound)
+			Ok(digit) => hex_code_point(digits, index + 1, value * 16 + digit)
+		}
+	}
+}
+
+hex_digit : U8 -> Try(U64, [NotFound])
+hex_digit = |byte| {
+	if byte >= 48 and byte <= 57 {
+		Ok(U8.to_u64(byte - 48))
+	} else if byte >= 97 and byte <= 102 {
+		Ok(U8.to_u64(byte - 87))
+	} else if byte >= 65 and byte <= 70 {
+		Ok(U8.to_u64(byte - 55))
+	} else {
+		Err(NotFound)
+	}
+}
+
+# A code point outside the surrogate range as its UTF-8 text: one to three bytes.
+char_of_code_point : U64 -> Str
+char_of_code_point = |point| {
+	if point < 128 {
+		Str.from_utf8_lossy([U64.to_u8_wrap(point)])
+	} else if point < 2048 {
+		Str.from_utf8_lossy([U64.to_u8_wrap(point // 64 + 192), U64.to_u8_wrap(point % 64 + 128)])
+	} else {
+		Str.from_utf8_lossy([U64.to_u8_wrap(point // 4096 + 224), U64.to_u8_wrap(point // 64 % 64 + 128), U64.to_u8_wrap(point % 64 + 128)])
+	}
+}
+
+# The astral character a surrogate pair stands for: 0x10000 + (high - 0xD800) *
+# 0x400 + (low - 0xDC00), as its four UTF-8 bytes.
+astral_char : U64, U64 -> Str
+astral_char = |high, low| {
+	point = 65536 + (high - 55296) * 1024 + (low - 56320)
+	Str.from_utf8_lossy([U64.to_u8_wrap(point // 262144 + 240), U64.to_u8_wrap(point // 4096 % 64 + 128), U64.to_u8_wrap(point // 64 % 64 + 128), U64.to_u8_wrap(point % 64 + 128)])
+}
+
+replacement_char : Str
+replacement_char = char_of_code_point(65533)
+
+is_high_surrogate : U64 -> Bool
+is_high_surrogate = |point| point >= 55296 and point <= 56319
+
+is_low_surrogate : U64 -> Bool
+is_low_surrogate = |point| point >= 56320 and point <= 57343
+# The reader's rules, pinned as tests (`roc test platform/main.roc`; CI runs it).
+# The `\uXXXX` ones live here because nothing else can reach them: the host
+# writes non-ASCII as raw UTF-8, and a control character in a value cannot
+# survive the round trip through the platform's own output escaping (see the
+# README's tool-streams note), so an end-to-end check cannot see the decode.
+
+# The member scan: a key is read as a key, so a value carrying the text of the
+# field — even before the real field — is never mistaken for it.
+expect extract_json_field("{\"a\":\"x\"}", "a") == Ok("x")
+
+expect extract_json_field("{\"a\":\"x\",\"b\":\"y\"}", "b") == Ok("y")
+
+expect extract_json_field("{\"a\":\"decoy \\\"b\\\":\\\"FAKE\\\"\",\"b\":\"real\"}", "b") == Ok("real")
+
+expect extract_json_field("{\"body\":\"{\\\"b\\\":\\\"1\\\"}\",\"b\":\"real\"}", "b") == Ok("real")
+
+expect extract_json_field("{\"arguments\":\"{\\\"q\\\":\\\"hi\\\",\\\"p\\\":\\\"C:\\\\\\\\tmp\\\"}\",\"stdin\":\"s\"}", "arguments") == Ok("{\"q\":\"hi\",\"p\":\"C:\\\\tmp\"}")
+
+# A value ends at its first *unescaped* quote, and the escapes are decoded.
+expect extract_json_field("{\"a\":\"he said \\\"hi\\\"\"}", "a") == Ok("he said \"hi\"")
+
+expect extract_json_field("{\"a\":\"C:\\\\tmp\"}", "a") == Ok("C:\\tmp")
+
+expect extract_json_field("{\"a\":\"C:\\\\t\"}", "a") == Ok("C:\\t")
+
+expect extract_json_field("{\"a\":\"a\\\\\\u0041\"}", "a") == Ok("a\\A")
+
+expect extract_json_field("{\"a\":\"trailing backslash \\\\\"}", "a") == Ok("trailing backslash \\")
+
+expect extract_json_field("{\"a\":\"\\\"\"}", "a") == Ok("\"")
+
+expect extract_json_field("{\"a\":\"line1\\nline2\\ttab\\rcr\"}", "a") == Ok("line1\nline2\ttab\rcr")
+
+expect extract_json_field("{\"a\":\"back\\bspace\"}", "a") == Ok("back${char_of_code_point(8)}space")
+
+expect extract_json_field("{\"a\":\"form\\ffeed\\/slash\"}", "a") == Ok("form${char_of_code_point(12)}feed/slash")
+
+# `\uXXXX`: the whole BMP, one to three UTF-8 bytes, and a surrogate pair as the
+# astral character it stands for.
+expect extract_json_field("{\"a\":\"\\u0041\\u007a\"}", "a") == Ok("Az")
+
+expect extract_json_field("{\"a\":\"caf\\u00e9\"}", "a") == Ok("café")
+
+expect extract_json_field("{\"a\":\"\\u4e2d\\u6587\"}", "a") == Ok("中文")
+
+expect extract_json_field("{\"a\":\"\\ud83d\\ude00\"}", "a") == Ok("😀")
+
+# A surrogate with no partner is U+FFFD, never invalid UTF-8.
+expect extract_json_field("{\"a\":\"lone high \\ud83d end\"}", "a") == Ok("lone high � end")
+
+expect extract_json_field("{\"a\":\"lone low \\ude00 end\"}", "a") == Ok("lone low � end")
+
+expect extract_json_field("{\"a\":\"high then text \\ud83d x\"}", "a") == Ok("high then text � x")
+
+# Empty values, and everything that cannot be read as this object is NotFound.
+expect extract_json_field("{\"a\":\"\"}", "a") == Ok("")
+
+expect extract_json_field("{\"a\":\"\",\"b\":\"y\"}", "b") == Ok("y")
+
+expect extract_json_field("{\"a\":\"x\"}", "missing") == Err(NotFound)
+
+expect extract_json_field("{\"a\":\"unterminated}", "a") == Err(NotFound)
+
+expect extract_json_field("{\"a\":\"bad \\q esc\"}", "a") == Err(NotFound)
+
+expect extract_json_field("{\"a\":1}", "a") == Err(NotFound)

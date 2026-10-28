@@ -141,10 +141,13 @@ whose parts the harness builds and whose answer it reads back as the documented
 envelope. The ai_tool checks also drive
 `golem:tool/guest.invoke` with stdin and both output writers (`--tool-stream`),
 which is the only call whose parameters are component-model streams. The
-streaming agent passes here too, `websocket/client.receive` included. The effects
-agent cannot even be *instantiated* by the harness: its p3 `wasi:http` import is
-not in the harness world (see the toolchain notes below), so the e2e job stays its
-authoritative check.
+streaming agent passes here too, `websocket/client.receive` included. One ai_tool
+check hands the tool a stdin carrying quotes, backslashes and the `":"` text of
+JSON — the shape a tool call's `arguments` has in real use — and checks it comes
+back whole, which is what pins the JSON field reader's escape handling. The
+effects agent cannot even be *instantiated* by the harness: its p3 `wasi:http`
+import is not in the harness world (see the toolchain notes below), so the e2e
+job stays its authoritative check.
 
 Toolchain notes found while porting to 1.6:
 

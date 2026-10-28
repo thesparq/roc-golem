@@ -52,6 +52,13 @@ jobs:
       - name: Run Host Unit Tests
         run: cargo test --manifest-path host/Cargo.toml --lib
 
+      - name: Run Platform Reader Unit Tests
+        # The JSON field reader's own tests (`roc test`): the member scan, the
+        # unescaped closing quote, and every escape the host's emitter writes.
+        # The `\uXXXX` and surrogate cases only exist here — the host writes
+        # non-ASCII as raw UTF-8, so an end-to-end run never reaches them.
+        run: roc test platform/main.roc
+
       - name: Determine Release Tag
         id: vars
         run: |
@@ -307,6 +314,19 @@ jobs:
             --tool-stream echo --tool-stdin "harness stdin bytes" \
             --expect-tool-stdout "harness stdin bytes" \
             --expect-tool-stderr "read 19 bytes of stdin"
+
+          # A tool call's arguments are JSON, so in real use they are full of
+          # quotes and backslashes — and the field reader used to end the value
+          # at its first `"`. The `--tool-stdin` path goes through the same
+          # reader the tool call's `arguments` field does, and the ai tool's
+          # `echo` answers with the bytes it read, so the argument has to come
+          # back whole (a quote, a backslash, and the `":"` text of JSON).
+          check "$HARNESS" build/ai_tool_agent.wasm \
+            --type ai-tool-agent --method calculator \
+            --message hello --reply "AI assistant" \
+            --tool-stream echo --tool-stdin '{"q":"say \"hi\"","p":"C:\\tmp"}' \
+            --expect-tool-stdout '{"q":"say \"hi\"","p":"C:\\tmp"}' \
+            --expect-tool-stderr "read 32 bytes of stdin"
 
           # The multimodal method (`handle-multimodal`): the parts a caller sends
           # arrive as the JSON envelope the app reads, and the envelope the app

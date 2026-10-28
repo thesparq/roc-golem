@@ -281,7 +281,8 @@ handleToolCall!: |state, call|
 
 The `ai_tool` example's `echo` tool is the worked case, and `tooling/e2e.sh`
 pipes `piped stdin bytes` through `golem tool invoke --stdin - --stdout --output
-… --stderr --stderr-output …` and checks both files.
+... --stderr --stderr-output ...` and checks both files, then pipes a stdin
+carrying a quote and a backslash the same way.
 
 Three things worth knowing:
 
@@ -296,11 +297,17 @@ Three things worth knowing:
   runtime's `byte-stream-failure`: `cancelled`, `abandoned`,
   `resource-exhausted`, `failed`) fails the invocation rather than handing the
   app a truncated input. A stream that ends cleanly is just end-of-input.
-- **Stdin is read verbatim up to the next double quote.** It travels through the
-  same minimal JSON field reader as `arguments` (`parse_tool_call` in
-  `platform/main.roc`), so a pipe containing a `"` is truncated at it and escape
-  sequences are not decoded. Keep tool stdin quote-free until that reader grows
-  escapes.
+- **Stdin is read verbatim, quotes and backslashes included.** It travels
+  through the same JSON field reader as `arguments` (`extract_json_field` in
+  `platform/main.roc`), which takes a value to its *unescaped* closing quote and
+  decodes the escapes the host's emitter writes (`\"`, `\\`, `\/`, `\b`,
+  `\f`, `\n`, `\r`, `\t`, `\uXXXX`), so a pipe carrying JSON arrives whole.
+  The *answering* side still has the matching gap: `escape_json_str` escapes
+  only `\`, `"`, `\n`, `\r` and `\t`, so a reply, a response body or a tool's
+  stdout carrying another control character below 0x20 is written as a raw byte,
+  the host's `serde_json` then rejects the payload, and the invocation's
+  stdout/stderr are dropped. A reader cannot see that; it is the next emitter to
+  bring in line with `serde_json`.
 
 ### Tool middleware
 
@@ -533,12 +540,27 @@ client saw an empty body, which is what
 out to be (a Golem developer spotted it; `docs/router-handler-status.md` keeps
 the measurements and the wrong diagnosis that preceded the fix).
 
-**Known limitation, tracked**: a request body (or header value, or query string)
-containing a double quote is truncated before the app sees it, and a tool's
-`arguments`/`stdin` are cut the same way. Both go through this platform's minimal
-JSON field reader in `platform/main.roc`, which stops at the first `"`; replacing
-it with a real JSON string scan is a pending change. The e2e records the router
-case as a skip rather than pretending it works.
+**A request body, header value or query string may carry quotes and
+backslashes.** The request reaches the app through `extract_json_field` in
+`platform/main.roc`, which walks the host's flat object the way JSON is written:
+it reads each member's key and value whole (so a value carrying the text of a
+field is never mistaken for it), ends a value at its first *unescaped* quote, and
+decodes the escapes the host's emitter writes (`\"`, `\\`, `\/`, `\b`, `\f`,
+`\n`, `\r`, `\t`, and `\uXXXX` — the whole BMP, a surrogate pair as the astral
+character it stands for, an unpaired one as U+FFFD). A body that is itself JSON
+arrives intact, and so do a tool call's `arguments` and `stdin`: the same reader
+serves all of them. `tooling/e2e.sh` posts a body carrying quotes and backslashes
+and checks the handler echoes it back, and the harness drives a tool argument the
+same way.
+
+The reader is for the flat object of string fields the host writes; anything else
+— a nested object, a number, an unterminated or malformed escape — reads as
+`NotFound`, which the callers turn into their own default. What it does *not* fix
+is the platform's own emitter: `escape_json_str` still escapes only `\`, `"`,
+`\n`, `\r` and `\t`, so an *answer* (a reply, a response body, a tool's stdout)
+carrying another control character below 0x20 is written as a raw byte, and the
+host's `serde_json` rejects the payload — the invocation's stdout/stderr are
+dropped. That is an answering-side gap, not a reading one.
 
 The `static_site` example is the worked case: `examples/static_site/main.roc`,
 `examples/static_site/static/`, and the `router:` checks in `tooling/e2e.sh`
