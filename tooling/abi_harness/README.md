@@ -151,7 +151,7 @@ job stays its authoritative check.
 
 Toolchain notes found while porting to 1.6:
 
-- **Build with the pinned Roc nightly** (`nightly-2026-10-19-601b54c`). A newer
+- **Build with the pinned Roc nightly** (`nightly-2026-10-27-de79a0f`). A newer
   one produced a counter component whose second `handle-message` trapped in
   `RocStr::drop` → `__rust_dealloc` → `core::panicking::panic` — the hand-written
   `Str` layout/allocator contract in `host/src/roc_std.rs` tracks that

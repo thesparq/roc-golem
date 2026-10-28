@@ -15,8 +15,8 @@ checked in as `host/src/roc_platform_abi.rs` and compiled by the host crate:
 
 ```bash
 # fetch the spec from the commit the pinned nightly was built from. The nightly
-# tag carries its commit (`nightly-2026-10-19-601b54c` -> 601b54c...); resolve
-# it with `gh api repos/roc-lang/roc/commits/601b54c --jq .sha` if needed.
+# tag carries its commit (`nightly-2026-10-27-de79a0f` -> de79a0f...); resolve
+# it with `gh api repos/roc-lang/roc/commits/de79a0f --jq .sha` if needed.
 gh api "repos/roc-lang/roc/contents/src/glue/src/RustGlue.roc?ref=<nightly-commit>" \
   --jq .content | base64 -d > /tmp/RustGlue.roc
 roc glue /tmp/RustGlue.roc /tmp/glue-out platform/main.roc
@@ -78,7 +78,7 @@ cat /tmp/glue-out/abi_facts.txt
 ```
 
 They run on `nightly-2026-09-19-d025939` and **not** on the pinned
-`nightly-2026-10-19-601b54c`: the glue platform's API moved (`pf.FunctionRepr`
+`nightly-2026-10-27-de79a0f`: the glue platform's API moved (`pf.FunctionRepr`
 is gone; `pf.FunctionInfo`, `pf.FunctionSignature`, `pf.ProvidedExport` and
 `pf.HostedFunctionInfo` replaced it) and the new compiler's type-module
 convention rejects the `import pf.X exposing [X]` clauses these specs use. They

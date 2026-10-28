@@ -5,7 +5,7 @@ verified, what to decide before launching, and what is known to be missing. The
 feature-by-feature inventory is `docs/golem-1.6-parity.md`; this page is the
 summary for someone deciding whether to build on it.
 
-Pinned: **Golem 1.6.0 GA**, Roc nightly **`nightly-2026-10-19-601b54c`** (the ABI
+Pinned: **Golem 1.6.0 GA**, Roc nightly **`nightly-2026-10-27-de79a0f`** (the ABI
 is tied to it; `tooling/build.sh` refuses a mismatched `roc`), and the platform
 release you deploy against.
 

@@ -140,7 +140,7 @@ roc-golem/
 ## 🔨 Build & Deployment Workflow
 
 > [!IMPORTANT]
-> The platform is pinned to one Roc nightly — **`nightly-2026-10-19-601b54c`**,
+> The platform is pinned to one Roc nightly — **`nightly-2026-10-27-de79a0f`**,
 > the version CI and the release workflow install. The hand-written Roc ABI
 > (`host/src/roc_std.rs`) encodes that compiler's `Str`/`List`/`Try` layout
 > facts, so another nightly can produce components that *build* and then trap at
