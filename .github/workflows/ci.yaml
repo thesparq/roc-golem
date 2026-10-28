@@ -54,7 +54,19 @@ jobs:
         # unescaped closing quote, and every escape the host's emitter writes.
         # The `\uXXXX` and surrogate cases only exist here — the host writes
         # non-ASCII as raw UTF-8, so an end-to-end run never reaches them.
-        run: roc test platform/main.roc
+        #
+        # `roc test` exits 2 when it reports a *warning*, and this platform's
+        # files still carry module headers, which Roc deprecates (see the
+        # "module headers" note in the README's development section). A failing
+        # `expect` exits 1 and prints "failed", so the step requires the tests'
+        # own summary instead of a zero exit code.
+        run: |
+          output="$(roc test platform/main.roc 2>&1 || true)"
+          printf '%s\n' "$output"
+          case "$output" in
+            *"tests passed"*) ;;
+            *) echo "roc test did not pass"; exit 1 ;;
+          esac
 
       - name: Build All Platform & Agent Components
         run: ./tooling/build.sh all
