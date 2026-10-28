@@ -564,11 +564,11 @@ bundle this repo vendors (`wit/deps/`), which is the authoritative list.
       through the same JSON field reader `arguments` uses, which takes a value to
       its *unescaped* closing quote and decodes the host's escapes (`\"`, `\\`,
       `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, and `\uXXXX`), so a pipe carrying
-      JSON arrives whole. The answering side keeps the matching gap:
-      `escape_json_str` escapes only `\`, `"`, `\n`, `\r` and `\t`, so a
-      reply carrying another control character below 0x20 goes out as a raw
-      byte, the host's `serde_json` rejects the payload, and the tool's
-      stdout/stderr are dropped. That is an emitter to fix, not the reader.
+      JSON arrives whole — and the answering side matches it:
+      `escape_json_str` escapes every control character below 0x20 (as `\u00XX`,
+      the form `serde_json` writes), so a reply carrying one is no longer rejected
+      as malformed JSON with the tool's stdout/stderr dropped. A vertical tab in
+      the harness's tool stdin is the regression check.
 
     Covered by the harness (the `golem:tool/streams` stubs now supply stdin bytes
     and record what the component writes through both writers, with the writer's

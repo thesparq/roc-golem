@@ -369,14 +369,92 @@ format_tool_parameter = |param| {
 	"{\"name\":\"${name_escaped}\",\"description\":\"${desc_escaped}\",\"type\":\"${type_escaped}\",\"required\":${req_str}}"
 }
 
+# The control characters below 0x20 with no short escape, as `(byte, escape)`
+# pairs. `\n`, `\r` and `\t` are replaced directly above; `\b` and `\f` are here
+# as their `\u` forms so that no control character has to appear in this source
+# file. A byte 0x80 or above is never escaped: it is part of a UTF-8 sequence,
+# which JSON carries as-is.
+control_escapes : List((U8, Str))
+control_escapes = [
+	(0, "\\u0000"),
+	(1, "\\u0001"),
+	(2, "\\u0002"),
+	(3, "\\u0003"),
+	(4, "\\u0004"),
+	(5, "\\u0005"),
+	(6, "\\u0006"),
+	(7, "\\u0007"),
+	(8, "\\u0008"),
+	(11, "\\u000b"),
+	(12, "\\u000c"),
+	(14, "\\u000e"),
+	(15, "\\u000f"),
+	(16, "\\u0010"),
+	(17, "\\u0011"),
+	(18, "\\u0012"),
+	(19, "\\u0013"),
+	(20, "\\u0014"),
+	(21, "\\u0015"),
+	(22, "\\u0016"),
+	(23, "\\u0017"),
+	(24, "\\u0018"),
+	(25, "\\u0019"),
+	(26, "\\u001a"),
+	(27, "\\u001b"),
+	(28, "\\u001c"),
+	(29, "\\u001d"),
+	(30, "\\u001e"),
+	(31, "\\u001f"),
+]
+
+# Escapes a string for the JSON this platform hands the host. Every control
+# character below 0x20 has to be escaped: the host parses these payloads with
+# `serde_json`, which refuses a raw one, so an answer that carried one — a reply,
+# a response body, a tool's stdout — was rejected as malformed JSON and the
+# invocation's output was dropped. `extract_json_field` decodes `\u00XX`, so the
+# two sides of this round trip now agree.
 escape_json_str : Str -> Str
 escape_json_str = |input| {
 	s1 = Str.replace_each(input, "\\", "\\\\")
 	s2 = Str.replace_each(s1, "\"", "\\\"")
 	s3 = Str.replace_each(s2, "\n", "\\n")
 	s4 = Str.replace_each(s3, "\r", "\\r")
-	Str.replace_each(s4, "\t", "\\t")
+	s5 = Str.replace_each(s4, "\t", "\\t")
+	apply_escapes(s5, control_escapes)
 }
+
+# Applies the `(byte, escape)` pairs of `control_escapes` in turn.
+apply_escapes : Str, List((U8, Str)) -> Str
+apply_escapes = |text, pairs|
+	apply_escapes_at(text, pairs, 0)
+
+apply_escapes_at : Str, List((U8, Str)), U64 -> Str
+apply_escapes_at = |text, pairs, index|
+	match List.get(pairs, index) {
+		Err(_) => text
+		Ok((byte, escape)) =>
+			apply_escapes_at(Str.replace_each(text, Str.from_utf8_lossy([byte]), escape), pairs, index + 1)
+	}
+
+# The emitter and the reader agree: what `escape_json_str` writes for a control
+# character is what `extract_json_field` reads back.
+vertical_tab = Str.from_utf8_lossy([11])
+
+backspace = Str.from_utf8_lossy([8])
+
+expect escape_json_str(vertical_tab) == "\\u000b"
+
+expect escape_json_str(backspace) == "\\u0008"
+
+expect extract_json_field("{\"a\":\"${escape_json_str(vertical_tab)}\"}", "a") == Ok(vertical_tab)
+
+expect extract_json_field("{\"a\":\"a${escape_json_str(backspace)}b\"}", "a") == Ok(Str.concat("a", Str.concat(backspace, "b")))
+
+# A UTF-8 sequence is carried as-is, not escaped byte by byte.
+expect escape_json_str("é") == "é"
+
+# The short escapes are what they were.
+expect escape_json_str("a\"b\\c\nd\re\tf") == "a\\\"b\\\\c\\nd\\re\\tf"
 
 parse_tool_call : Str -> ToolCall
 parse_tool_call = |raw_json| {

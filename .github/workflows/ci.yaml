@@ -339,6 +339,19 @@ jobs:
             --expect-tool-stdout '{"q":"say \"hi\"","p":"C:\\tmp"}' \
             --expect-tool-stderr "read 32 bytes of stdin"
 
+          # An answer carrying a control character below 0x20. `serde_json`
+          # refuses one written raw, and the platform's own emitter used to write
+          # the byte as-is — so the invocation's stdout/stderr were dropped when
+          # the host could not parse the answer. The emitter escapes them now
+          # (`\u00XX`), and a vertical tab is the cheapest one to write in a
+          # shell. With the emitter unfixed this check reports the stdout as empty.
+          check "$HARNESS" build/ai_tool_agent.wasm \
+            --type ai-tool-agent --method calculator \
+            --message hello --reply "AI assistant" \
+            --tool-stream echo --tool-stdin "$(printf 'a\vb')" \
+            --expect-tool-stdout "$(printf 'a\vb')" \
+            --expect-tool-stderr "read 3 bytes of stdin"
+
           # The multimodal method (`handle-multimodal`): the parts a caller sends
           # arrive as the JSON envelope the app reads, and the envelope the app
           # answers with becomes the parts the caller sees. The harness builds the

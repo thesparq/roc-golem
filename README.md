@@ -302,12 +302,12 @@ Three things worth knowing:
   `platform/main.roc`), which takes a value to its *unescaped* closing quote and
   decodes the escapes the host's emitter writes (`\"`, `\\`, `\/`, `\b`,
   `\f`, `\n`, `\r`, `\t`, `\uXXXX`), so a pipe carrying JSON arrives whole.
-  The *answering* side still has the matching gap: `escape_json_str` escapes
-  only `\`, `"`, `\n`, `\r` and `\t`, so a reply, a response body or a tool's
-  stdout carrying another control character below 0x20 is written as a raw byte,
-  the host's `serde_json` then rejects the payload, and the invocation's
-  stdout/stderr are dropped. A reader cannot see that; it is the next emitter to
-  bring in line with `serde_json`.
+  The answering side matches it: `escape_json_str` escapes `\`, `"`, `\n`, `\r`,
+  `\t` and every other control character below 0x20 (as `\u00XX`, the form
+  `serde_json` writes), so a reply, a response body or a tool's stdout carrying one
+  arrives whole. The harness checks it with a vertical tab in the tool's stdin;
+  before this the answer was rejected as malformed JSON and the invocation's
+  stdout/stderr were dropped.
 
 ### Tool middleware
 
@@ -555,12 +555,11 @@ same way.
 
 The reader is for the flat object of string fields the host writes; anything else
 — a nested object, a number, an unterminated or malformed escape — reads as
-`NotFound`, which the callers turn into their own default. What it does *not* fix
-is the platform's own emitter: `escape_json_str` still escapes only `\`, `"`,
-`\n`, `\r` and `\t`, so an *answer* (a reply, a response body, a tool's stdout)
-carrying another control character below 0x20 is written as a raw byte, and the
-host's `serde_json` rejects the payload — the invocation's stdout/stderr are
-dropped. That is an answering-side gap, not a reading one.
+`NotFound`, which the callers turn into their own default. The platform's own
+emitter, `escape_json_str`, escapes every control character below 0x20 as well —
+`\`, `"`, `\n`, `\r` and `\t` in their short forms, the rest as `\u00XX`, the
+form `serde_json` writes — so an answer (a reply, a response body, a tool's
+stdout) carrying one survives the host's parse.
 
 The `static_site` example is the worked case: `examples/static_site/main.roc`,
 `examples/static_site/static/`, and the `router:` checks in `tooling/e2e.sh`
