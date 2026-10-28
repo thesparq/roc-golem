@@ -18,10 +18,12 @@
 > generic HTTP body failure. That is the generous half of the Golem developer's
 > reply, and it is worth acting on upstream.
 >
-> One limitation remains in the same path and is *not* this issue: a request body,
-> header value or query string containing a double quote is truncated before the
-> app sees it, because the platform parses the host's JSON with a minimal field
-> reader (`platform/main.roc`). See the README.
+> The separate limitation once noted here — a request body, header value or query
+> string containing a double quote being truncated before the app sees it — is
+> fixed. The platform reads the host's payloads with the built-in `Json` codec
+> (`parse_http_request` in `platform/main.roc`), which takes a value to its
+> *unescaped* closing quote, so a quote or a backslash arrives whole; the e2e
+> posts a body carrying both and checks the handler echoes it back.
 
 The request half works and is verified on Golem 1.6.0 (see the commit this file
 came with): the schema graph Golem validates, the `handle` method, decoding the
