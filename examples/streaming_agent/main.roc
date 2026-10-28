@@ -185,58 +185,33 @@ agent = defineAgent({
 		openapiProvider: NoOpenApi,
 	},
 
-	serializeState: |state| {
-		connStr = if (state.connected) "true" else "false"
-		"{\"connected\":${connStr},\"handle\":${U32.to_str(state.handle)},\"sent\":${U64.to_str(state.sent)},\"received\":${U64.to_str(state.received)}}"
-	},
+	serializeState: |state|
+		Json.to_str({
+			connected: state.connected,
+			handle: state.handle,
+			sent: state.sent,
+			received: state.received,
+		}),
 
 	deserializeState: |stateJson| {
-		# The serialized state is compact (no spaces), so no trimming is needed —
-		# and `Str.trim` is avoided on purpose: its string slicing trips the
-		# layout-sensitive Roc codegen trap on this toolchain (see the harness
-		# README's notes on the streaming agent).
-		connected =
-			match Str.split_first(stateJson, "\"connected\":true") {
-				Ok(_) => True
-				Err(_) => False
-			}
-		handle =
-			match Str.split_first(stateJson, "\"handle\":") {
-				Ok({ before: _, after }) =>
-					match Str.split_first(after, ",") {
-						Ok({ before, after: _ }) => U32.from_str(before) ?? 0
-						Err(_) => 0
-					}
-
-				Err(_) => 0
-			}
-		sent =
-			match Str.split_first(stateJson, "\"sent\":") {
-				Ok({ before: _, after }) =>
-					match Str.split_first(after, ",") {
-						Ok({ before, after: _ }) => U64.from_str(before) ?? 0
-						Err(_) => 0
-					}
-
-				Err(_) => 0
-			}
-		received =
-			match Str.split_first(stateJson, "\"received\":") {
-				Ok({ before: _, after }) => {
-					cleaned = after
-					match Str.split_first(cleaned, "}") {
-						Ok({ before, after: _ }) => U64.from_str(before) ?? 0
-						Err(_) => 0
-					}
-				}
-
-				Err(_) => 0
-			}
-		Ok({
-			connected,
-			handle,
-			sent,
-			received,
-		})
+		parsed : Try(
+			{
+				connected : Bool,
+				handle : U32,
+				sent : U64,
+				received : U64,
+			},
+			[InvalidJson(Str), MissingRequiredField(Str)],
+		)
+		parsed = Json.parse(stateJson)
+		match parsed {
+			Ok(fields) => Ok({
+				connected: fields.connected,
+				handle: fields.handle,
+				sent: fields.sent,
+				received: fields.received,
+			})
+			Err(_) => Err("Invalid JSON format")
+		}
 	},
 })

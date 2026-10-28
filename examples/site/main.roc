@@ -90,23 +90,14 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"served\":${I64.to_str(state.served)}}",
+		Json.to_str({ served: state.served }),
 
-	deserializeState: |stateJson|
-		match Str.split_first(stateJson, "\"served\":") {
-			Ok({ before: _, after }) =>
-				match Str.split_first(after, "}") {
-					Ok({ before, after: _ }) =>
-						match I64.from_str(before) {
-							Ok(served) => Ok({
-								served: served,
-							})
-							Err(_) => Err("Failed to parse served integer")
-						}
-
-					Err(_) => Err("Invalid JSON format")
-				}
-
-			Err(_) => Err("Missing served field")
-		},
+	deserializeState: |stateJson| {
+		parsed : Try({ served : I64 }, [InvalidJson(Str), MissingRequiredField(Str)])
+		parsed = Json.parse(stateJson)
+		match parsed {
+			Ok(fields) => Ok({ served: fields.served })
+			Err(_) => Err("Invalid JSON format")
+		}
+	},
 })

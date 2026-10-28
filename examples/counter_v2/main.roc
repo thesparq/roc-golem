@@ -151,46 +151,21 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"count\":${I64.to_str(state.count)},\"note\":\"${state.note}\"}",
+		Json.to_str({ count: state.count, note: state.note }),
 
-	deserializeState: |stateJson|
-		match Str.split_first(stateJson, "\"count\":") {
-			Ok({ before: _, after }) =>
-				match Str.split_first(after, ",") {
-					# The pre-update format: `{"count":N}`, written by the older
-					# revision and carried over by the snapshot. Migrating it here
-					# is the app's job — the platform hands the state JSON across
-					# unchanged.
-					Err(_) =>
-						match Str.split_first(after, "}") {
-							Ok({ before: countStr, after: _ }) =>
-								match I64.from_str(countStr) {
-									Ok(c) => Ok({ count: c, note: "migrated" })
-									Err(_) => Err("Failed to parse count integer")
-								}
-
-							Err(_) => Err("Invalid JSON format")
-						}
-
-					Ok({ before: countStr, after: rest }) =>
-						match Str.split_first(rest, "\"note\":\"") {
-							Ok({ before: _, after: noteRest }) =>
-								match Str.split_first(noteRest, "\"") {
-									Ok({ before: note, after: _ }) =>
-										match I64.from_str(countStr) {
-											Ok(c) => Ok({ count: c, note: note })
-											Err(_) => Err("Failed to parse count integer")
-										}
-
-									Err(_) => Err("Invalid note format")
-								}
-
-							Err(_) => Err("Missing note field")
-						}
-
-					Err(_) => Err("Invalid JSON format")
-				}
-
+	deserializeState: |stateJson| {
+		# The pre-update format is `{"count":N}`, written by the older
+		# revision and carried over by the snapshot; a missing `note` is that
+		# format, and migrating it here is the app's job — the platform hands
+		# the state JSON across unchanged.
+		parsed : Try(
+			{ count : I64, note : Try(Str, [Missing]) },
+			[InvalidJson(Str), MissingRequiredField(Str)],
+		)
+		parsed = Json.parse(stateJson)
+		match parsed {
+			Ok(fields) => Ok({ count: fields.count, note: fields.note ?? "migrated" })
 			Err(_) => Err("Missing count field")
-		},
+		}
+	},
 })

@@ -61,11 +61,19 @@ agent = defineAgent({
 				request = "{\"url\":\"${state.baseUrl}\",\"method\":\"GET\"}"
 				match http!(request) {
 					Ok(responseJson) => {
-						status = extract_json_str(responseJson, "status") ?? "unknown"
-						body = extract_json_str(responseJson, "body") ?? ""
+						response : Try({ status : Try(U16, [Missing]), body : Try(Str, [Missing]) }, [InvalidJson(Str)])
+						response = Json.parse(responseJson)
+						status = match response {
+							Ok(r) => U16.to_str(r.status ?? 0)
+							Err(_) => "unknown"
+						}
+						body = match response {
+							Ok(r) => r.body ?? ""
+							Err(_) => ""
+						}
 						logInfo!("http call returned status ${status}")
 						{
-							state: { ..state, lastStatus: status, lastBody: quote_free(body) },
+							state: { ..state, lastStatus: status, lastBody: body },
 							# The platform hands the whole response over as JSON
 							# (`{status, headers, body}`); parsing the body properly is
 							# the app's business, so this example only reports its size.
@@ -178,19 +186,46 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"baseUrl\":\"${state.baseUrl}\",\"lastStatus\":\"${state.lastStatus}\",\"lastBody\":\"${state.lastBody}\",\"lastRpc\":\"${state.lastRpc}\",\"cancelHandle\":${U32.to_str(state.cancelHandle)},\"webhookUrl\":\"${state.webhookUrl}\",\"lastForkId\":\"${state.lastForkId}\",\"lastKey\":\"${state.lastKey}\"}",
-
-	deserializeState: |stateJson|
-		Ok({
-			baseUrl: extract_json_str(stateJson, "baseUrl") ?? "http://127.0.0.1:18080/",
-			lastStatus: extract_json_str(stateJson, "lastStatus") ?? "none",
-			lastBody: extract_json_str(stateJson, "lastBody") ?? "",
-			lastRpc: extract_json_str(stateJson, "lastRpc") ?? "none",
-			cancelHandle: U32.from_str(extract_json_str(stateJson, "cancelHandle") ?? "0") ?? 0,
-			webhookUrl: extract_json_str(stateJson, "webhookUrl") ?? "",
-			lastForkId: extract_json_str(stateJson, "lastForkId") ?? "",
-			lastKey: extract_json_str(stateJson, "lastKey") ?? "",
+		Json.to_str({
+			baseUrl: state.baseUrl,
+			lastStatus: state.lastStatus,
+			lastBody: state.lastBody,
+			lastRpc: state.lastRpc,
+			cancelHandle: state.cancelHandle,
+			webhookUrl: state.webhookUrl,
+			lastForkId: state.lastForkId,
+			lastKey: state.lastKey,
 		}),
+
+	deserializeState: |stateJson| {
+		parsed : Try(
+			{
+				baseUrl : Try(Str, [Missing]),
+				lastStatus : Try(Str, [Missing]),
+				lastBody : Try(Str, [Missing]),
+				lastRpc : Try(Str, [Missing]),
+				cancelHandle : Try(U32, [Missing]),
+				webhookUrl : Try(Str, [Missing]),
+				lastForkId : Try(Str, [Missing]),
+				lastKey : Try(Str, [Missing]),
+			},
+			[InvalidJson(Str)],
+		)
+		parsed = Json.parse(stateJson)
+		match parsed {
+			Err(_) => Err("Invalid JSON format")
+			Ok(fields) => Ok({
+				baseUrl: fields.baseUrl ?? "http://127.0.0.1:18080/",
+				lastStatus: fields.lastStatus ?? "none",
+				lastBody: fields.lastBody ?? "",
+				lastRpc: fields.lastRpc ?? "none",
+				cancelHandle: fields.cancelHandle ?? 0,
+				webhookUrl: fields.webhookUrl ?? "",
+				lastForkId: fields.lastForkId ?? "",
+				lastKey: fields.lastKey ?? "",
+			})
+		}
+	},
 })
 
 ## Commands that call another agent — everything `golem:agent/host` offers
@@ -206,7 +241,7 @@ runCommand = |state, message| {
 			match rpcFireAndForget!(command.a, command.b, command.c) {
 				Ok(identity) =>
 					{
-						state: { ..state, lastRpc: quote_free(identity) },
+						state: { ..state, lastRpc: identity },
 						replies: ["Fire-and-forget sent: ${identity}"],
 					}
 
@@ -230,7 +265,7 @@ runCommand = |state, message| {
 					match rpcSchedule!(command.a, command.b, command.c, delayMillis) {
 						Ok(identity) =>
 							{
-								state: { ..state, lastRpc: quote_free(identity) },
+								state: { ..state, lastRpc: identity },
 								replies: ["Scheduled in ${U64.to_str(delayMillis)}ms: ${identity}"],
 							}
 
@@ -272,7 +307,7 @@ runCommand = |state, message| {
 			match parseAgentId!(command.a) {
 				Ok(details) =>
 					{
-						state: { ..state, lastRpc: quote_free(details) },
+						state: { ..state, lastRpc: details },
 						replies: ["Parsed agent id: ${details}"],
 					}
 
@@ -288,7 +323,7 @@ runCommand = |state, message| {
 			match makeAgentId!(command.a, command.b) {
 				Ok(agentId) =>
 					{
-						state: { ..state, lastRpc: quote_free(agentId) },
+						state: { ..state, lastRpc: agentId },
 						replies: ["Made agent id: ${agentId}"],
 					}
 
@@ -308,7 +343,7 @@ runCommand = |state, message| {
 			match rpc!(command.a, "handle-message", "permission principal") {
 				Ok(reply) =>
 					{
-						state: { ..state, lastRpc: quote_free(reply) },
+						state: { ..state, lastRpc: reply },
 						replies: ["RPC principal: ${reply}"],
 					}
 
@@ -325,7 +360,7 @@ runCommand = |state, message| {
 			match createWebhook!({}) {
 				Ok(url) =>
 					{
-						state: { ..state, webhookUrl: quote_free(url) },
+						state: { ..state, webhookUrl: url },
 						replies: ["Webhook created: ${url}"],
 					}
 
@@ -460,45 +495,9 @@ splitToken = |text|
 		Err(_) => { first: text, rest: "" }
 	}
 
-## The state is embedded in JSON without an escaper, so keep stored strings free
-## of characters that would break it. The reply itself is escaped by the
-## platform.
-quote_free : Str -> Str
-quote_free = |text| {
-	no_quotes = Str.replace_each(text, "\"", "'")
-	Str.replace_each(no_quotes, "\\", "/")
-}
-
 config_starts_with_http : Str -> Bool
 config_starts_with_http = |config|
 	match Str.split_first(config, "http") {
 		Ok(_) => True
 		Err(_) => False
-	}
-
-## A minimal JSON field reader for this example: it looks for `"field":"` first
-## and takes everything up to the closing quote, and falls back to reading a bare
-## (numeric) value up to `,` or `}`, which is what the HTTP response's `status`
-## is.
-extract_json_str : Str, Str -> Try(Str, [NotFound])
-extract_json_str = |json, field|
-	match Str.split_first(json, "\"${field}\":\"") {
-		Ok({ before: _, after }) =>
-			match Str.split_first(after, "\"") {
-				Ok({ before, after: _ }) => Ok(before)
-				Err(_) => Err(NotFound)
-			}
-		Err(_) =>
-			match Str.split_first(json, "\"${field}\":") {
-				Ok({ before: _, after }) =>
-					match Str.split_first(after, ",") {
-						Ok({ before, after: _ }) => Ok(before)
-						Err(_) =>
-							match Str.split_first(after, "}") {
-								Ok({ before, after: _ }) => Ok(before)
-								Err(_) => Ok(after)
-							}
-					}
-				Err(_) => Err(NotFound)
-			}
 	}

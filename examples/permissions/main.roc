@@ -119,18 +119,16 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"probes\":${I64.to_str(state.probes)}}",
+		Json.to_str({ probes: state.probes }),
 
-	deserializeState: |stateJson|
-		match Str.split_first(stateJson, "\"probes\":") {
-			Ok({ before: _, after }) =>
-				match Str.split_first(after, "}") {
-					Ok({ before, after: _ }) => Ok({ probes: I64.from_str(before) ?? 0 })
-					Err(_) => Ok({ probes: 0 })
-				}
-
+	deserializeState: |stateJson| {
+		parsed : Try({ probes : Try(I64, [Missing]) }, [InvalidJson(Str)])
+		parsed = Json.parse(stateJson)
+		match parsed {
 			Err(_) => Ok({ probes: 0 })
-		},
+			Ok(fields) => Ok({ probes: fields.probes ?? 0 })
+		}
+	},
 })
 
 # A `Try(Str, Str)` effect answer as one reply line, so a check sees which verb

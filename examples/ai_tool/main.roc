@@ -126,29 +126,20 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"invocations\":${I64.to_str(state.invocations)},\"lastTool\":\"${state.lastTool}\"}",
+		Json.to_str({ invocations: state.invocations, lastTool: state.lastTool }),
 
 	deserializeState: |stateJson| {
-		invocations =
-			match Str.split_first(stateJson, "\"invocations\":") {
-				Ok({ before: _, after }) =>
-					match Str.split_first(after, ",") {
-						Ok({ before, after: _ }) => I64.from_str(before) ?? 0
-						Err(_) => 0
-					}
-
-				Err(_) => 0
-			}
-		lastTool =
-			match Str.split_first(stateJson, "\"lastTool\":\"") {
-				Ok({ before: _, after }) =>
-					match Str.split_first(after, "\"") {
-						Ok({ before, after: _ }) => before
-						Err(_) => "none"
-					}
-
-				Err(_) => "none"
-			}
-		Ok({ invocations, lastTool })
+		parsed : Try(
+			{ invocations : Try(I64, [Missing]), lastTool : Try(Str, [Missing]) },
+			[InvalidJson(Str)],
+		)
+		parsed = Json.parse(stateJson)
+		match parsed {
+			Err(_) => Ok({ invocations: 0, lastTool: "none" })
+			Ok(fields) => Ok({
+				invocations: fields.invocations ?? 0,
+				lastTool: fields.lastTool ?? "none",
+			})
+		}
 	},
 })

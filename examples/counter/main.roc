@@ -333,23 +333,16 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"count\":${I64.to_str(state.count)}}",
+		Json.to_str({ count: state.count }),
 
-	deserializeState: |stateJson|
-		match Str.split_first(stateJson, "\"count\":") {
-			Ok({ before: _, after }) =>
-				match Str.split_first(after, "}") {
-					Ok({ before, after: _ }) =>
-						match I64.from_str(before) {
-							Ok(c) => Ok({ count: c })
-							Err(_) => Err("Failed to parse count integer")
-						}
-
-					Err(_) => Err("Invalid JSON format")
-				}
-
+	deserializeState: |stateJson| {
+		parsed : Try({ count : I64 }, [InvalidJson(Str), MissingRequiredField(Str)])
+		parsed = Json.parse(stateJson)
+		match parsed {
+			Ok(fields) => Ok({ count: fields.count })
 			Err(_) => Err("Missing count field")
-		},
+		}
+	},
 })
 
 ## Splits the first space-separated token off `text`; `rest` keeps what follows
@@ -647,13 +640,11 @@ queryOutcome! = |handle, statement, params|
 		Err(err) => "error(${err})"
 	}
 
-## A JSON string literal for `text`, so a note with a quote or a backslash in
-## it still makes a params array the encoding can read.
+## A JSON string literal for `text`: the built-in codec's `Json.to_str`, which
+## quotes and escapes it (control characters included), so a note with a quote or
+## a backslash still makes a params array the encoding can read.
 jsonString : Str -> Str
-jsonString = |text| {
-	s1 = Str.replace_each(text, "\\", "\\\\")
-	"\"${Str.replace_each(s1, "\"", "\\\"")}\""
-}
+jsonString = |text| Json.to_str(text)
 
 ## `INSERT INTO <table> (id, note) VALUES ($1, $2)` with postgres placeholders.
 insertStatement : Str -> Str
