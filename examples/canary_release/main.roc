@@ -9,12 +9,11 @@ app [agent] { pf: platform "../../platform/main.roc" }
 # secret handles, tool middleware and method streams. This platform does not
 # expose those yet (see `docs/golem-1.6-parity.md`), so this app uses what it
 # does expose: typed methods, config (one secret-sourced key), a scheduling
-# effect, a webhook approval gate, the agent's durable filesystem, and a tool.
+# effect, an approval gate, the agent's durable filesystem, and a tool.
 
 import pf.Golem exposing [
 	Agent,
 	build,
-	createWebhook!,
 	define,
 	getConfig!,
 	logInfo!,
@@ -35,7 +34,6 @@ State : {
 	canary : Str,
 	weight : U64,
 	events : List(Str),
-	approvalUrl : Str,
 	region : Str,
 }
 
@@ -91,7 +89,7 @@ statusMethod = method({
 ## answer back, so an app never touches a JSON string itself.
 StartInput : { version : Str, weight : U64 }
 
-StartOutput : { version : Str, weight : U64, approvalUrl : Str }
+StartOutput : { version : Str, weight : U64 }
 
 DecisionInput : { approved : Bool, reviewer : Str }
 
@@ -181,10 +179,6 @@ handleStart! = |state, input| {
 		Ok(value) => value
 		Err(_) => "unknown"
 	}
-	approvalUrl = match createWebhook!({}) {
-		Ok(url) => url
-		Err(_) => ""
-	}
 	logInfo!("canary ${input.version} at ${U64.to_str(input.weight)}% in ${region}")
 	events = List.append(state.events, "canary ${input.version} at ${U64.to_str(input.weight)}%")
 	writeDashboard(state.service, input.version, input.weight, events)
@@ -205,10 +199,9 @@ handleStart! = |state, input| {
 			canary: input.version,
 			weight: input.weight,
 			events: events,
-			approvalUrl: approvalUrl,
 			region: region,
 		},
-		out: { version: input.version, weight: input.weight, approvalUrl: approvalUrl },
+		out: { version: input.version, weight: input.weight },
 	})
 }
 
@@ -267,7 +260,6 @@ agent =
 				canary: "",
 				weight: 0,
 				events: [],
-				approvalUrl: "",
 				region: "unknown",
 			},
 	)

@@ -1129,6 +1129,29 @@ check "update: a fresh agent on the new revision has its own default" "Note is v
 # Leave the deployment on the app's own component revision.
 "$CLI" $CLI_EXTRA -L -A "$MANIFEST" deploy --yes >/dev/null 2>&1 || true
 
+say "==> Typed methods on the canary example (roc-golem:canary-release)"
+# The canary example is the worked case for the typed authoring surface: its
+# `Agent.define(...).register(...)` chain declares four methods, and the host
+# registers each as a Golem method — so `golem agent invoke` reaches them by
+# name while the platform decodes the parameter into the method's typed input
+# and encodes the typed output back. The harness drives the same surface.
+canary_agent="canary-release(\"$RUN_ID\")"
+
+check "canary: start_canary decodes its typed input" '"version":"1.2.3"' \
+    "$(invoke "$canary_agent" start_canary '{"version":"1.2.3","weight":10}')"
+check "canary: start_canary answers with the typed output" '"weight":10' \
+    "$(invoke "$canary_agent" start_canary '{"version":"1.2.3","weight":10}')"
+
+# The read-only method reports what the writes above left in the state.
+check "canary: the read-only status sees the canary" "1.2.3" \
+    "$(invoke "$canary_agent" get_status '{}')"
+
+check "canary: approve_gate promotes the canary" "Promoted 1.2.3 to 100%" \
+    "$(invoke "$canary_agent" approve_gate '{"approved":true,"reviewer":"e2e"}')"
+check "canary: emergency_rollback takes it out of rotation" "Rolled 1.2.3 back to 0%" \
+    "$(invoke "$canary_agent" emergency_rollback '{"reason":"e2e"}')"
+
+
 say ""
 if [[ "$failures" -eq 0 ]]; then
     if [[ "$skipped" -gt 0 ]]; then
