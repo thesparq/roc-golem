@@ -4257,24 +4257,14 @@ async fn run() -> Result<ExitCode> {
         }
     }
 
-    // The method the message path drives: `--method` when it names one, so a
-    // declared method can be exercised by name (the host wraps the parameter in
-    // the `{"method", "input"}` envelope the platform's dispatcher decodes),
-    // and `handle-message` otherwise.
-    let message_method = expectation
-        .method
-        .clone()
-        .unwrap_or_else(|| String::from("handle-message"));
-    let first_label = format!("invoke {message_method}");
-    let second_label = format!("invoke {message_method} again");
     for (label, message, expected) in [
         (
-            first_label,
+            "invoke handle-message",
             expectation.message.clone(),
             expectation.reply_contains.clone(),
         ),
         (
-            second_label,
+            "invoke handle-message again",
             second_message,
             expectation.then_reply_contains.clone(),
         ),
@@ -4287,7 +4277,7 @@ async fn run() -> Result<ExitCode> {
                 guest
                     .call_invoke(
                         accessor,
-                        message_method.clone(),
+                        String::from("handle-message"),
                         text_value(&message),
                         Principal::Anonymous,
                     )
