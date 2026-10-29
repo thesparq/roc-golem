@@ -319,6 +319,7 @@ agent = defineAgent({
 				readOnly: True,
 			},
 		],
+		methods: [],
 		config: [
 			{
 				name: "greeting",

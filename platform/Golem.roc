@@ -8,6 +8,17 @@
 module [
 	Agent,
 	defineAgent,
+	Method,
+	method,
+	Spec,
+	define,
+	withTools,
+	withToolHandler,
+	withConfig,
+	withMount,
+	register,
+	registerReadOnly,
+	build,
 	logTrace!,
 	logDebug!,
 	logInfo!,
@@ -98,7 +109,7 @@ module [
 ]
 
 import Effect
-import Types exposing [LogLevel, PersistenceMode, ToolDefinition, ToolCall, ToolResult, Metadata, HttpRequest, HttpResponse]
+import Types exposing [ConfigDeclaration, HttpMountOption, LogLevel, MethodDeclaration, PersistenceMode, ToolDefinition, ToolCall, ToolResult, Metadata, HttpRequest, HttpResponse]
 
 Agent(state) : {
 	init! : Str => state,
@@ -857,3 +868,261 @@ permissionListModules! = |_|
 permissionValidateGrant! : Str => Try({}, Str)
 permissionValidateGrant! = |grantJson|
 	Effect.permissionValidateGrant!(grantJson)
+
+# ============================================================================
+# The typed agent-authoring surface (`Agent.method`, `Agent.define`,
+# `Agent.register`, `Agent.build`). It lives in this module — rather than a
+# module of its own — because a module named `Agent` collides with the `Agent`
+# type below when an application imports both, and because this file already
+# keeps the legacy header an application can import types through.
+#
+# `define` starts a spec, the `with*` builders add the config, the tools and
+# the mount, `register` / `registerReadOnly` bind a typed handler to each
+# method, and `build` turns the spec into the `Agent(state)` record above with
+# a dispatcher, the derived metadata and the derived state codecs.
+# ============================================================================
+
+## One method an agent declares. `method` builds it; `register` and
+## `registerReadOnly` bind a handler whose input and output types are the ones
+## it carries. Whether the method is *read-only* is the registration's to say:
+## a handler bound with `registerReadOnly` is pure and its declaration carries
+## the 1.6 read-only flag, one bound with `register` is effectful and is not.
+Method : {
+	name : Str,
+	description : Str,
+	promptHint : Str,
+}
+
+## Declares a method. `description` and `promptHint` are what the tooling (the
+## CLI, MCP, the registry) shows a caller; both may be `""`.
+method : { name : Str, description : Str, promptHint : Str } -> Method
+method = |cfg| {
+	name: cfg.name,
+	description: cfg.description,
+	promptHint: cfg.promptHint,
+}
+
+## What a bound handler is stored as: the declaration the metadata carries, plus
+## an erased call. `invoke!` takes the input as its JSON text and answers with
+## the output as JSON text; the erasure is what lets one agent hold methods
+## whose input and output types differ in a single list.
+Handler(state) : {
+	declaration : MethodDeclaration,
+	invoke! : state, Str => Try({ state : state, out : Str }, Str),
+}
+
+## The app-facing tool handler: what `handleToolCall!` answers with. The default
+## reports every tool as unknown.
+ToolHandler(state) : state, ToolCall => { state : state, result : ToolResult }
+
+defaultToolHandler : state, ToolCall => { state : state, result : ToolResult }
+defaultToolHandler = |state, call| {
+	{
+		state,
+		result: {
+			id: call.id,
+			success: False,
+			output: "{\"error\": \"Unknown tool ${call.name}\"}",
+			stdout: "",
+			stderr: "",
+		},
+	}
+}
+
+## The specification an app builds up. `build` turns it into the `Agent(state)`
+## record the platform's `requires` expects.
+Spec(state) : {
+	name : Str,
+	version : Str,
+	description : Str,
+	init! : Str => state,
+	handlers : List(Handler(state)),
+	tools : List(ToolDefinition),
+	toolHandler : ToolHandler(state),
+	config : List(ConfigDeclaration),
+	mount : HttpMountOption,
+}
+
+## Starts a spec. `init!` is the agent's constructor: it receives the
+## constructor parameter as text (the ID) and answers with the initial state,
+## which pins the agent's `state` type for every handler registered after.
+define : { name : Str, version : Str, description : Str }, (Str => state) -> Spec(state)
+define = |cfg, init!| {
+	name: cfg.name,
+	version: cfg.version,
+	description: cfg.description,
+	init!: init!,
+	handlers: [],
+	tools: [],
+	toolHandler: defaultToolHandler,
+	config: [],
+	mount: None,
+}
+
+## Declares the tools this agent publishes (`golem:tool/guest`); the app answers
+## them through `handleToolCall!` or through the handler `withToolHandler` binds.
+withTools : Spec(state), List(ToolDefinition) -> Spec(state)
+withTools = |spec, tools| {
+	..spec,
+	tools: tools,
+}
+
+## Binds the app's tool handler. `call.arguments` is the tool's single string
+## input and `call.stdin` the text the caller piped in; the answer's
+## `stdout`/`stderr` are what the caller's attached streams receive.
+withToolHandler : Spec(state), ToolHandler(state) -> Spec(state)
+withToolHandler = |spec, handler| {
+	..spec,
+	toolHandler: handler,
+}
+
+## Declares the config keys the agent reads with `getConfig!`; a key marked
+## `secret: True` comes from the environment's secret store.
+withConfig : Spec(state), List(ConfigDeclaration) -> Spec(state)
+withConfig = |spec, config| {
+	..spec,
+	config: config,
+}
+
+## Publishes the agent type on the deployment's domain (`HttpMountOption`), the
+## way a filesystem-binding mount serves the agent's own files.
+withMount : Spec(state), HttpMountOption -> Spec(state)
+withMount = |spec, mount| {
+	..spec,
+	mount: mount,
+}
+
+## Binds an effectful handler to `m`. The handler is a `state, input => ...`
+## function (write its type on a named binding to pin the input and output); it
+## receives the current state and the decoded input and answers with the next
+## state and the output, which the platform decodes and encodes through the
+## derived JSON codecs.
+register : Spec(state), Method, (state, input => Try({ state : state, out : output }, Str)) -> Spec(state) where [
+	input.Json.Parseable([InvalidJson(Str), ..]),
+	output.Json.Encodable(_),
+]
+register = |spec, m, fn!| {
+	invoke! = |state, inputJson|
+		match Json.parse(inputJson) {
+			Err(_) => Err("invalid input for ${m.name}")
+			Ok(inp) =>
+				match fn!(state, inp) {
+					Err(e) => Err(e)
+					Ok(res) => Ok({ state: res.state, out: Json.to_str(res.out) })
+				}
+		}
+	addHandler(spec, {
+		declaration: { name: m.name, description: m.description, promptHint: m.promptHint, readOnly: False },
+		invoke!: invoke!,
+	})
+}
+
+## Binds a pure handler to `m`: a `state, input -> output` function that may not
+## perform effects or change the state, which is what the 1.6 read-only flag
+## declares, so the runtime may cache the answer and refuses a write made from
+## the call.
+registerReadOnly : Spec(state), Method, (state, input -> output) -> Spec(state) where [
+	input.Json.Parseable([InvalidJson(Str), ..]),
+	output.Json.Encodable(_),
+]
+registerReadOnly = |spec, m, pure| {
+	invoke! = |state, inputJson|
+		match Json.parse(inputJson) {
+			Err(_) => Err("invalid input for ${m.name}")
+			Ok(inp) => Ok({ state: state, out: Json.to_str(pure(state, inp)) })
+		}
+	addHandler(spec, {
+		declaration: { name: m.name, description: m.description, promptHint: m.promptHint, readOnly: True },
+		invoke!: invoke!,
+	})
+}
+
+addHandler : Spec(state), Handler(state) -> Spec(state)
+addHandler = |spec, handler| {
+	..spec,
+	handlers: List.append(spec.handlers, handler),
+}
+
+## One call as the host sends it: the method's name and its input as JSON text.
+## The host wraps a declared method's parameter in this envelope so the
+## dispatcher knows which handler to run (see `host/src/lib.rs`).
+Call : { method : Str, input : Str }
+
+decodeCall : Str -> Try(Call, Str)
+decodeCall = |json| {
+	parsed : Try({ method : Try(Str, [Missing]), input : Try(Str, [Missing]) }, [InvalidJson(Str)])
+	parsed = Json.parse(json)
+	match parsed {
+		Err(_) => Err("this agent only answers calls through its declared methods")
+		Ok(fields) => Ok({ method: fields.method ?? "", input: fields.input ?? "{}" })
+	}
+}
+
+findHandler : List(Handler(state)), Str, U64 -> Try(Handler(state), Str)
+findHandler = |handlers, name, index| {
+	match List.get(handlers, index) {
+		Err(_) => Err("no method named ${name}")
+		Ok(handler) =>
+			if handler.declaration.name == name {
+				Ok(handler)
+			} else {
+				findHandler(handlers, name, index + 1)
+			}
+	}
+}
+
+declarationOf : Handler(state) -> MethodDeclaration
+declarationOf = |handler| handler.declaration
+
+## Turns the spec into the `Agent(state)` record the platform's `requires`
+## expects: the dispatcher answers `handle-message` (the host routes every
+## declared method here, in the envelope above), the metadata carries the
+## declarations, and the state codecs are the derived JSON ones.
+build : Spec(state) -> Agent(state) where [
+	state.Json.Encodable(_),
+	state.Json.Parseable([InvalidJson(Str), ..]),
+]
+build = |spec| {
+	dispatch! = |state, messageJson|
+		match decodeCall(messageJson) {
+			Err(err) => { state, replies: [err] }
+			Ok(call) =>
+				match findHandler(spec.handlers, call.method, 0) {
+					Err(err) => { state, replies: [err] }
+					Ok(handler) =>
+						match (handler.invoke!)(state, call.input) {
+							Err(err) => { state, replies: [err] }
+							Ok(res) => { state: res.state, replies: [res.out] }
+						}
+				}
+		}
+	{
+		init!: spec.init!,
+		handleMessage!: dispatch!,
+		handleRequest!: |state, _request| {
+			state,
+			response: { status: 404, headers: [], body: "this agent is not an HTTP router" },
+		},
+		handleMultimodal!: |state, _parts| { state, parts: "[]" },
+		handleToolCall!: spec.toolHandler,
+		metadata: {
+			name: spec.name,
+			version: spec.version,
+			description: spec.description,
+			tools: spec.tools,
+			methods: List.map(spec.handlers, declarationOf),
+			config: spec.config,
+			agentKind: Regular,
+			httpMount: spec.mount,
+			httpHandler: NoHandler,
+			multimodal: NoMultimodal,
+			openapiProvider: NoOpenApi,
+		},
+		serializeState: |state| Json.to_str(state),
+		deserializeState: |json|
+			match Json.parse(json) {
+				Ok(state) => Ok(state)
+				Err(_) => Err("failed to parse state: ${json}")
+			},
+	}
+}

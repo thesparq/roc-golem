@@ -10,12 +10,29 @@ Types := {}.{
 		version : Str,
 		description : Str,
 		tools : List(ToolDefinition),
+		# The methods this agent type declares beyond `handle-message`. Empty for
+		# an app that answers everything through `handleMessage!`. The host
+		# registers each as a Golem method whose single parameter is the JSON text
+		# of its input, and routes an invocation of that name back to the app's
+		# own dispatcher (see `platform/Agent.roc`).
+		methods : List(MethodDeclaration),
 		config : List(ConfigDeclaration),
 		agentKind : AgentKind,
 		httpMount : HttpMountOption,
 		httpHandler : HttpHandlerOption,
 		multimodal : MultimodalOption,
 		openapiProvider : OpenApiProvider,
+	}
+	# One method an app declares through `Agent.method` / `Agent.register`. Only
+	# the fields a caller can see travel: `name` is what the CLI/RPC invokes,
+	# `description` and `promptHint` are the tooling's, and `readOnly` is the 1.6
+	# read-only method flag (the runtime may cache the result and traps writes
+	# made from the call).
+	MethodDeclaration : {
+		name : Str,
+		description : Str,
+		promptHint : Str,
+		readOnly : Bool,
 	}
 	# `HttpRouter` agent types are served by Golem itself: they are parameterless,
 	# ephemeral, have no durable filesystem and register only their OpenAPI

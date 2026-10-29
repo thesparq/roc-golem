@@ -177,6 +177,7 @@ agent = defineAgent({
 				readOnly: False,
 			},
 		],
+		methods: [],
 		config: [],
 		agentKind: Regular,
 		httpMount: None,

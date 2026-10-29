@@ -167,6 +167,7 @@ agent = defineAgent({
 		version: "1.0.0",
 		description: "Calls HTTP endpoints and other agents from a Golem Cloud agent",
 		tools: [],
+		methods: [],
 		config: [],
 		agentKind: Regular,
 		# Golem only lets agent types deployed through an HTTP API create

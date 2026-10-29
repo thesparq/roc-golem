@@ -116,6 +116,7 @@ import Types exposing [
 	HttpHeader,
 	HttpMountOption,
 	HttpResponse,
+	MethodDeclaration,
 	MultimodalOption,
 	OpenApiProvider,
 	ToolCall,
@@ -263,6 +264,9 @@ main_metadata_for_host = |_| {
 	formatted_tools = List.map(meta.tools, format_tool_definition)
 	tools_json = Str.join_with(formatted_tools, ",")
 
+	formatted_methods = List.map(meta.methods, format_method_declaration)
+	methods_json = Str.join_with(formatted_methods, ",")
+
 	name_escaped = escape_json_str(meta.name)
 	version_escaped = escape_json_str(meta.version)
 	desc_escaped = escape_json_str(meta.description)
@@ -276,7 +280,18 @@ main_metadata_for_host = |_| {
 	multimodal_json = format_multimodal(meta.multimodal)
 	openapi_json = format_openapi_provider(meta.openapiProvider)
 
-	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"config\":[${config_json}],\"agentKind\":${kind_json},\"httpMount\":${mount_json},\"httpHandler\":${handler_json},\"multimodal\":${multimodal_json},\"openapiProvider\":${openapi_json}}"
+	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}],\"methods\":[${methods_json}],\"config\":[${config_json}],\"agentKind\":${kind_json},\"httpMount\":${mount_json},\"httpHandler\":${handler_json},\"multimodal\":${multimodal_json},\"openapiProvider\":${openapi_json}}"
+}
+
+# One declared method's caller-visible fields, for the host to register as a
+# Golem method (see `Types.MethodDeclaration`).
+format_method_declaration : MethodDeclaration -> Str
+format_method_declaration = |decl| {
+	read_only_str = match decl.readOnly {
+		True => "true"
+		False => "false"
+	}
+	"{\"name\":${format_json_string(decl.name)},\"description\":${format_json_string(decl.description)},\"promptHint\":${format_json_string(decl.promptHint)},\"readOnly\":${read_only_str}}"
 }
 
 format_multimodal : MultimodalOption -> Str

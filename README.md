@@ -93,6 +93,63 @@ app [agent] { pf: platform "../../platform/main.roc" }
 
 ---
 
+## 🧩 Declaring typed methods
+
+An app can answer everything through `handleMessage!` (the shape above), or
+declare each method once with the typed surface in `platform/Golem.roc` and let
+the platform derive the rest:
+
+```roc
+import pf.Golem exposing [Agent, build, define, method, register, registerReadOnly]
+
+State : { canary : Str, weight : U64 }
+StartInput : { version : Str, weight : U64 }
+StartOutput : { version : Str, weight : U64 }
+
+startCanary = method({
+    name: "start_canary",
+    description: "Starts a canary rollout.",
+    promptHint: "Call this to roll a version out to a percentage of traffic.",
+})
+statusMethod = method({ name: "get_status", description: "", promptHint: "" })
+
+## The typed handler: `register` reads the input and output types from the
+## binding's annotation and derives the JSON codecs, so the handler deals in
+## values, never text.
+handleStart! : State, StartInput => Try({ state : State, out : StartOutput }, Str)
+handleStart! = |state, input| {
+    Ok({ state: { ..state, canary: input.version }, out: { version: input.version, weight: input.weight } })
+}
+
+## A read-only method: a pure `->` handler that may not write the state or
+## perform effects, which is what the 1.6 read-only flag declares.
+handleStatus : State, {} -> State
+handleStatus = |state, _input| state
+
+agent : Agent(State)
+agent =
+    define({ name: "canary-release", version: "1.0.0", description: "..." }, |service| { canary: service, weight: 0 })
+        |> register(startCanary, handleStart!)
+        |> registerReadOnly(statusMethod, handleStatus)
+        |> build
+```
+
+`build` produces the same `Agent(state)` record the platform requires: it
+derives the metadata (including the method list), the JSON dispatch and the
+state codecs. The host registers each declared method as a Golem method whose
+single parameter is the JSON text of its input, so `golem agent invoke
+<agent> start_canary '{"version":"1.2.3","weight":10}'` reaches it by name and
+the platform decodes the parameter into `StartInput` and encodes the answer
+back. `examples/canary_release` is the worked example (a Release Guardian with a
+webhook approval gate, a live dashboard written to the agent's filesystem, and
+a scheduled rollback); the ABI harness drives the same surface with `--method`.
+
+What the blueprint's `ReleaseCoordinator` also used — permission cards passed
+as values, opaque secret handles, method streams and tool middleware — is not
+exposed by this platform yet; `docs/golem-1.6-parity.md` records each as a gap.
+
+---
+
 ## 📁 Repository Structure
 
 ```

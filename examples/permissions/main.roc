@@ -110,6 +110,7 @@ agent = defineAgent({
 		version: "1.0.0",
 		description: "An agent whose explicit initialCard the runtime enforces",
 		tools: [],
+		methods: [],
 		config: [],
 		agentKind: Regular,
 		httpMount: None,

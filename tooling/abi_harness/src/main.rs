@@ -2222,11 +2222,17 @@ impl golem::agent::host::HostWasmRpc for Ctx {
         &mut self,
         _self_: wasmtime::component::Resource<golem::agent::host::WasmRpc>,
         _scheduled_time: golem::agent::host::Datetime,
-        _method_name: String,
+        method_name: String,
         _input: SchemaValueTree,
         _scope_card: Option<wasmtime::component::Resource<golem::core::types::PermissionCard>>,
     ) -> Result<golem::agent::host::ScheduledInvocationReceipt, golem::agent::host::RpcError> {
-        unimplemented!("schedule-invocation is not used by roc-golem components")
+        // Used by the canary example's safety timer: a scheduled self-call. The
+        // stub records the call like `invoke` does and hands back a receipt, so
+        // a component that schedules an invocation can be driven here.
+        self.rpc_calls.push(format!("schedule-invocation({method_name})"));
+        Ok(golem::agent::host::ScheduledInvocationReceipt {
+            metadata: stub_invocation_metadata(),
+        })
     }
 
     fn schedule_cancelable_invocation(
@@ -4251,14 +4257,24 @@ async fn run() -> Result<ExitCode> {
         }
     }
 
+    // The method the message path drives: `--method` when it names one, so a
+    // declared method can be exercised by name (the host wraps the parameter in
+    // the `{"method", "input"}` envelope the platform's dispatcher decodes),
+    // and `handle-message` otherwise.
+    let message_method = expectation
+        .method
+        .clone()
+        .unwrap_or_else(|| String::from("handle-message"));
+    let first_label = format!("invoke {message_method}");
+    let second_label = format!("invoke {message_method} again");
     for (label, message, expected) in [
         (
-            "invoke handle-message",
+            first_label,
             expectation.message.clone(),
             expectation.reply_contains.clone(),
         ),
         (
-            "invoke handle-message again",
+            second_label,
             second_message,
             expectation.then_reply_contains.clone(),
         ),
@@ -4271,7 +4287,7 @@ async fn run() -> Result<ExitCode> {
                 guest
                     .call_invoke(
                         accessor,
-                        String::from("handle-message"),
+                        message_method.clone(),
                         text_value(&message),
                         Principal::Anonymous,
                     )

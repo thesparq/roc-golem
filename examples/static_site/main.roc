@@ -71,6 +71,7 @@ agent = defineAgent({
 		version: "1.0.0",
 		description: "Serves an uploaded static site and an OpenAPI document from a router mount",
 		tools: [],
+		methods: [],
 		config: [],
 		agentKind: HttpRouter,
 		httpMount: Mount({

@@ -137,6 +137,7 @@ agent = defineAgent({
 				readOnly: False,
 			},
 		],
+		methods: [],
 		config: [
 			{
 				name: "greeting",

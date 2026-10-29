@@ -72,6 +72,7 @@ agent = defineAgent({
 		version: "1.0.0",
 		description: "Serves files from its durable Golem filesystem over HTTP",
 		tools: [],
+		methods: [],
 		config: [],
 		agentKind: Regular,
 		httpMount: Mount({

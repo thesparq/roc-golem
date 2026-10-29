@@ -159,6 +159,17 @@ agents:
     files:
       - sourcePath: examples/permissions/seed/allow.txt
         targetPath: /seed/allow.txt
+  # The typed-method example. Its `Agent.define(...).register(...)` surface
+  # declares four methods (`start_canary`, `approve_gate`,
+  # `emergency_rollback`, and the read-only `get_status`) and one tool. `region`
+  # is local config; the app also *declares* `pagerduty_api_key` as
+  # `secret: True`, which resolves from the environment's secret store (the
+  # app only reads `region`, so nothing here needs it to be present).
+  canary-release:
+    config:
+      region: "local"
+    tools:
+      analyze-logs: {}
 
 components:
   roc-golem:counter:
@@ -196,3 +207,8 @@ components:
     componentWasm: "../../build/permissions_agent.wasm"
     build:
       - command: "../../tooling/build.sh permissions"
+  roc-golem:canary-release:
+    dir: "examples/canary_release"
+    componentWasm: "../../build/canary_release_agent.wasm"
+    build:
+      - command: "../../tooling/build.sh canary_release"

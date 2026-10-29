@@ -1241,6 +1241,24 @@ fn multimodal_declared() -> bool {
         == Some("multimodal")
 }
 
+/// The method names the app declares through `Agent.register` (the metadata's
+/// `methods` array). An invocation of one of these names is routed to the app's
+/// own dispatcher — the same `handle-message` entry point, carrying the
+/// `{"method", "input"}` envelope `platform/Agent.roc` decodes — instead of the
+/// tool surface or the built-in hooks.
+fn declared_methods() -> Vec<String> {
+    serde_json::from_str::<serde_json::Value>(&app_metadata_json())
+        .ok()
+        .and_then(|meta| {
+            meta.get("methods").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                    .collect::<Vec<String>>()
+            })
+        })
+        .unwrap_or_default()
+}
+
 fn build_agent_type() -> Result<AgentType, AgentError> {
     let meta_json = app_metadata_json();
 
@@ -1370,6 +1388,58 @@ fn build_agent_type() -> Result<AgentType, AgentError> {
                     input_schema: InputSchema::Parameters(vec![string_named_field("input")]),
                     output_schema: OutputSchema::Single(0),
                     read_only: t
+                        .get("readOnly")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                        .then(|| ReadOnlyConfig {
+                            cache_policy: CachePolicy::UntilWrite,
+                            uses_principal: false,
+                        }),
+                });
+            }
+        }
+        // The app's declared methods (`Agent.register`): each becomes a Golem
+        // method whose single parameter is the JSON text of its input, with no
+        // HTTP endpoint (a caller reaches it through the CLI or RPC, the way
+        // `handle-multimodal` is reached). The host routes an invocation of the
+        // name back to the app's dispatcher in the `{"method", "input"}`
+        // envelope (see `declared_methods` and `invoke`).
+        if let Some(declared) = meta.get("methods").and_then(|v| v.as_array()) {
+            for m in declared {
+                if is_router {
+                    metadata_error = Some(
+                        "an http-router agent cannot declare methods: routers register only \
+                         their OpenAPI provider method"
+                            .to_string(),
+                    );
+                    break;
+                }
+                let m_name = m
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if m_name.is_empty() {
+                    continue;
+                }
+                let m_desc = m
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let m_hint = m.get("promptHint").and_then(|v| v.as_str()).unwrap_or("");
+                methods.push(AgentMethod {
+                    name: m_name,
+                    description: m_desc,
+                    http_endpoint: vec![],
+                    prompt_hint: if m_hint.is_empty() {
+                        None
+                    } else {
+                        Some(m_hint.to_string())
+                    },
+                    input_schema: InputSchema::Parameters(vec![string_named_field("input")]),
+                    output_schema: OutputSchema::Single(0),
+                    read_only: m
                         .get("readOnly")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
@@ -4478,9 +4548,24 @@ impl Guest for GolemAgentHost {
             };
         }
 
-        if method_name == "handle-message" || method_name == "message" {
+        // A method the app declares through `Agent.register` is invoked by its
+        // name: the host wraps the parameter in the `{"method", "input"}`
+        // envelope the platform's dispatcher decodes and hands it to the same
+        // entry point `handle-message` uses. Everything else that is not a
+        // built-in hook is a tool call.
+        let is_message = method_name == "handle-message" || method_name == "message";
+        let is_declared_method =
+            !is_message && declared_methods().iter().any(|name| name == &method_name);
+
+        if is_message || is_declared_method {
+            let message = if is_declared_method {
+                serde_json::json!({ "method": method_name.clone(), "input": input_str.clone() })
+                    .to_string()
+            } else {
+                input_str.clone()
+            };
             let roc_state = RocStr::from_str(&state_str);
-            let roc_message = RocStr::from_str(&input_str);
+            let roc_message = RocStr::from_str(&message);
             let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
             unsafe {
