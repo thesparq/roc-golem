@@ -30,3 +30,13 @@ pollster = "0.4"
 opt-level = "s"
 lto = true
 codegen-units = 1
+
+# A faster release profile for local iteration: thin LTO and parallel codegen
+# link the host in a fraction of the time, at the cost of a larger `.a`. The
+# published artifact uses `release` (smallest); pass GOLEM_PROFILE=fast to
+# tooling/build.sh while developing.
+[profile.fast]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+codegen-units = 16

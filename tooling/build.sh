@@ -22,6 +22,11 @@ mkdir -p "$DIST_DIR"
 # anything else; set ROC_ALLOW_VERSION_MISMATCH=1 to override.
 ROC_TAG="${ROC_TAG:-nightly-2026-10-27-de79a0f}"
 
+# `release` produces the published `.a` (smallest); `GOLEM_PROFILE=fast` uses
+# the thin-LTO profile in host/Cargo.toml, which links far faster and is what
+# you want while iterating on the host.
+CARGO_PROFILE="${GOLEM_PROFILE:-release}"
+
 check_roc_version() {
     local version
     version="$(roc version 2>/dev/null | head -n 1)"
@@ -47,13 +52,13 @@ build_platform() {
     fi
 
     echo "==> Compiling Rust Host for WebAssembly target (wasm32-unknown-unknown)..."
-    cargo build --manifest-path "$HOST_DIR/Cargo.toml" --target wasm32-unknown-unknown --release
+    cargo build --manifest-path "$HOST_DIR/Cargo.toml" --target wasm32-unknown-unknown --profile "$CARGO_PROFILE"
 
     mkdir -p "$PLATFORM_DIR/targets/wasm32"
-    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$TARGET_HOST_A"
-    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PLATFORM_DIR/wasm32.a"
-    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PLATFORM_DIR/libhost.a"
-    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PRECOMPILED_HOST_A"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/$CARGO_PROFILE/libroc_golem_host.a" "$TARGET_HOST_A"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/$CARGO_PROFILE/libroc_golem_host.a" "$PLATFORM_DIR/wasm32.a"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/$CARGO_PROFILE/libroc_golem_host.a" "$PLATFORM_DIR/libhost.a"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/$CARGO_PROFILE/libroc_golem_host.a" "$PRECOMPILED_HOST_A"
 
     echo "==> Platform pre-compiled successfully:"
     echo "    Static Library: $TARGET_HOST_A"

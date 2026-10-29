@@ -271,6 +271,39 @@ those.
 
 ---
 
+### Building the platform
+
+The host is a Rust crate linked into every component, so its release profile
+governs how long a platform build takes:
+
+| Profile | Command | Cold host build | Notes |
+| --- | --- | --- | --- |
+| `release` (default) | `./tooling/build.sh platform` | slow: whole-crate LTO, one codegen unit | smallest `.a`; this is what gets published |
+| `fast` | `GOLEM_PROFILE=fast ./tooling/build.sh platform` | ~33s | thin LTO, 16 codegen units; larger `.a` |
+
+`host/Cargo.toml` sets `lto = true` and `codegen-units = 1` on `release` on
+purpose: the packaged platform ships that `.a` and size matters there. Use
+`GOLEM_PROFILE=fast` while iterating on the host, and a plain
+`./tooling/build.sh all` before packaging a release.
+
+### Manifest requirements on Golem 1.6.0 GA
+
+Four rules that each cost a full end-to-end cycle to discover:
+
+- A retry policy's `periodic` is a duration **object**, not a string:
+  `{ secs: 0, nanos: 100000000 }`, never `"100ms"`. A string fails manifest
+  validation before anything is deployed.
+- A `config: [{ name, secret: true }]` declaration requires the manifest to
+  supply that key as `secret<T>`. This platform has no secret-handle surface
+  (`docs/golem-1.6-parity.md`), so declare plain keys.
+- `createWebhook!` **traps** rather than answering `Err` unless the agent type
+  is deployed as part of an HTTP API (`Agent is not currently deployed as part
+  of an http api`). The effects example carries a binding-less mount for this.
+- A tool's metadata name is snake_case and its manifest key is kebab-case: the
+  counter declares `name: "get_count"` and `golem.yaml` binds `get-count`. The
+  manifest key also has to satisfy the schema's
+  `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, so a snake_case key is rejected outright.
+
 ## ⚠️ Development status
 
 **On the 1.6 line** (this branch): the host speaks `golem:agent/guest@2.0.0`
