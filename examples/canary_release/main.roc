@@ -23,8 +23,6 @@ import pf.Golem exposing [
 	registerReadOnly,
 	rpcSchedule!,
 	withConfig,
-	withToolHandler,
-	withTools,
 	workerId!,
 	writeFile!,
 ]
@@ -41,12 +39,12 @@ State : {
 	region : Str,
 }
 
-## Config the agent reads with `getConfig!`. A key marked `secret: True` comes
-## from the environment's secret store; the app reads its *value*, which is what
-## this platform exposes today (there is no secret-handle surface yet).
+## Config the agent reads with `getConfig!`. The platform has no secret-handle
+## surface yet (`docs/golem-1.6-parity.md`), and a `secret: True` declaration
+## would require the manifest to supply the key as `secret<T>`, so this app
+## declares only the plain key it reads.
 configDeclarations = [
 	{ name: "region", secret: False },
-	{ name: "pagerduty_api_key", secret: True },
 ]
 
 ## The tool this agent publishes (`golem:tool/guest`). `readOnly: True` maps to
@@ -55,7 +53,7 @@ dashboardPath = "/dashboard.html"
 
 tools = [
 	{
-		name: "analyze-logs",
+		name: "analyze_logs",
 		description: "Scans log lines for panics, OOMs and latency spikes.",
 		parameters: [],
 		readOnly: True,
@@ -135,7 +133,7 @@ writeDashboard = |service, canary, weight, events|
 ## text; `stdout` is written to the stream the caller attached. The parameter and
 ## result are left to inference from `withToolHandler`.
 handleTool = |state, call|
-	if call.name == "analyze-logs" {
+	if call.name == "analyze_logs" {
 		faults = countLogFaults(call.arguments)
 		{
 			state,
@@ -274,8 +272,6 @@ agent =
 			},
 	)
 		|> withConfig(configDeclarations)
-		|> withTools(tools)
-		|> withToolHandler(handleTool)
 		|> register(startCanary, handleStart!)
 		|> register(approveGate, handleApprove!)
 		|> register(emergencyRollback, handleRollback!)

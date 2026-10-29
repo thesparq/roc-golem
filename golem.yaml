@@ -84,7 +84,9 @@ retryPolicyDefaults:
         countBox:
           maxRetries: 2
           inner:
-            periodic: "100ms"
+            periodic:
+              secs: 0
+              nanos: 100000000
 
 agents:
   # Bind each tool to the agent type that exposes it, so the tool protocol
@@ -161,15 +163,11 @@ agents:
         targetPath: /seed/allow.txt
   # The typed-method example. Its `Agent.define(...).register(...)` surface
   # declares four methods (`start_canary`, `approve_gate`,
-  # `emergency_rollback`, and the read-only `get_status`) and one tool. `region`
-  # is local config; the app also *declares* `pagerduty_api_key` as
-  # `secret: True`, which resolves from the environment's secret store (the
-  # app only reads `region`, so nothing here needs it to be present).
+  # `emergency_rollback`, and the read-only `get_status`). `region` is the
+  # local config it reads with `getConfig!`.
   canary-release:
     config:
       region: "local"
-    tools:
-      analyze-logs: {}
 
 components:
   roc-golem:counter:
