@@ -6,34 +6,82 @@ blueprint asked for actually exist, and what the remaining work would cost.
 
 It is written to be handed to a reader (human or agent) who has **no access to
 the repository**, so every claim either quotes real code or says plainly that it
-is a proposal.
+is a proposal. Nothing here is invented: each code block is an exact copy of a
+file in the repository, expanded mechanically rather than retyped (§0.4), and §5
+lists which claims are tested and how.
 
 ---
 
-## 0. How to read this
+## 0. Orientation
 
-### 0.1 Provenance
+### 0.1 What this project is
 
-An earlier blueprint (generated with Gemini) laid out a target for this project:
+**roc-golem is a Roc platform for Golem Cloud.**
+
+Golem runs *agents*: WebAssembly components that hold state between calls, are
+addressable by name, survive restarts by replaying what they did, and can expose
+methods, tools and HTTP routes, plus access to databases, key-value stores and a
+durable filesystem. Golem's own SDKs are Rust, TypeScript, Go and Scala. This
+project is the bridge that lets you write those agents in
+[Roc](https://www.roc-lang.org) instead.
+
+You write an ordinary Roc value describing your agent — its state, its methods
+and their typed handlers, the tools it publishes, the config it reads, the HTTP
+surface it exposes. The platform you compile against turns that value into a
+component Golem can run. You never write JSON by hand: a handler takes and
+returns typed Roc values, and the platform derives the codecs.
+
+**Three things to hold in mind, because they explain everything else.**
+
+1. **A Roc platform is a compile-time contract, not a library.** An app declares
+   `pf: platform "..."`; the platform declares what it needs back — here, one
+   value named `agent`. Everything else (effects, types, encoders) flows from the
+   platform into the app.
+2. **There are two halves, in two languages.** The Roc half is what an app imports
+   and what an app author reads. The Rust half is compiled to wasm and linked in;
+   it speaks Golem's component-model interfaces and calls back into the Roc half.
+   Between them the boundary is JSON text, which is why the platform's central job
+   is making that boundary invisible.
+3. **`golem.yaml` is the deployment half.** Code decides what an agent *is*; the
+   manifest decides what gets *deployed*, where it is reachable over HTTP, and
+   which tools the runtime will route. A working system needs both, which is why
+   this document covers both.
+
+**What you can build today**, in one sentence: durable stateful agents with typed
+methods, read-only methods, config, scheduled and fire-and-forget self-calls,
+agent-to-agent RPC, webhooks, tools, HTTP mounts and routers, their own durable
+filesystem, key-value and blob storage, three SQL databases, permission cards,
+quotas, retry policies and external durable streams — every one of them exercised
+against a real Golem server on every change (§5).
+
+**Where to start.** §1 for the inventory and the honest score. §2 for a working
+agent you can read top to bottom. §3 for the platform itself. §4 for the parts
+that surprise people. §6 for the open questions.
+
+### 0.2 Provenance
+
+An earlier document (generated with Gemini) laid out a target for this project:
 a Roc platform for Golem 1.6 reaching *100% in-code feature parity* with Golem's
 Rust and Go SDKs, demonstrated by a reference application called the **Release
 Guardian** — a canary-release orchestrator with a log-analyzer tool and a
-stateless diagnostics worker.
+stateless diagnostics worker. It is the reason this platform has the shape it
+does, and this document keeps its structure on purpose.
 
-That document is confidently written and internally consistent, but it describes
-an API that does not exist: it uses an invented Roc surface (builder chains like
-`.with_middleware!(...)`, derived-codec slots like encoder_for: _, defaulted
-record fields, opaque `Secret(Str)`, a `Tool.invoke_mcp!` call, `Stream.emit!`).
-None of those are part of the Roc this project is pinned to, and none of them
-appear anywhere in this platform's source.
+One thing to keep in mind when porting code from it: the Roc it writes is not
+always the Roc this project compiles against. Builder chains
+(`.with_middleware!(...)`), derivation-slot blocks (`.{ encoder_for : _, parser_for
+: _ }`), defaulted record fields, `?field` presence access, `var`/`for`/`return`,
+the `?` error operator and an opaque `Secret(Str)` are not part of it. §1.3 is a
+one-to-one mapping, so a reader coming from that document can translate rather
+than guess.
 
 This document is a **replica**: the same shape — a feature matrix, a reference
 application laid out across files, the platform source, and explanations — but
-grounded in code that exists, compiles, and is covered by tests. Where the
-gemini blueprint described something this platform cannot do today, that is
+built from code that exists, compiles, and is covered by tests. Where the
+reference document described something this platform cannot do today, that is
 recorded as a gap with the real alternative named, not quietly dropped.
 
-### 0.2 Status key
+### 0.3 Status key
 
 Every capability and every code sample in this document is labelled with one of
 three words, and the labels are used strictly:
@@ -44,7 +92,7 @@ three words, and the labels are used strictly:
 | **PARTIAL** | Part of it exists and works; a named piece does not. The missing piece is described, not hand-waved. |
 | **TARGET** | Designed but not built. No code in this document is TARGET code unless it is marked as such; where it is, it is clearly separated from the verbatim listings. |
 
-### 0.3 What is quoted verbatim, and what is summarised
+### 0.4 What is quoted verbatim, and what is summarised
 
 | Part | Verbatim from the repository |
 | --- | --- |
@@ -55,7 +103,7 @@ three words, and the labels are used strictly:
 Code blocks below were expanded mechanically from the files at commit `5e08694`,
 so they are exact copies rather than retyped approximations.
 
-### 0.4 The release this describes
+### 0.5 The release this describes
 
 The platform is published: **Golem 1.6.0 GA**, Roc nightly
 `nightly-2026-10-27-de79a0f`, platform release **v0.6.0**. The reference
@@ -170,7 +218,7 @@ column is what this platform's code does.
 
 | Concept | The blueprint's Roc | This platform's Roc |
 | --- | --- | --- |
-| Files and modules | `module [ ... ]` header at the top of each file | **same** — and it is now deprecated in favour of headerless *type* modules. A module exposing a *value* still needs the header (§2.2). |
+| Files and modules | `module [ ... ]` header at the top of each file | **same** — and it is deprecated. The headerless replacement works for types *and* functions, but leaves no private surface, so a module that wants a curated export list keeps the header and its warning (§2.2). |
 | Naming a type | `Id := { ... }` | **same** — used as `Types := {}.{ ... }` to group a file's types |
 | A structural alias | — | `State : { service : Str, ... }` — used pervasively |
 | An opaque type | `Secret(a)`, `Card` | `Host :: [].{ ... }` — used once, for the host-effect signatures |
@@ -199,10 +247,11 @@ error operator.**
 The last row is a separate matter, and the blunter one: it lists calls, not
 syntax, and none of them exist here under those names.
 
-That is the single most useful paragraph in this document for a reviewer: the
-blueprint's *architecture* is largely sound, and its *spelling* is about a third
-invented. Anything built from it must be re-spelled against the real surface
-before it can compile.
+Read that as a translation table rather than a verdict: the reference document's
+*architecture* carries over almost intact and its *spelling* does not — five of
+the fifteen constructs above are not part of Roc at all. Anything ported from it
+needs that pass before it will compile. §2 is what it looks like already spelled
+correctly.
 
 ### 1.4 What "peak" means here
 
@@ -270,10 +319,19 @@ before writing a second Roc file:
   `import ReleaseCoordinator exposing [agent]` is rejected — "exposed but not
   defined". Re-exporting an imported name does not satisfy the header; a plain
   binding does: `agent = ReleaseCoordinator.agent`.
-- **A module that exposes a value still needs the deprecated `module [...]`
-  header.** Roc now prefers headerless files for *type* modules, but there is no
-  headerless form for a module of functions and values yet, so
-  `ReleaseCoordinator.roc` carries the header and the compiler warns about it.
+- **`module [...]` is deprecated, and its replacement trades away the privacy it
+  gives you.** The compiler is explicit: *"The module header is deprecated. ...
+  Type modules (headerless files with a top-level type matching the filename) are
+  now the preferred way to define modules. Remove the module header and ensure
+  your file defines a type that matches the filename."* That replacement does work
+  for functions as well as types — the platform's own `platform/Effect.roc` has no
+  header and defines functions with bodies — but a file with no header has no
+  export list, so **every** member becomes importable. Confirmed by probe, not
+  assumed: a headerless test module's deliberately-private `hidden` member was
+  imported from the app with no error, function definitions included. So
+  `ReleaseCoordinator.roc` keeps the deprecated header — the file's surface is then
+  exactly `agent` — and accepts the warning. `platform/Golem.roc` makes the same
+  trade across roughly 200 exports.
 
 ### 2.3 `examples/canary_release/Types.roc`
 
@@ -3292,7 +3350,7 @@ and linked into the component as a static archive. It implements two things: the
 Golem-facing exports (the agent protocol, the tool surface, the HTTP mount
 handlers) and every host function the Roc code calls.
 
-It is ~13,000 lines and is **not reproduced here** (see §0.3). This is the
+It is ~13,000 lines and is **not reproduced here** (see §0.4). This is the
 inventory, so nothing is hidden:
 
 | File | Lines | Role |
@@ -3527,7 +3585,17 @@ server. Deployment to a hosted environment — its auth, its storage backends, i
 network — is unverified here. Two example components (those importing the p3
 `wasi:http` interface) cannot be instantiated by the ABI harness at all, so their
 coverage is the end-to-end job alone. And the Rust host's 13,000 lines are not
-quoted in this document, per §0.3.
+quoted in this document, per §0.4.
+
+**Checking this document rather than trusting it.** Every code listing carries its
+repository path as a heading and was expanded mechanically from that file, so a
+reader holding the repository can diff the two directly. The counts in §1.1 and
+§1.3 are plain tallies of the tables above them. The two claims that are neither
+a listing nor a suite check were each settled by direct experiment rather than
+assertion: that a headerless module has no private surface (§2.2 — a probe module
+whose "private" member imported cleanly), and that a tool call runs on a fresh
+instance without the agent's state (§4.4 — a live invocation against a local
+server, with the same behaviour pinned by the canary's tool-surface check).
 
 ---
 
