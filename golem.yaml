@@ -49,6 +49,8 @@ tools:
     component: roc-golem:ai-tool
   stream-message:
     component: roc-golem:streaming-agent
+  analyze-logs:
+    component: roc-golem:canary-release
 
 # The quota resource the counter's `quota` command reserves from, and the retry
 # policy its `retry` command resolves. Both are environment-level objects the CLI
@@ -163,11 +165,13 @@ agents:
         targetPath: /seed/allow.txt
   # The typed-method example. Its `Agent.define(...).register(...)` surface
   # declares four methods (`start_canary`, `approve_gate`,
-  # `emergency_rollback`, and the read-only `get_status`). `region` is the
-  # local config it reads with `getConfig!`.
+  # `emergency_rollback`, and the read-only `get_status`) and one tool. `region`
+  # is the local config it reads with `getConfig!`.
   canary-release:
     config:
       region: "local"
+    tools:
+      analyze-logs: {}
 
 components:
   roc-golem:counter:

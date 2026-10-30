@@ -8,7 +8,7 @@ app [agent] { pf: platform "../../platform/main.roc" }
 # The blueprint's `ReleaseCoordinator` also used permission cards as values,
 # secret handles, tool middleware and method streams. This platform does not
 # expose those yet (see `docs/golem-1.6-parity.md`), so this app uses what it
-# does expose: typed methods, config (one secret-sourced key), a scheduling
+# does expose: typed methods, config, a scheduling
 # effect, an approval gate, the agent's durable filesystem, and a tool.
 
 import pf.Golem exposing [
@@ -22,6 +22,8 @@ import pf.Golem exposing [
 	registerReadOnly,
 	rpcSchedule!,
 	withConfig,
+	withToolHandler,
+	withTools,
 	workerId!,
 	writeFile!,
 ]
@@ -264,6 +266,8 @@ agent =
 			},
 	)
 		|> withConfig(configDeclarations)
+		|> withTools(tools)
+		|> withToolHandler(handleTool)
 		|> register(startCanary, handleStart!)
 		|> register(approveGate, handleApprove!)
 		|> register(emergencyRollback, handleRollback!)

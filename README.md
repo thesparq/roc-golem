@@ -140,9 +140,10 @@ state codecs. The host registers each declared method as a Golem method whose
 single parameter is the JSON text of its input, so `golem agent invoke
 <agent> start_canary '{"version":"1.2.3","weight":10}'` reaches it by name and
 the platform decodes the parameter into `StartInput` and encodes the answer
-back. `examples/canary_release` is the worked example (a Release Guardian with a
-webhook approval gate, a live dashboard written to the agent's filesystem, and
-a scheduled rollback); the ABI harness drives the same surface with `--method`.
+back. `examples/canary_release` is the worked example (a Release Guardian with
+an approval gate, a live dashboard written to the agent's filesystem, a
+scheduled rollback, and a `golem:tool/guest` tool); the ABI harness drives the
+same surface with `--method`.
 
 What the blueprint's `ReleaseCoordinator` also used — permission cards passed
 as values, opaque secret handles, method streams and tool middleware — is not
@@ -300,9 +301,12 @@ Four rules that each cost a full end-to-end cycle to discover:
   is deployed as part of an HTTP API (`Agent is not currently deployed as part
   of an http api`). The effects example carries a binding-less mount for this.
 - A tool's metadata name is snake_case and its manifest key is kebab-case: the
-  counter declares `name: "get_count"` and `golem.yaml` binds `get-count`. The
-  manifest key also has to satisfy the schema's
-  `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, so a snake_case key is rejected outright.
+  counter declares `name: "get_count"` and `golem.yaml` declares `get-count`
+  under `tools:` and binds it on `counter-agent`. The manifest key also has to
+  satisfy the schema's `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, so a snake_case key is
+  rejected outright, and a binding whose key has no matching top-level `tools:`
+  entry fails the deploy (`Discovered tool has no matching top-level
+  declaration`) — the pair is required, not either half.
 
 ## ⚠️ Development status
 
@@ -326,11 +330,13 @@ of letting the deploy fail later.
 The component also exports **`golem:tool/guest`**: the app's declared tools are
 published under CLI-shaped names (`get_count` → `get-count`) and appear in
 `golem tool list`; `golem tool invoke --agent <id> <tool>` routes to the app's
-`handleToolCall!`. Two caveats: every tool must be declared in the manifest
-(`tools:` plus an `agents:` binding — see `golem.yaml`), and tool invocations run
-in a fresh instance without the agent's state, so stateless tools (the AI tool
-example's `calculator`) work while stateful ones (`get-count`) fail with an
-honest error — use the agent method surface for those.
+`handleToolCall!`. Two caveats: every tool must be declared in the manifest (a
+`tools:` entry *and* an `agents:` binding — see `golem.yaml`), and tool
+invocations run in a fresh instance without the agent's state, so stateless tools
+(the AI tool example's `calculator`) work while stateful ones (the counter's
+`get-count`, the canary's `analyze-logs`) fail with an honest error — use the
+agent method surface for those, where the same hook runs *with* the state (the
+canary's `analyze_logs` method answers with its fault count).
 
 **Multimodal values** are a second declared method: an app that writes
 `multimodal: HandlesMultimodal` in its metadata registers `handle-multimodal`,

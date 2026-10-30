@@ -1151,6 +1151,20 @@ check "canary: approve_gate promotes the canary" "Promoted 1.2.3 to 100%" \
 check "canary: emergency_rollback takes it out of rotation" "Rolled 1.2.3 back to 0%" \
     "$(invoke "$canary_agent" emergency_rollback '{"reason":"e2e"}')"
 
+# The canary also publishes a tool. Its metadata name is snake_case
+# (`analyze_logs`) and its manifest key kebab-case (`analyze-logs`), and 1.6 needs
+# the tool declared in the manifest's `tools:` map *as well as* bound to the agent
+# type — a binding without the declaration fails the deploy with `Discovered tool
+# has no matching top-level declaration`. The tool surface runs a tool on a fresh
+# instance without the agent's state, so a stateful tool reports the missing state
+# there; the agent method surface reaches the same hook *with* the state, which is
+# how a stateful tool is driven (see the README's "Development status").
+canary_tool_surface="$("$CLI" $CLI_EXTRA -L -A "$MANIFEST" tool invoke \
+    --agent "$canary_agent" analyze-logs -- "PANIC boot" 2>&1 || true)"
+check_true "canary: the declared tool routes on the tool surface" \
+    "$(grep -q 'Failed to deserialize state' <<<"$canary_tool_surface" && echo true || echo false)"
+check "canary: the tool counts faults over the agent method surface" '"faults": 3' \
+    "$(invoke "$canary_agent" analyze_logs '"PANIC boot OOM kill PANIC"')"
 
 say ""
 if [[ "$failures" -eq 0 ]]; then
