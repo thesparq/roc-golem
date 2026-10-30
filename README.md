@@ -147,7 +147,9 @@ drives the same surface with `--method`.
 
 What the blueprint's `ReleaseCoordinator` also used — permission cards passed
 as values, opaque secret handles, method streams and tool middleware — is not
-exposed by this platform yet; `docs/golem-1.6-parity.md` records each as a gap.
+exposed by this platform yet; `docs/golem-1.6-parity.md` records each as a gap,
+and `docs/roc-golem-blueprint.md` is the self-contained review document (the
+whole platform, the reference application, and the same gap matrix).
 
 ---
 
