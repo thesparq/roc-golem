@@ -1166,6 +1166,17 @@ check_true "canary: the declared tool routes on the tool surface" \
 check "canary: the tool counts faults over the agent method surface" '"faults": 3' \
     "$(invoke "$canary_agent" analyze_logs '"PANIC boot OOM kill PANIC"')"
 
+# The mount publishes the dashboard the rollout writes into the agent's own
+# filesystem (`/canary/<id>/dashboard.html`). The `{id}` capture is the
+# constructor parameter, so the URL picks the instance, and a matching GET is
+# answered from the filesystem without invoking the agent. The canary rewrites
+# the page on every step, so what it serves tracks the state — the state here is
+# past the rollback, which put the weight back to 0.
+check "canary: the mount serves the dashboard the rollout wrote" \
+    "Release Guardian: $RUN_ID" "$(fetch "/canary/$RUN_ID/dashboard.html")"
+check "canary: the served dashboard tracks the rollout" "Canary 1.2.3 at 0%" \
+    "$(fetch "/canary/$RUN_ID/dashboard.html")"
+
 say ""
 if [[ "$failures" -eq 0 ]]; then
     if [[ "$skipped" -gt 0 ]]; then

@@ -141,9 +141,9 @@ single parameter is the JSON text of its input, so `golem agent invoke
 <agent> start_canary '{"version":"1.2.3","weight":10}'` reaches it by name and
 the platform decodes the parameter into `StartInput` and encodes the answer
 back. `examples/canary_release` is the worked example (a Release Guardian with
-an approval gate, a live dashboard written to the agent's filesystem, a
-scheduled rollback, and a `golem:tool/guest` tool); the ABI harness drives the
-same surface with `--method`.
+an approval gate, a live dashboard served by its HTTP mount from the agent's own
+filesystem, a scheduled rollback, and a `golem:tool/guest` tool); the ABI harness
+drives the same surface with `--method`.
 
 What the blueprint's `ReleaseCoordinator` also used — permission cards passed
 as values, opaque secret handles, method streams and tool middleware — is not
@@ -322,7 +322,8 @@ revisions (the CLI needs `-Y`; it prompts for confirmation).
 `filesystemBindings` mount publishes files from the agent's own durable
 filesystem on the deployment's domain, and the runtime answers matching
 `GET`/`HEAD` requests without invoking the agent (the `site` example is the
-worked case — see [HTTP mounts](#-http-mounts)). Golem requires every
+worked case for provisioned files, the canary example's dashboard for files the
+agent writes at runtime — see [HTTP mounts](#-http-mounts)). Golem requires every
 constructor parameter to be captured by the mount path, so the capture names
 the agent's identity parameter; the host refuses a mount it cannot bind instead
 of letting the deploy fail later.
@@ -522,8 +523,12 @@ error naming the problem, rather than at deploy time.
   method is invoked, and the agent does not have to be running.
   `Subtree` serves everything under a public prefix from a filesystem root;
   `Exact` serves one public path from one file. Anything unmapped answers 404.
-- The files come from the manifest's per-agent `files` (initial file system),
-  which `golem deploy` uploads and Golem provisions when the agent starts:
+- A mapped file is served from whatever the agent's durable filesystem holds,
+  so it can come from the manifest's per-agent `files` (initial file system),
+  which `golem deploy` uploads and Golem provisions when the agent starts, or
+  from a write the agent makes itself in an earlier invocation — the canary
+  example's dashboard is the second kind. The file has to exist before a `GET`
+  finds it:
 
   ```yaml
   agents:
@@ -560,7 +565,10 @@ The `site` example is the worked case for a **regular** agent's filesystem mount
 `examples/site/main.roc`, `examples/site/static/`, and the `site:` checks in
 `tooling/e2e.sh` (subtree and exact bindings, 200/404, the configured response
 header, that the subtree does not expose other files, and that a first read
-materializes the instance's filesystem).
+materializes the instance's filesystem). Its files are the provisioned kind; the
+`examples/canary_release` dashboard is the other kind — the agent writes
+`/dashboard.html` itself and the mount serves it afterwards, so a `GET` sees what
+the last rollout step wrote (the `canary:` checks in `tooling/e2e.sh`).
 
 ### Router mounts (static sites)
 

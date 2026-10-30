@@ -26,6 +26,10 @@ environments:
 # HTTP API create webhooks, and its mount is what gives the webhook callback
 # route a place to live. Its callback URLs come out under `/webhooks/` (the
 # deployment's default `webhookUrl` prefix) followed by the agent type name.
+#
+# `canary-release` publishes the dashboard its own filesystem holds
+# (`/canary/<id>/dashboard.html`), which is why it needs a deployment entry: a
+# mount is only served for an agent type deployed through the HTTP API.
 localServer:
   customRequestPort: 9882
 
@@ -37,6 +41,7 @@ httpApi:
           file-site-agent: {}
           static-site-agent: {}
           effects-agent: {}
+          canary-release: {}
 
 tools:
   # The tool surface (`golem:tool/guest`) exposes each app tool under its

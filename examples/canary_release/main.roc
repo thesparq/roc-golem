@@ -22,6 +22,7 @@ import pf.Golem exposing [
 	registerReadOnly,
 	rpcSchedule!,
 	withConfig,
+	withMount,
 	withToolHandler,
 	withTools,
 	workerId!,
@@ -47,10 +48,24 @@ configDeclarations = [
 	{ name: "region", secret: False },
 ]
 
-## The tool this agent publishes (`golem:tool/guest`). `readOnly: True` maps to
-## the 1.6 read-only flag, so the runtime may cache its answer.
+## The dashboard the agent writes into its own durable filesystem. The mount
+## below serves it from the deployment's domain (`httpMount`): the `{id}` capture
+## is the agent's constructor parameter, so the URL selects which instance's
+## dashboard is read, and a matching GET never invokes the agent.
 dashboardPath = "/dashboard.html"
 
+dashboardMount = Mount({
+	pathPrefix: ["canary", "{id}"],
+	staticBindings: [],
+	filesystemBindings: [
+		Exact({ publicPath: ["dashboard.html"], filePath: dashboardPath }),
+	],
+	fileResponseHeaders: [],
+	corsAllowedPatterns: [],
+})
+
+## The tool this agent publishes (`golem:tool/guest`). `readOnly: True` maps to
+## the 1.6 read-only flag, so the runtime may cache its answer.
 tools = [
 	{
 		name: "analyze_logs",
@@ -266,6 +281,7 @@ agent =
 			},
 	)
 		|> withConfig(configDeclarations)
+		|> withMount(dashboardMount)
 		|> withTools(tools)
 		|> withToolHandler(handleTool)
 		|> register(startCanary, handleStart!)
