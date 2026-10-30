@@ -218,7 +218,7 @@ column is what this platform's code does.
 
 | Concept | The blueprint's Roc | This platform's Roc |
 | --- | --- | --- |
-| Files and modules | `module [ ... ]` header at the top of each file | **same** — and it is deprecated. The headerless replacement works for types *and* functions, but leaves no private surface, so a module that wants a curated export list keeps the header and its warning (§2.2). |
+| Files and modules | `module [ ... ]` header at the top of each file | **superseded** — the header is deprecated. A *type module* is a headerless file whose top-level nominal type matches the filename, and it hides better: associated items inside `.{ }` are public, everything else at the top level is private (§2.2). |
 | Naming a type | `Id := { ... }` | **same** — used as `Types := {}.{ ... }` to group a file's types |
 | A structural alias | — | `State : { service : Str, ... }` — used pervasively |
 | An opaque type | `Secret(a)`, `Card` | `Host :: [].{ ... }` — used once, for the host-effect signatures |
@@ -319,19 +319,32 @@ before writing a second Roc file:
   `import ReleaseCoordinator exposing [agent]` is rejected — "exposed but not
   defined". Re-exporting an imported name does not satisfy the header; a plain
   binding does: `agent = ReleaseCoordinator.agent`.
-- **`module [...]` is deprecated, and its replacement trades away the privacy it
-  gives you.** The compiler is explicit: *"The module header is deprecated. ...
-  Type modules (headerless files with a top-level type matching the filename) are
-  now the preferred way to define modules. Remove the module header and ensure
-  your file defines a type that matches the filename."* That replacement does work
-  for functions as well as types — the platform's own `platform/Effect.roc` has no
-  header and defines functions with bodies — but a file with no header has no
-  export list, so **every** member becomes importable. Confirmed by probe, not
-  assumed: a headerless test module's deliberately-private `hidden` member was
-  imported from the app with no error, function definitions included. So
-  `ReleaseCoordinator.roc` keeps the deprecated header — the file's surface is then
-  exactly `agent` — and accepts the warning. `platform/Golem.roc` makes the same
-  trade across roughly 200 exports.
+- **`module [...]` is deprecated, and its replacement hides *better*, not worse.**
+  The compiler is explicit: *"The module header is deprecated. ... Type modules
+  (headerless files with a top-level type matching the filename) are now the
+  preferred way to define modules. Remove the module header and ensure your file
+  defines a type that matches the filename."*
+
+  A **type module** is a headerless file whose top-level *nominal* type — `:=`, or
+  `::` to make it opaque — is named after the file. Its **associated items**
+  (anything inside that type's `.{ ... }` block) are what other files can import;
+  every other top-level definition is private to the file. Verified in both
+  directions rather than assumed: an associated value imported cleanly from the
+  app, and a top-level helper was refused with `value not exposed`.
+
+  `ReleaseCoordinator.roc` therefore uses that form. Its entire public surface is
+  one associated value, `agent`; the config declaration, the mount, the tool, the
+  methods and their handlers all sit below the block and are private.
+
+  One platform file is still on the old form: `platform/Golem.roc` carries a
+  deprecated `module [...]` header over roughly 200 exports, and warns. Moving it
+  is a separate change — it is the interface every example imports — and §1.2
+  does not depend on it.
+
+  Note the two distinct roles in this app, because Roc's categories are per-file:
+  `main.roc` is an *application module* and must expose the entry point the
+  platform requires, while `Types.roc` and `ReleaseCoordinator.roc` are *type
+  modules* with only their nominal type visible.
 
 ### 2.3 `examples/canary_release/Types.roc`
 
@@ -367,10 +380,14 @@ Types := {}.{
 ```roc
 ## The release coordinator agent: its methods, the typed handlers bound to them,
 ## the tool it publishes on `golem:tool/guest`, and the mount that serves the
-## dashboard it writes. `main.roc` is the app entry point and re-exposes `agent`.
-module [
-	agent,
-]
+## dashboard it writes.
+##
+## This file is a Roc *type module*: a headerless file whose top-level nominal
+## type is named after the file. Everything associated with that type — inside
+## `ReleaseCoordinator.{ ... }` — is public, and everything else at the top level
+## of the file is private to it. Here that means exactly one public value,
+## `agent`, while the helpers below stay helpers. `main.roc` is the app entry
+## point and re-exposes `agent`.
 
 import pf.Golem exposing [
 	Agent,
@@ -390,6 +407,41 @@ import pf.Golem exposing [
 	writeFile!,
 ]
 import Types exposing [DecisionInput, RollbackInput, StartInput, StartOutput, State, Status]
+
+ReleaseCoordinator := {}.{
+	## The agent the platform's `requires` looks for. This annotation is also the
+	## whole public surface of this module.
+	agent : Agent(State)
+	agent =
+		define(
+			{
+				name: "canary-release",
+				version: "1.0.0",
+				description: "Canary rollout orchestrator: typed methods, a gate, a live dashboard.",
+			},
+			|service|
+				{
+					service: service,
+					canary: "",
+					weight: 0,
+					events: [],
+					region: "unknown",
+				},
+		)
+			|> withConfig(configDeclarations)
+			|> withMount(dashboardMount)
+			|> withTools(tools)
+			|> withToolHandler(handleTool)
+			|> register(startCanary, handleStart!)
+			|> register(approveGate, handleApprove!)
+			|> register(emergencyRollback, handleRollback!)
+			|> registerReadOnly(statusMethod, handleStatus)
+			|> build
+}
+
+## ---------------------------------------------------------------------------
+## Everything below is private to this module: no other file can import it.
+## ---------------------------------------------------------------------------
 
 ## Config the agent reads with `getConfig!`. The platform has no secret-handle
 ## surface yet (`docs/golem-1.6-parity.md`), and a `secret: True` declaration
@@ -601,33 +653,6 @@ handleStatus = |state, _input| {
 	events: state.events,
 	region: state.region,
 }
-
-agent : Agent(State)
-agent =
-	define(
-		{
-			name: "canary-release",
-			version: "1.0.0",
-			description: "Canary rollout orchestrator: typed methods, a gate, a live dashboard.",
-		},
-		|service|
-			{
-				service: service,
-				canary: "",
-				weight: 0,
-				events: [],
-				region: "unknown",
-			},
-	)
-		|> withConfig(configDeclarations)
-		|> withMount(dashboardMount)
-		|> withTools(tools)
-		|> withToolHandler(handleTool)
-		|> register(startCanary, handleStart!)
-		|> register(approveGate, handleApprove!)
-		|> register(emergencyRollback, handleRollback!)
-		|> registerReadOnly(statusMethod, handleStatus)
-		|> build
 ```
 
 ### 2.5 `examples/canary_release/main.roc`
@@ -3592,10 +3617,11 @@ repository path as a heading and was expanded mechanically from that file, so a
 reader holding the repository can diff the two directly. The counts in §1.1 and
 §1.3 are plain tallies of the tables above them. The two claims that are neither
 a listing nor a suite check were each settled by direct experiment rather than
-assertion: that a headerless module has no private surface (§2.2 — a probe module
-whose "private" member imported cleanly), and that a tool call runs on a fresh
-instance without the agent's state (§4.4 — a live invocation against a local
-server, with the same behaviour pinned by the canary's tool-surface check).
+assertion: that a type module's associated items are public while its top-level
+definitions are private (§2.2 — both directions probed), and that a tool call
+runs on a fresh instance without the agent's state (§4.4 — a live invocation
+against a local server, with the same behaviour pinned by the canary's
+tool-surface check).
 
 ---
 

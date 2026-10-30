@@ -890,9 +890,9 @@ check_true "resolve-component-id: a deployed component resolves to a UUID" \
     "$([[ "$component_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && echo true || echo false)"
 resolved_agent="$(invoke "$control_agent" handle-message \
     "$(message_arg "resolve-agent-id roc-golem:counter counter-agent(\"$RUN_ID-control\")")")"
-check "resolve-agent-id: the resolved agent carries the component id" \
+check_nospace "resolve-agent-id: the resolved agent carries the component id" \
     "\"componentId\":\"$component_id\"" "$resolved_agent"
-check "resolve-agent-id: the name the app asked for comes back" \
+check_nospace "resolve-agent-id: the name the app asked for comes back" \
     "\"agentId\":\"counter-agent(" "$resolved_agent"
 check "resolve-component-id: a reference that names no component is reported" \
     "no component named \"roc-golem:nope\"" \
@@ -958,7 +958,7 @@ say "==> Webhooks (promise + POST callback)"
 # name (the mount's `webhook-suffix` is empty in this platform).
 webhook_agent="effects-agent(\"$RUN_ID\")"
 webhook_reply="$(invoke "$webhook_agent" handle-message '"webhook-create"')"
-check "webhook: create returns a callback URL" "/webhooks/effects-agent/" "$webhook_reply"
+check_nospace "webhook: create returns a callback URL" "/webhooks/effects-agent/" "$webhook_reply"
 # The URL is one long token, so the CLI's wrap can split it and the un-wrapping
 # above joins the halves with a space; URLs never contain one.
 webhook_url="${webhook_reply#Webhook created: }"

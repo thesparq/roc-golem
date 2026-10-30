@@ -1,9 +1,13 @@
 ## The release coordinator agent: its methods, the typed handlers bound to them,
 ## the tool it publishes on `golem:tool/guest`, and the mount that serves the
-## dashboard it writes. `main.roc` is the app entry point and re-exposes `agent`.
-module [
-	agent,
-]
+## dashboard it writes.
+##
+## This file is a Roc *type module*: a headerless file whose top-level nominal
+## type is named after the file. Everything associated with that type — inside
+## `ReleaseCoordinator.{ ... }` — is public, and everything else at the top level
+## of the file is private to it. Here that means exactly one public value,
+## `agent`, while the helpers below stay helpers. `main.roc` is the app entry
+## point and re-exposes `agent`.
 
 import pf.Golem exposing [
 	Agent,
@@ -23,6 +27,41 @@ import pf.Golem exposing [
 	writeFile!,
 ]
 import Types exposing [DecisionInput, RollbackInput, StartInput, StartOutput, State, Status]
+
+ReleaseCoordinator := {}.{
+	## The agent the platform's `requires` looks for. This annotation is also the
+	## whole public surface of this module.
+	agent : Agent(State)
+	agent =
+		define(
+			{
+				name: "canary-release",
+				version: "1.0.0",
+				description: "Canary rollout orchestrator: typed methods, a gate, a live dashboard.",
+			},
+			|service|
+				{
+					service: service,
+					canary: "",
+					weight: 0,
+					events: [],
+					region: "unknown",
+				},
+		)
+			|> withConfig(configDeclarations)
+			|> withMount(dashboardMount)
+			|> withTools(tools)
+			|> withToolHandler(handleTool)
+			|> register(startCanary, handleStart!)
+			|> register(approveGate, handleApprove!)
+			|> register(emergencyRollback, handleRollback!)
+			|> registerReadOnly(statusMethod, handleStatus)
+			|> build
+}
+
+## ---------------------------------------------------------------------------
+## Everything below is private to this module: no other file can import it.
+## ---------------------------------------------------------------------------
 
 ## Config the agent reads with `getConfig!`. The platform has no secret-handle
 ## surface yet (`docs/golem-1.6-parity.md`), and a `secret: True` declaration
@@ -234,30 +273,3 @@ handleStatus = |state, _input| {
 	events: state.events,
 	region: state.region,
 }
-
-agent : Agent(State)
-agent =
-	define(
-		{
-			name: "canary-release",
-			version: "1.0.0",
-			description: "Canary rollout orchestrator: typed methods, a gate, a live dashboard.",
-		},
-		|service|
-			{
-				service: service,
-				canary: "",
-				weight: 0,
-				events: [],
-				region: "unknown",
-			},
-	)
-		|> withConfig(configDeclarations)
-		|> withMount(dashboardMount)
-		|> withTools(tools)
-		|> withToolHandler(handleTool)
-		|> register(startCanary, handleStart!)
-		|> register(approveGate, handleApprove!)
-		|> register(emergencyRollback, handleRollback!)
-		|> registerReadOnly(statusMethod, handleStatus)
-		|> build
