@@ -55,11 +55,10 @@ jobs:
         # codec (defaults for absent fields, a value carrying another field's
         # text, and a control character across the emitter / reader round trip).
         #
-        # `roc test` exits 2 when it reports a *warning*, and this platform's
-        # files still carry module headers, which Roc deprecates (see the
-        # "module headers" note in the README's development section). A failing
-        # `expect` exits 1 and prints "failed", so the step requires the tests'
-        # own summary instead of a zero exit code.
+        # `roc test` exits 2 when it reports a *warning* — an unused import, an
+        # effectful function without `!` — so the step cannot rely on a zero exit
+        # code. A failing `expect` exits 1 and prints "failed", so it requires the
+        # tests' own summary instead.
         run: |
           output="$(roc test platform/main.roc 2>&1 || true)"
           printf '%s\n' "$output"

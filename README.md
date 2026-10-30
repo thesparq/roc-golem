@@ -1667,13 +1667,13 @@ release workflow have Node, so the section runs there.
 The ABI smoke test also runs against a debug build of the effects example, since
 the platform has had build-sensitive ABI bugs before.
 
-`roc test` exits **2** when it reports a warning, and this platform's files still
-carry Roc's deprecated module headers (`module [ ... ]` in `Golem.roc`, `Types.roc`,
-`Effect.roc`, `Host.roc`) — that warning appears in every build and every test run.
-Its step therefore requires the tests' own `tests passed` summary rather than a
-zero exit code: a failing `expect` exits 1 and says `failed`. Migrating those four
-files to Roc's type-module convention would clear the warning; it changes how the
-platform's modules are declared and imported, so it is a change of its own.
+`roc test` exits **2** when it reports a warning, so the step requires the tests'
+own `tests passed` summary rather than a zero exit code: a failing `expect` exits 1
+and says `failed`. That tolerance started when this platform's files carried Roc's
+deprecated module headers; every one of them (`Golem.roc`, `Types.roc`,
+`Effect.roc`, `Host.roc`, and the canary example) is now a *type module* and the
+deprecation warning is gone, but the tolerance stays because any warning — an
+unused import, an effectful function without `!` — still exits 2.
 
 ---
 
