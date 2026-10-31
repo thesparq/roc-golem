@@ -44,7 +44,7 @@ main_handle_message_for_host = |state_json, envelope_or_msg| {
 	match find_agent_by_name(agent.agents, agent_type) {
 		Err(err) => Err(err),
 		Ok(target_agent) =>
-			if Str.is_empty(method_name) || method_name == "handle-message" || method_name == "message" {
+			if Str.is_empty(method_name) or method_name == "handle-message" or method_name == "message" {
 				match (target_agent.handleMessage)(state_json, input_str) {
 					Ok(res) => {
 						escaped_response = escape_json_str(res.response)

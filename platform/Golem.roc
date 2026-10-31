@@ -516,7 +516,7 @@ build = |spec| {
 								Err(err) => Err(err),
 								Ok(res) => {
 									nextStateJson =
-										if res.stateChanged && spec.mode == Durable {
+										if res.stateChanged and spec.mode == Durable {
 											spec.serializeState(res.state)
 										} else {
 											""
@@ -546,7 +546,7 @@ build = |spec| {
 						Err(err) => Err(err),
 						Ok(res) => {
 							nextStateJson =
-								if res.stateChanged && spec.mode == Durable {
+								if res.stateChanged and spec.mode == Durable {
 									spec.serializeState(res.state)
 								} else {
 									""
@@ -576,7 +576,7 @@ build = |spec| {
 								Err(err) => Err(err),
 								Ok(res) => {
 									nextStateJson =
-										if res.stateChanged && spec.mode == Durable {
+										if res.stateChanged and spec.mode == Durable {
 											spec.serializeState(res.state)
 										} else {
 											""

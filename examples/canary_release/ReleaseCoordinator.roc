@@ -259,7 +259,7 @@ handleStatus = |state, _|
 
 handleTool : ToolCall -> Result(ToolResult, Str)
 handleTool = |call| {
-	if call.name == "analyze_logs" || call.name == "analyze-logs" {
+	if call.name == "analyze_logs" or call.name == "analyze-logs" {
 		logs = call.arguments
 		panicCount = countOccurrences(logs, "PANIC")
 		oomCount = countOccurrences(logs, "OOM")
