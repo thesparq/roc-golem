@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Rust Host & Native Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            host/target/
+            tooling/pack_platform/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check Formatting
+        run: cargo fmt --manifest-path host/Cargo.toml --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --manifest-path host/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run Unit Tests
+        run: cargo test --manifest-path host/Cargo.toml --all-targets
+
+  build-platform:
+    name: Platform Pre-compilation & Package
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: v1.222.0
+
+      - name: Build Platform Host
+        run: ./tooling/build.sh platform
+
+      - name: Verify Precompiled Artifacts
+        run: |
+          test -f build/libhost.a
+          test -f build/host.wasm
+          wasm-tools validate build/host.wasm
+
+      - name: Test Platform Packaging
+        run: ./tooling/build.sh package v0.7.0 thesparq/roc-golem
+
+      - name: Verify Package Outputs
+        run: |
+          test -f dist/*.tar.zst
+          test -f dist/*.tar.br
+          test -f dist/*.tar.gz
+          test -f dist/checksums.txt
+          test -f dist/release_notes.md

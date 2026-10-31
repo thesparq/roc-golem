@@ -46,7 +46,8 @@ use golem::agent::common::{
 };
 use golem::api::host::PersistenceLevel;
 use golem::core::types::{
-    DataSchema, ElementSchema, ElementValue, TextDescriptor, TextReference, TextSource, WitNode,
+    BinaryReference, BinarySource, BinaryType, DataSchema, ElementSchema, ElementValue,
+    TextDescriptor, TextReference, TextSource, WitNode,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -85,8 +86,8 @@ fn parse_http_method(m: &str) -> wasi::http::types::Method {
 
 #[cfg(target_arch = "wasm32")]
 fn perform_wasi_http_request(req_str: &str, body_slice: &[u8]) -> Result<(u16, Vec<u8>), String> {
-    let val: serde_json::Value = serde_json::from_str(req_str)
-        .map_err(|e| format!("invalid request json: {}", e))?;
+    let val: serde_json::Value =
+        serde_json::from_str(req_str).map_err(|e| format!("invalid request json: {}", e))?;
 
     let url_str = val.get("url").and_then(|u| u.as_str()).unwrap_or("");
     let (scheme, authority, path_and_query) = parse_url_parts(url_str);
@@ -147,8 +148,8 @@ fn perform_wasi_http_request(req_str: &str, body_slice: &[u8]) -> Result<(u16, V
         let _ = wasi::http::types::OutgoingBody::finish(body, None);
     }
 
-    let future = wasi::http::outgoing_handler::handle(request, None)
-        .map_err(|e| format!("{:?}", e))?;
+    let future =
+        wasi::http::outgoing_handler::handle(request, None).map_err(|e| format!("{:?}", e))?;
     let pollable = future.subscribe();
     pollable.block();
 
@@ -160,7 +161,8 @@ fn perform_wasi_http_request(req_str: &str, body_slice: &[u8]) -> Result<(u16, V
     };
 
     let status = response.status();
-    let body_stream = response.consume()
+    let body_stream = response
+        .consume()
         .map_err(|_| "failed to consume response body".to_string())?
         .stream()
         .map_err(|_| "failed to acquire response body stream".to_string())?;
@@ -186,27 +188,27 @@ fn perform_wasi_http_request(req_str: &str, body_slice: &[u8]) -> Result<(u16, V
 
 #[cfg(target_arch = "wasm32")]
 fn kv_get_wasm32(bucket_name: &str, key: &str) -> Result<Vec<u8>, String> {
-    let bucket = wasi::keyvalue::types::Bucket::open_bucket(bucket_name)
-        .map_err(|e| format!("{:?}", e))?;
+    let bucket =
+        wasi::keyvalue::types::Bucket::open_bucket(bucket_name).map_err(|e| format!("{:?}", e))?;
     let key_string = key.to_string();
-    let res = wasi::keyvalue::eventual::get(&bucket, &key_string)
-        .map_err(|e| format!("{:?}", e))?;
+    let res =
+        wasi::keyvalue::eventual::get(&bucket, &key_string).map_err(|e| format!("{:?}", e))?;
     match res {
-        Some(incoming) => {
-            incoming.incoming_value_consume_sync()
-                .map_err(|e| format!("{:?}", e))
-        }
+        Some(incoming) => incoming
+            .incoming_value_consume_sync()
+            .map_err(|e| format!("{:?}", e)),
         None => Err("key not found".to_string()),
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 fn kv_set_wasm32(bucket_name: &str, key: &str, bytes: &[u8]) -> Result<(), String> {
-    let bucket = wasi::keyvalue::types::Bucket::open_bucket(bucket_name)
-        .map_err(|e| format!("{:?}", e))?;
+    let bucket =
+        wasi::keyvalue::types::Bucket::open_bucket(bucket_name).map_err(|e| format!("{:?}", e))?;
     let outgoing = wasi::keyvalue::types::OutgoingValue::new_outgoing_value();
     let vec_bytes = bytes.to_vec();
-    outgoing.outgoing_value_write_body_sync(&vec_bytes)
+    outgoing
+        .outgoing_value_write_body_sync(&vec_bytes)
         .map_err(|e| format!("{:?}", e))?;
     let key_string = key.to_string();
     wasi::keyvalue::eventual::set(&bucket, &key_string, &outgoing)
@@ -217,14 +219,17 @@ fn kv_set_wasm32(bucket_name: &str, key: &str, bytes: &[u8]) -> Result<(), Strin
 #[cfg(target_arch = "wasm32")]
 fn blob_get_wasm32(container_name: &str, object_name: &str) -> Result<Vec<u8>, String> {
     let c_name = container_name.to_string();
-    let container = wasi::blobstore::blobstore::get_container(&c_name)
-        .map_err(|e| format!("{:?}", e))?;
+    let container =
+        wasi::blobstore::blobstore::get_container(&c_name).map_err(|e| format!("{:?}", e))?;
     let o_name = object_name.to_string();
-    let info = container.object_info(&o_name)
+    let info = container
+        .object_info(&o_name)
         .map_err(|e| format!("{:?}", e))?;
-    let incoming = container.get_data(&o_name, 0, info.size)
+    let incoming = container
+        .get_data(&o_name, 0, info.size)
         .map_err(|e| format!("{:?}", e))?;
-    incoming.incoming_value_consume_sync()
+    incoming
+        .incoming_value_consume_sync()
         .map_err(|e| format!("{:?}", e))
 }
 
@@ -233,16 +238,20 @@ fn blob_put_wasm32(container_name: &str, object_name: &str, bytes: &[u8]) -> Res
     let c_name = container_name.to_string();
     let container = match wasi::blobstore::blobstore::get_container(&c_name) {
         Ok(c) => c,
-        Err(_) => wasi::blobstore::blobstore::create_container(&c_name)
-            .map_err(|e| format!("{:?}", e))?,
+        Err(_) => {
+            wasi::blobstore::blobstore::create_container(&c_name).map_err(|e| format!("{:?}", e))?
+        }
     };
     let outgoing = wasi::blobstore::types::OutgoingValue::new_outgoing_value();
-    let stream = outgoing.outgoing_value_write_body()
+    let stream = outgoing
+        .outgoing_value_write_body()
         .map_err(|e| format!("{:?}", e))?;
-    stream.blocking_write_and_flush(bytes)
+    stream
+        .blocking_write_and_flush(bytes)
         .map_err(|e| format!("{:?}", e))?;
     let o_name = object_name.to_string();
-    container.write_data(&o_name, &outgoing)
+    container
+        .write_data(&o_name, &outgoing)
         .map_err(|e| format!("{:?}", e))?;
     Ok(())
 }
@@ -290,6 +299,14 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
     static MOCK_PROMISES: RefCell<HashMap<u64, MockPromise>> =
         RefCell::new(HashMap::new());
+    #[cfg(target_arch = "wasm32")]
+    static HTTP_STREAM_TABLE: RefCell<Vec<Option<wasi::io::streams::InputStream>>> =
+        const { RefCell::new(Vec::new()) };
+    #[cfg(not(target_arch = "wasm32"))]
+    static MOCK_HTTP_STREAMS: RefCell<HashMap<u32, Vec<u8>>> =
+        RefCell::new(HashMap::new());
+    static STMT_CACHE: RefCell<HashMap<(String, String), u64>> =
+        RefCell::new(HashMap::new());
 }
 
 pub fn store_secret(name: String, value: String) -> u32 {
@@ -312,7 +329,9 @@ pub fn get_secret(handle: u32) -> Option<SecretEntry> {
     }
     SECRETS.with(|table| {
         let slots = table.borrow();
-        slots.get((handle - 1) as usize).and_then(|slot| slot.clone())
+        slots
+            .get((handle - 1) as usize)
+            .and_then(|slot| slot.clone())
     })
 }
 
@@ -411,12 +430,60 @@ fn extract_data_value_string(val: &DataValue) -> String {
 }
 
 fn wrap_string_data_value(s: String) -> DataValue {
-    DataValue::Tuple(vec![ElementValue::UnstructuredText(
-        TextReference::Inline(TextSource {
+    DataValue::Tuple(vec![ElementValue::UnstructuredText(TextReference::Inline(
+        TextSource {
             data: s,
             text_type: None,
+        },
+    ))])
+}
+
+#[allow(dead_code)]
+fn wrap_bytes_data_value(bytes: Vec<u8>) -> DataValue {
+    DataValue::Tuple(vec![ElementValue::UnstructuredBinary(
+        BinaryReference::Inline(BinarySource {
+            data: bytes,
+            binary_type: BinaryType {
+                mime_type: String::from("application/octet-stream"),
+            },
         }),
     )])
+}
+
+#[allow(dead_code)]
+fn extract_data_value_bytes(val: &DataValue) -> Vec<u8> {
+    match val {
+        DataValue::Tuple(elements) => {
+            if let Some(first) = elements.first() {
+                match first {
+                    ElementValue::UnstructuredBinary(BinaryReference::Inline(bs)) => {
+                        bs.data.clone()
+                    }
+                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => {
+                        ts.data.as_bytes().to_vec()
+                    }
+                    _ => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            }
+        }
+        DataValue::Multimodal(elements) => {
+            if let Some((_, first)) = elements.first() {
+                match first {
+                    ElementValue::UnstructuredBinary(BinaryReference::Inline(bs)) => {
+                        bs.data.clone()
+                    }
+                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => {
+                        ts.data.as_bytes().to_vec()
+                    }
+                    _ => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            }
+        }
+    }
 }
 
 fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
@@ -540,9 +607,7 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
             cors_options: CorsOptions {
                 allowed_patterns: vec!["*".to_string()],
             },
-            webhook_suffix: vec![
-                PathSegment::Literal("webhooks".to_string()),
-            ],
+            webhook_suffix: vec![PathSegment::Literal("webhooks".to_string())],
         })
     } else {
         None
@@ -621,9 +686,21 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
     payload: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let t = if target.is_null() { "" } else { (*target).as_str() };
-    let f = if function_name.is_null() { "" } else { (*function_name).as_str() };
-    let p = if payload.is_null() { "{}" } else { (*payload).as_str() };
+    let t = if target.is_null() {
+        ""
+    } else {
+        (*target).as_str()
+    };
+    let f = if function_name.is_null() {
+        ""
+    } else {
+        (*function_name).as_str()
+    };
+    let p = if payload.is_null() {
+        "{}"
+    } else {
+        (*payload).as_str()
+    };
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -661,9 +738,21 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
     delay_millis: u64,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let t = if target.is_null() { "" } else { (*target).as_str() };
-    let f = if function_name.is_null() { "" } else { (*function_name).as_str() };
-    let p = if payload.is_null() { "{}" } else { (*payload).as_str() };
+    let t = if target.is_null() {
+        ""
+    } else {
+        (*target).as_str()
+    };
+    let f = if function_name.is_null() {
+        ""
+    } else {
+        (*function_name).as_str()
+    };
+    let p = if payload.is_null() {
+        "{}"
+    } else {
+        (*payload).as_str()
+    };
 
     let resp = serde_json::json!({
         "status": "scheduled",
@@ -683,9 +772,21 @@ pub unsafe extern "C" fn rocFxRpcFireAndForget(
     payload: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let t = if target.is_null() { "" } else { (*target).as_str() };
-    let f = if function_name.is_null() { "" } else { (*function_name).as_str() };
-    let p = if payload.is_null() { "{}" } else { (*payload).as_str() };
+    let t = if target.is_null() {
+        ""
+    } else {
+        (*target).as_str()
+    };
+    let f = if function_name.is_null() {
+        ""
+    } else {
+        (*function_name).as_str()
+    };
+    let p = if payload.is_null() {
+        "{}"
+    } else {
+        (*payload).as_str()
+    };
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -711,6 +812,122 @@ pub unsafe extern "C" fn rocFxRpcFireAndForget(
         })
         .to_string();
         ptr::write(out, RocResult::ok(RocStr::from_str(&resp)));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rocFxRpcInvokeBytes(
+    target: *const RocStr,
+    function_name: *const RocStr,
+    payload: *const RocList<u8>,
+    out: *mut RocResult<RocList<u8>, RocStr>,
+) {
+    let t = if target.is_null() {
+        ""
+    } else {
+        (*target).as_str()
+    };
+    let f = if function_name.is_null() {
+        ""
+    } else {
+        (*function_name).as_str()
+    };
+    let p_slice = if payload.is_null() {
+        &[]
+    } else {
+        (*payload).as_slice()
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let constructor_val = wrap_bytes_data_value(Vec::new());
+        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let input_val = wrap_bytes_data_value(p_slice.to_vec());
+        match rpc_client.invoke_and_await(f, &input_val) {
+            Ok(res_val) => {
+                let res_bytes = extract_data_value_bytes(&res_val);
+                ptr::write(out, RocResult::ok(RocList::from_slice(&res_bytes)));
+            }
+            Err(err) => {
+                ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
+            }
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (t, f);
+        ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rocFxRpcScheduleBytes(
+    target: *const RocStr,
+    function_name: *const RocStr,
+    payload: *const RocList<u8>,
+    delay_millis: u64,
+    out: *mut RocResult<RocList<u8>, RocStr>,
+) {
+    let t = if target.is_null() {
+        ""
+    } else {
+        (*target).as_str()
+    };
+    let f = if function_name.is_null() {
+        ""
+    } else {
+        (*function_name).as_str()
+    };
+    let p_slice = if payload.is_null() {
+        &[]
+    } else {
+        (*payload).as_slice()
+    };
+    let _ = (t, f, delay_millis);
+    ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rocFxRpcFireAndForgetBytes(
+    target: *const RocStr,
+    function_name: *const RocStr,
+    payload: *const RocList<u8>,
+    out: *mut RocResult<(), RocStr>,
+) {
+    let t = if target.is_null() {
+        ""
+    } else {
+        (*target).as_str()
+    };
+    let f = if function_name.is_null() {
+        ""
+    } else {
+        (*function_name).as_str()
+    };
+    let p_slice = if payload.is_null() {
+        &[]
+    } else {
+        (*payload).as_slice()
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let constructor_val = wrap_bytes_data_value(Vec::new());
+        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let input_val = wrap_bytes_data_value(p_slice.to_vec());
+        match rpc_client.invoke(f, &input_val) {
+            Ok(()) => {
+                ptr::write(out, RocResult::ok(()));
+            }
+            Err(err) => {
+                ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
+            }
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (t, f, p_slice);
+        ptr::write(out, RocResult::ok(()));
     }
 }
 
@@ -770,7 +987,13 @@ pub unsafe extern "C" fn rocFxCreatePromise(out: *mut RocResult<u64, RocStr>) {
         let handle = MOCK_PROMISES.with(|m| {
             let mut map = m.borrow_mut();
             let next_id = (map.len() + 1) as u64;
-            map.insert(next_id, MockPromise { completed: false, payload: Vec::new() });
+            map.insert(
+                next_id,
+                MockPromise {
+                    completed: false,
+                    payload: Vec::new(),
+                },
+            );
             next_id
         });
         ptr::write(out, RocResult::ok(handle));
@@ -783,7 +1006,11 @@ pub unsafe extern "C" fn rocFxCompletePromise(
     data_bytes: *const RocList<u8>,
     out: *mut RocResult<bool, RocStr>,
 ) {
-    let slice = if data_bytes.is_null() { &[] } else { (*data_bytes).as_slice() };
+    let slice = if data_bytes.is_null() {
+        &[]
+    } else {
+        (*data_bytes).as_slice()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         let pid = PROMISE_TABLE.with(|table| {
@@ -791,7 +1018,9 @@ pub unsafe extern "C" fn rocFxCompletePromise(
             if promise_handle == 0 || promise_handle as usize > slots.len() {
                 None
             } else {
-                slots.get((promise_handle - 1) as usize).and_then(|p| p.clone())
+                slots
+                    .get((promise_handle - 1) as usize)
+                    .and_then(|p| p.clone())
             }
         });
         match pid {
@@ -799,7 +1028,10 @@ pub unsafe extern "C" fn rocFxCompletePromise(
                 let res = golem::api::host::complete_promise(&id, slice);
                 ptr::write(out, RocResult::ok(res));
             }
-            None => ptr::write(out, RocResult::err(RocStr::from_str("invalid promise handle"))),
+            None => ptr::write(
+                out,
+                RocResult::err(RocStr::from_str("invalid promise handle")),
+            ),
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -833,7 +1065,9 @@ pub unsafe extern "C" fn rocFxGetPromise(
             if promise_handle == 0 || promise_handle as usize > slots.len() {
                 None
             } else {
-                slots.get((promise_handle - 1) as usize).and_then(|p| p.clone())
+                slots
+                    .get((promise_handle - 1) as usize)
+                    .and_then(|p| p.clone())
             }
         });
         match pid {
@@ -841,10 +1075,16 @@ pub unsafe extern "C" fn rocFxGetPromise(
                 let promise_res = golem::api::host::get_promise(&id);
                 match promise_res.get() {
                     Some(bytes) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
-                    None => ptr::write(out, RocResult::err(RocStr::from_str("promise not yet completed"))),
+                    None => ptr::write(
+                        out,
+                        RocResult::err(RocStr::from_str("promise not yet completed")),
+                    ),
                 }
             }
-            None => ptr::write(out, RocResult::err(RocStr::from_str("invalid promise handle"))),
+            None => ptr::write(
+                out,
+                RocResult::err(RocStr::from_str("invalid promise handle")),
+            ),
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -860,7 +1100,10 @@ pub unsafe extern "C" fn rocFxGetPromise(
         match payload {
             Some(Ok(bytes)) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
             Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(err))),
-            None => ptr::write(out, RocResult::err(RocStr::from_str("invalid promise handle"))),
+            None => ptr::write(
+                out,
+                RocResult::err(RocStr::from_str("invalid promise handle")),
+            ),
         }
     }
 }
@@ -877,7 +1120,9 @@ pub unsafe extern "C" fn rocFxCreateWebhook(
             if promise_handle == 0 || promise_handle as usize > slots.len() {
                 None
             } else {
-                slots.get((promise_handle - 1) as usize).and_then(|p| p.clone())
+                slots
+                    .get((promise_handle - 1) as usize)
+                    .and_then(|p| p.clone())
             }
         });
         match pid {
@@ -885,7 +1130,10 @@ pub unsafe extern "C" fn rocFxCreateWebhook(
                 let url = golem::agent::host::create_webhook(&id);
                 ptr::write(out, RocResult::ok(RocStr::from_str(&url)));
             }
-            None => ptr::write(out, RocResult::err(RocStr::from_str("invalid promise handle"))),
+            None => ptr::write(
+                out,
+                RocResult::err(RocStr::from_str("invalid promise handle")),
+            ),
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -895,7 +1143,10 @@ pub unsafe extern "C" fn rocFxCreateWebhook(
             let url = format!("https://golem.cloud/webhooks/{}", promise_handle);
             ptr::write(out, RocResult::ok(RocStr::from_str(&url)));
         } else {
-            ptr::write(out, RocResult::err(RocStr::from_str("invalid promise handle")));
+            ptr::write(
+                out,
+                RocResult::err(RocStr::from_str("invalid promise handle")),
+            );
         }
     }
 }
@@ -945,7 +1196,8 @@ pub unsafe extern "C" fn rocFxGetSecretHandle(
         return;
     }
 
-    let secret_val = SECRET_ENV.with(|env| env.borrow().get(n).cloned())
+    let secret_val = SECRET_ENV
+        .with(|env| env.borrow().get(n).cloned())
         .or_else(|| std::env::var(n).ok());
 
     match secret_val {
@@ -954,16 +1206,16 @@ pub unsafe extern "C" fn rocFxGetSecretHandle(
             ptr::write(out, RocResult::ok(h));
         }
         None => {
-            ptr::write(out, RocResult::err(RocStr::from_str(&format!("secret '{}' not found", n))));
+            ptr::write(
+                out,
+                RocResult::err(RocStr::from_str(&format!("secret '{}' not found", n))),
+            );
         }
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxRevealSecret(
-    handle: u32,
-    out: *mut RocResult<RocStr, RocStr>,
-) {
+pub unsafe extern "C" fn rocFxRevealSecret(handle: u32, out: *mut RocResult<RocStr, RocStr>) {
     match get_secret(handle) {
         Some(entry) => {
             ptr::write(out, RocResult::ok(RocStr::from_str(&entry.value)));
@@ -971,7 +1223,10 @@ pub unsafe extern "C" fn rocFxRevealSecret(
         None => {
             ptr::write(
                 out,
-                RocResult::err(RocStr::from_str(&format!("invalid secret handle {}", handle))),
+                RocResult::err(RocStr::from_str(&format!(
+                    "invalid secret handle {}",
+                    handle
+                ))),
             );
         }
     }
@@ -982,7 +1237,11 @@ pub unsafe extern "C" fn rocFxHttpRequest(
     req_json: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let req_str = if req_json.is_null() { "{}" } else { (*req_json).as_str() };
+    let req_str = if req_json.is_null() {
+        "{}"
+    } else {
+        (*req_json).as_str()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         match perform_wasi_http_request(req_str, &[]) {
@@ -1005,7 +1264,11 @@ pub unsafe extern "C" fn rocFxHttpRequest(
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(req_str) {
             if let Some(headers) = val.get("secretHeaders").and_then(|h| h.as_array()) {
                 for h in headers {
-                    let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let name = h
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let prefix = h.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
                     let handle = h.get("handle").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                     if let Some(entry) = get_secret(handle) {
@@ -1026,10 +1289,7 @@ pub unsafe extern "C" fn rocFxHttpRequest(
 
 // WebSocket Effect C-ABI
 #[no_mangle]
-pub unsafe extern "C" fn rocFxWsConnect(
-    url: *const RocStr,
-    out: *mut RocResult<u32, RocStr>,
-) {
+pub unsafe extern "C" fn rocFxWsConnect(url: *const RocStr, out: *mut RocResult<u32, RocStr>) {
     let _url_str = if url.is_null() { "" } else { (*url).as_str() };
     #[cfg(target_arch = "wasm32")]
     {
@@ -1074,8 +1334,10 @@ pub unsafe extern "C" fn rocFxWsSend(
                 return Err("invalid websocket handle".to_string());
             }
             if let Some(conn) = slots.get((handle - 1) as usize).and_then(|c| c.as_ref()) {
-                conn.send(&golem::websocket::client::Message::Text(msg_str.to_string()))
-                    .map_err(|e| format!("{:?}", e))
+                conn.send(&golem::websocket::client::Message::Text(
+                    msg_str.to_string(),
+                ))
+                .map_err(|e| format!("{:?}", e))
             } else {
                 Err("websocket connection closed".to_string())
             }
@@ -1103,10 +1365,7 @@ pub unsafe extern "C" fn rocFxWsSend(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxWsReceive(
-    handle: u32,
-    out: *mut RocResult<RocStr, RocStr>,
-) {
+pub unsafe extern "C" fn rocFxWsReceive(handle: u32, out: *mut RocResult<RocStr, RocStr>) {
     #[cfg(target_arch = "wasm32")]
     {
         let res = WS_TABLE.with(|table| {
@@ -1119,7 +1378,9 @@ pub unsafe extern "C" fn rocFxWsReceive(
                     .map_err(|e| format!("{:?}", e))
                     .map(|msg| match msg {
                         golem::websocket::client::Message::Text(t) => t,
-                        golem::websocket::client::Message::Binary(b) => String::from_utf8_lossy(&b).into_owned(),
+                        golem::websocket::client::Message::Binary(b) => {
+                            String::from_utf8_lossy(&b).into_owned()
+                        }
                     })
             } else {
                 Err("websocket connection closed".to_string())
@@ -1152,10 +1413,7 @@ pub unsafe extern "C" fn rocFxWsReceive(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxWsClose(
-    handle: u32,
-    out: *mut RocResult<(), RocStr>,
-) {
+pub unsafe extern "C" fn rocFxWsClose(handle: u32, out: *mut RocResult<(), RocStr>) {
     #[cfg(target_arch = "wasm32")]
     {
         WS_TABLE.with(|table| {
@@ -1183,7 +1441,8 @@ pub unsafe extern "C" fn rocFxSleepMillis(millis: u64) {
     if millis > 0 {
         #[cfg(target_arch = "wasm32")]
         {
-            let pollable = wasi::clocks::monotonic_clock::subscribe_duration(millis.saturating_mul(1_000_000));
+            let pollable =
+                wasi::clocks::monotonic_clock::subscribe_duration(millis.saturating_mul(1_000_000));
             pollable.block();
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -1229,7 +1488,11 @@ pub unsafe extern "C" fn rocFxWriteFileBytes(
     out: *mut RocResult<(), RocStr>,
 ) {
     let p = if path.is_null() { "" } else { (*path).as_str() };
-    let slice = if bytes.is_null() { &[] } else { (*bytes).as_slice() };
+    let slice = if bytes.is_null() {
+        &[]
+    } else {
+        (*bytes).as_slice()
+    };
     match std::fs::write(p, slice) {
         Ok(()) => ptr::write(out, RocResult::ok(())),
         Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
@@ -1244,8 +1507,16 @@ pub unsafe extern "C" fn rocFxAppendFileBytes(
 ) {
     use std::io::Write;
     let p = if path.is_null() { "" } else { (*path).as_str() };
-    let slice = if bytes.is_null() { &[] } else { (*bytes).as_slice() };
-    match std::fs::OpenOptions::new().create(true).append(true).open(p) {
+    let slice = if bytes.is_null() {
+        &[]
+    } else {
+        (*bytes).as_slice()
+    };
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(p)
+    {
         Ok(mut f) => match f.write_all(slice) {
             Ok(()) => ptr::write(out, RocResult::ok(())),
             Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
@@ -1255,10 +1526,7 @@ pub unsafe extern "C" fn rocFxAppendFileBytes(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxReadFile(
-    path: *const RocStr,
-    out: *mut RocResult<RocStr, RocStr>,
-) {
+pub unsafe extern "C" fn rocFxReadFile(path: *const RocStr, out: *mut RocResult<RocStr, RocStr>) {
     let p = if path.is_null() { "" } else { (*path).as_str() };
     match std::fs::read_to_string(p) {
         Ok(s) => ptr::write(out, RocResult::ok(RocStr::from_str(&s))),
@@ -1273,7 +1541,11 @@ pub unsafe extern "C" fn rocFxWriteFile(
     out: *mut RocResult<(), RocStr>,
 ) {
     let p = if path.is_null() { "" } else { (*path).as_str() };
-    let s = if content.is_null() { "" } else { (*content).as_str() };
+    let s = if content.is_null() {
+        ""
+    } else {
+        (*content).as_str()
+    };
     match std::fs::write(p, s) {
         Ok(()) => ptr::write(out, RocResult::ok(())),
         Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
@@ -1286,7 +1558,11 @@ pub unsafe extern "C" fn rocFxKvGetBytes(
     key: *const RocStr,
     out: *mut RocResult<RocList<u8>, RocStr>,
 ) {
-    let b = if bucket.is_null() { "" } else { (*bucket).as_str() };
+    let b = if bucket.is_null() {
+        ""
+    } else {
+        (*bucket).as_str()
+    };
     let k = if key.is_null() { "" } else { (*key).as_str() };
     #[cfg(target_arch = "wasm32")]
     {
@@ -1297,9 +1573,8 @@ pub unsafe extern "C" fn rocFxKvGetBytes(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let val = KV_STORE.with(|store| {
-            store.borrow().get(&(b.to_string(), k.to_string())).cloned()
-        });
+        let val =
+            KV_STORE.with(|store| store.borrow().get(&(b.to_string(), k.to_string())).cloned());
         match val {
             Some(bytes) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
             None => ptr::write(out, RocResult::err(RocStr::from_str("key not found"))),
@@ -1314,9 +1589,17 @@ pub unsafe extern "C" fn rocFxKvSetBytes(
     bytes: *const RocList<u8>,
     out: *mut RocResult<(), RocStr>,
 ) {
-    let b = if bucket.is_null() { "" } else { (*bucket).as_str() };
+    let b = if bucket.is_null() {
+        ""
+    } else {
+        (*bucket).as_str()
+    };
     let k = if key.is_null() { "" } else { (*key).as_str() };
-    let slice = if bytes.is_null() { &[] } else { (*bytes).as_slice() };
+    let slice = if bytes.is_null() {
+        &[]
+    } else {
+        (*bytes).as_slice()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         match kv_set_wasm32(b, k, slice) {
@@ -1327,7 +1610,9 @@ pub unsafe extern "C" fn rocFxKvSetBytes(
     #[cfg(not(target_arch = "wasm32"))]
     {
         KV_STORE.with(|store| {
-            store.borrow_mut().insert((b.to_string(), k.to_string()), slice.to_vec());
+            store
+                .borrow_mut()
+                .insert((b.to_string(), k.to_string()), slice.to_vec());
         });
         ptr::write(out, RocResult::ok(()));
     }
@@ -1339,7 +1624,11 @@ pub unsafe extern "C" fn rocFxKvGet(
     key: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let b = if bucket.is_null() { "" } else { (*bucket).as_str() };
+    let b = if bucket.is_null() {
+        ""
+    } else {
+        (*bucket).as_str()
+    };
     let k = if key.is_null() { "" } else { (*key).as_str() };
     #[cfg(target_arch = "wasm32")]
     {
@@ -1353,9 +1642,8 @@ pub unsafe extern "C" fn rocFxKvGet(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let val = KV_STORE.with(|store| {
-            store.borrow().get(&(b.to_string(), k.to_string())).cloned()
-        });
+        let val =
+            KV_STORE.with(|store| store.borrow().get(&(b.to_string(), k.to_string())).cloned());
         match val {
             Some(bytes) => {
                 let s = String::from_utf8(bytes).unwrap_or_default();
@@ -1373,9 +1661,17 @@ pub unsafe extern "C" fn rocFxKvSet(
     value: *const RocStr,
     out: *mut RocResult<(), RocStr>,
 ) {
-    let b = if bucket.is_null() { "" } else { (*bucket).as_str() };
+    let b = if bucket.is_null() {
+        ""
+    } else {
+        (*bucket).as_str()
+    };
     let k = if key.is_null() { "" } else { (*key).as_str() };
-    let v = if value.is_null() { "" } else { (*value).as_str() };
+    let v = if value.is_null() {
+        ""
+    } else {
+        (*value).as_str()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         match kv_set_wasm32(b, k, v.as_bytes()) {
@@ -1386,7 +1682,9 @@ pub unsafe extern "C" fn rocFxKvSet(
     #[cfg(not(target_arch = "wasm32"))]
     {
         KV_STORE.with(|store| {
-            store.borrow_mut().insert((b.to_string(), k.to_string()), v.as_bytes().to_vec());
+            store
+                .borrow_mut()
+                .insert((b.to_string(), k.to_string()), v.as_bytes().to_vec());
         });
         ptr::write(out, RocResult::ok(()));
     }
@@ -1398,8 +1696,16 @@ pub unsafe extern "C" fn rocFxBlobGetBytes(
     object: *const RocStr,
     out: *mut RocResult<RocList<u8>, RocStr>,
 ) {
-    let c = if container.is_null() { "" } else { (*container).as_str() };
-    let o = if object.is_null() { "" } else { (*object).as_str() };
+    let c = if container.is_null() {
+        ""
+    } else {
+        (*container).as_str()
+    };
+    let o = if object.is_null() {
+        ""
+    } else {
+        (*object).as_str()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         match blob_get_wasm32(c, o) {
@@ -1409,9 +1715,8 @@ pub unsafe extern "C" fn rocFxBlobGetBytes(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let val = BLOB_STORE.with(|store| {
-            store.borrow().get(&(c.to_string(), o.to_string())).cloned()
-        });
+        let val =
+            BLOB_STORE.with(|store| store.borrow().get(&(c.to_string(), o.to_string())).cloned());
         match val {
             Some(bytes) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
             None => ptr::write(out, RocResult::err(RocStr::from_str("blob not found"))),
@@ -1426,9 +1731,21 @@ pub unsafe extern "C" fn rocFxBlobPutBytes(
     bytes: *const RocList<u8>,
     out: *mut RocResult<(), RocStr>,
 ) {
-    let c = if container.is_null() { "" } else { (*container).as_str() };
-    let o = if object.is_null() { "" } else { (*object).as_str() };
-    let slice = if bytes.is_null() { &[] } else { (*bytes).as_slice() };
+    let c = if container.is_null() {
+        ""
+    } else {
+        (*container).as_str()
+    };
+    let o = if object.is_null() {
+        ""
+    } else {
+        (*object).as_str()
+    };
+    let slice = if bytes.is_null() {
+        &[]
+    } else {
+        (*bytes).as_slice()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         match blob_put_wasm32(c, o, slice) {
@@ -1439,7 +1756,9 @@ pub unsafe extern "C" fn rocFxBlobPutBytes(
     #[cfg(not(target_arch = "wasm32"))]
     {
         BLOB_STORE.with(|store| {
-            store.borrow_mut().insert((c.to_string(), o.to_string()), slice.to_vec());
+            store
+                .borrow_mut()
+                .insert((c.to_string(), o.to_string()), slice.to_vec());
         });
         ptr::write(out, RocResult::ok(()));
     }
@@ -1451,8 +1770,16 @@ pub unsafe extern "C" fn rocFxBlobGet(
     object: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let c = if container.is_null() { "" } else { (*container).as_str() };
-    let o = if object.is_null() { "" } else { (*object).as_str() };
+    let c = if container.is_null() {
+        ""
+    } else {
+        (*container).as_str()
+    };
+    let o = if object.is_null() {
+        ""
+    } else {
+        (*object).as_str()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         match blob_get_wasm32(c, o) {
@@ -1465,9 +1792,8 @@ pub unsafe extern "C" fn rocFxBlobGet(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let val = BLOB_STORE.with(|store| {
-            store.borrow().get(&(c.to_string(), o.to_string())).cloned()
-        });
+        let val =
+            BLOB_STORE.with(|store| store.borrow().get(&(c.to_string(), o.to_string())).cloned());
         match val {
             Some(bytes) => {
                 let s = String::from_utf8(bytes).unwrap_or_default();
@@ -1485,9 +1811,21 @@ pub unsafe extern "C" fn rocFxBlobPut(
     value: *const RocStr,
     out: *mut RocResult<(), RocStr>,
 ) {
-    let c = if container.is_null() { "" } else { (*container).as_str() };
-    let o = if object.is_null() { "" } else { (*object).as_str() };
-    let v = if value.is_null() { "" } else { (*value).as_str() };
+    let c = if container.is_null() {
+        ""
+    } else {
+        (*container).as_str()
+    };
+    let o = if object.is_null() {
+        ""
+    } else {
+        (*object).as_str()
+    };
+    let v = if value.is_null() {
+        ""
+    } else {
+        (*value).as_str()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         match blob_put_wasm32(c, o, v.as_bytes()) {
@@ -1498,7 +1836,9 @@ pub unsafe extern "C" fn rocFxBlobPut(
     #[cfg(not(target_arch = "wasm32"))]
     {
         BLOB_STORE.with(|store| {
-            store.borrow_mut().insert((c.to_string(), o.to_string()), v.as_bytes().to_vec());
+            store
+                .borrow_mut()
+                .insert((c.to_string(), o.to_string()), v.as_bytes().to_vec());
         });
         ptr::write(out, RocResult::ok(()));
     }
@@ -1510,8 +1850,16 @@ pub unsafe extern "C" fn rocFxHttpRequestBytes(
     body_bytes: *const RocList<u8>,
     out: *mut RocResult<RocList<u8>, RocStr>,
 ) {
-    let _req_str = if req_json.is_null() { "{}" } else { (*req_json).as_str() };
-    let slice = if body_bytes.is_null() { &[] } else { (*body_bytes).as_slice() };
+    let _req_str = if req_json.is_null() {
+        "{}"
+    } else {
+        (*req_json).as_str()
+    };
+    let slice = if body_bytes.is_null() {
+        &[]
+    } else {
+        (*body_bytes).as_slice()
+    };
     #[cfg(target_arch = "wasm32")]
     {
         match perform_wasi_http_request(_req_str, slice) {
@@ -1527,19 +1875,245 @@ pub unsafe extern "C" fn rocFxHttpRequestBytes(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn rocFxHttpStreamOpen(
+    req_json: *const RocStr,
+    body_bytes: *const RocList<u8>,
+    out: *mut RocResult<u32, RocStr>,
+) {
+    let _req_str = if req_json.is_null() {
+        "{}"
+    } else {
+        (*req_json).as_str()
+    };
+    let _slice = if body_bytes.is_null() {
+        &[]
+    } else {
+        (*body_bytes).as_slice()
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let val: serde_json::Value = match serde_json::from_str(_req_str) {
+            Ok(v) => v,
+            Err(e) => {
+                ptr::write(
+                    out,
+                    RocResult::err(RocStr::from_str(&format!("invalid json: {}", e))),
+                );
+                return;
+            }
+        };
+
+        let url_str = val.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        let (scheme, authority, path_and_query) = parse_url_parts(url_str);
+        let method_str = val.get("method").and_then(|m| m.as_str()).unwrap_or("GET");
+        let method = parse_http_method(method_str);
+
+        let fields = wasi::http::types::Fields::new();
+        if let Some(headers_obj) = val.get("headers").and_then(|h| h.as_object()) {
+            for (k, v) in headers_obj {
+                if let Some(s) = v.as_str() {
+                    let key_string = k.to_string();
+                    let _ = fields.set(&key_string, &[s.as_bytes().to_vec()]);
+                }
+            }
+        }
+
+        let request = wasi::http::types::OutgoingRequest::new(fields);
+        let _ = request.set_method(&method);
+        let _ = request.set_scheme(scheme.as_ref());
+        let _ = request.set_authority(Some(&authority));
+        let _ = request.set_path_with_query(Some(&path_and_query));
+
+        if !_slice.is_empty() {
+            if let Ok(body) = request.body() {
+                if let Ok(stream) = body.write() {
+                    let _ = stream.blocking_write_and_flush(_slice);
+                }
+                let _ = wasi::http::types::OutgoingBody::finish(body, None);
+            }
+        } else if let Ok(body) = request.body() {
+            let _ = wasi::http::types::OutgoingBody::finish(body, None);
+        }
+
+        let future = match wasi::http::outgoing_handler::handle(request, None) {
+            Ok(f) => f,
+            Err(e) => {
+                ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", e))));
+                return;
+            }
+        };
+
+        let pollable = future.subscribe();
+        pollable.block();
+
+        let response = match future.get() {
+            Some(Ok(Ok(resp))) => resp,
+            Some(Ok(Err(err))) => {
+                ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
+                return;
+            }
+            Some(Err(())) => {
+                ptr::write(
+                    out,
+                    RocResult::err(RocStr::from_str("response already consumed")),
+                );
+                return;
+            }
+            None => {
+                ptr::write(out, RocResult::err(RocStr::from_str("response not ready")));
+                return;
+            }
+        };
+
+        let body_stream = match response.consume() {
+            Ok(incoming) => match incoming.stream() {
+                Ok(s) => s,
+                Err(_) => {
+                    ptr::write(
+                        out,
+                        RocResult::err(RocStr::from_str("failed to acquire response body stream")),
+                    );
+                    return;
+                }
+            },
+            Err(_) => {
+                ptr::write(
+                    out,
+                    RocResult::err(RocStr::from_str("failed to consume response body")),
+                );
+                return;
+            }
+        };
+
+        let handle = HTTP_STREAM_TABLE.with(|table| {
+            let mut slots = table.borrow_mut();
+            for (idx, slot) in slots.iter_mut().enumerate() {
+                if slot.is_none() {
+                    *slot = Some(body_stream);
+                    return (idx + 1) as u32;
+                }
+            }
+            slots.push(Some(body_stream));
+            slots.len() as u32
+        });
+        ptr::write(out, RocResult::ok(handle));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let handle = 1u32;
+        MOCK_HTTP_STREAMS.with(|streams| {
+            streams.borrow_mut().insert(handle, _slice.to_vec());
+        });
+        ptr::write(out, RocResult::ok(handle));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rocFxHttpStreamRead(
+    handle: u32,
+    max_bytes: u64,
+    out: *mut RocResult<RocList<u8>, RocStr>,
+) {
+    if handle == 0 {
+        ptr::write(
+            out,
+            RocResult::err(RocStr::from_str("invalid stream handle 0")),
+        );
+        return;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        HTTP_STREAM_TABLE.with(|table| {
+            let slots = table.borrow();
+            if let Some(Some(stream)) = slots.get((handle - 1) as usize) {
+                match stream.blocking_read(max_bytes) {
+                    Ok(chunk) => {
+                        ptr::write(out, RocResult::ok(RocList::from_slice(&chunk)));
+                    }
+                    Err(wasi::io::streams::StreamError::Closed) => {
+                        ptr::write(out, RocResult::ok(RocList::empty()));
+                    }
+                    Err(wasi::io::streams::StreamError::LastOperationFailed(err)) => {
+                        ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
+                    }
+                }
+            } else {
+                ptr::write(
+                    out,
+                    RocResult::err(RocStr::from_str("stream handle not found")),
+                );
+            }
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let chunk = MOCK_HTTP_STREAMS.with(|streams| {
+            let mut map = streams.borrow_mut();
+            if let Some(buf) = map.get_mut(&handle) {
+                let to_take = (max_bytes as usize).min(buf.len());
+                let taken = buf.drain(..to_take).collect::<Vec<u8>>();
+                Some(taken)
+            } else {
+                None
+            }
+        });
+        match chunk {
+            Some(bytes) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
+            None => ptr::write(out, RocResult::ok(RocList::empty())),
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rocFxHttpStreamClose(handle: u32, out: *mut RocResult<(), RocStr>) {
+    if handle == 0 {
+        ptr::write(
+            out,
+            RocResult::err(RocStr::from_str("invalid stream handle 0")),
+        );
+        return;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        HTTP_STREAM_TABLE.with(|table| {
+            let mut slots = table.borrow_mut();
+            if let Some(slot) = slots.get_mut((handle - 1) as usize) {
+                *slot = None;
+                ptr::write(out, RocResult::ok(()));
+            } else {
+                ptr::write(
+                    out,
+                    RocResult::err(RocStr::from_str("stream handle not found")),
+                );
+            }
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        MOCK_HTTP_STREAMS.with(|streams| {
+            streams.borrow_mut().remove(&handle);
+        });
+        ptr::write(out, RocResult::ok(()));
+    }
+}
+
 // Configuration Store Effect C-ABI
 #[no_mangle]
-pub unsafe extern "C" fn rocFxConfigGet(
-    key: *const RocStr,
-    out: *mut RocResult<RocStr, RocStr>,
-) {
+pub unsafe extern "C" fn rocFxConfigGet(key: *const RocStr, out: *mut RocResult<RocStr, RocStr>) {
     let k = if key.is_null() { "" } else { (*key).as_str() };
     #[cfg(target_arch = "wasm32")]
     {
         let key_string = k.to_string();
         match wasi::config::store::get(&key_string) {
             Ok(Some(v)) => ptr::write(out, RocResult::ok(RocStr::from_str(&v))),
-            Ok(None) => ptr::write(out, RocResult::err(RocStr::from_str("config key not found"))),
+            Ok(None) => ptr::write(
+                out,
+                RocResult::err(RocStr::from_str("config key not found")),
+            ),
             Err(e) => ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", e)))),
         }
     }
@@ -1547,7 +2121,10 @@ pub unsafe extern "C" fn rocFxConfigGet(
     {
         match std::env::var(k) {
             Ok(v) => ptr::write(out, RocResult::ok(RocStr::from_str(&v))),
-            Err(_) => ptr::write(out, RocResult::err(RocStr::from_str("config key not found"))),
+            Err(_) => ptr::write(
+                out,
+                RocResult::err(RocStr::from_str("config key not found")),
+            ),
         }
     }
 }
@@ -1595,7 +2172,8 @@ pub unsafe extern "C" fn rocFxTraceHeaders(out: *mut RocResult<RocStr, RocStr>) 
     {
         let mock_headers = serde_json::json!({
             "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-        }).to_string();
+        })
+        .to_string();
         ptr::write(out, RocResult::ok(RocStr::from_str(&mock_headers)));
     }
 }
@@ -1626,10 +2204,7 @@ pub unsafe extern "C" fn rocFxSetIdempotenceMode(mode: bool) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rocFxRevertAgent(
-    oplog_index: u64,
-    out: *mut RocResult<(), RocStr>,
-) {
+pub unsafe extern "C" fn rocFxRevertAgent(oplog_index: u64, out: *mut RocResult<(), RocStr>) {
     #[cfg(target_arch = "wasm32")]
     {
         let metadata = golem::api::host::get_self_metadata();
@@ -1651,8 +2226,35 @@ pub unsafe extern "C" fn rocFxDbExecute(
     sql: *const RocStr,
     out: *mut RocResult<u64, RocStr>,
 ) {
-    let c = if conn_str.is_null() { "" } else { (*conn_str).as_str() };
+    rocFxDbExecuteParams(conn_str, sql, ptr::null(), out);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbExecuteParams(
+    conn_str: *const RocStr,
+    sql: *const RocStr,
+    params_json: *const RocStr,
+    out: *mut RocResult<u64, RocStr>,
+) {
+    let c = if conn_str.is_null() {
+        ""
+    } else {
+        (*conn_str).as_str()
+    };
     let s = if sql.is_null() { "" } else { (*sql).as_str() };
+    let p = if params_json.is_null() {
+        "[]"
+    } else {
+        (*params_json).as_str()
+    };
+
+    // Statement caching
+    STMT_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        let counter = map.entry((c.to_string(), s.to_string())).or_insert(0);
+        *counter += 1;
+    });
+
     #[cfg(target_arch = "wasm32")]
     {
         let c_str = c.to_string();
@@ -1666,8 +2268,9 @@ pub unsafe extern "C" fn rocFxDbExecute(
                 Err(e) => Err(format!("{:?}", e)),
             }
         } else {
+            let pg_params = parse_pg_params(p);
             match golem::rdbms::postgres::DbConnection::open(&c_str) {
-                Ok(conn) => match conn.execute(&s_str, Vec::new()) {
+                Ok(conn) => match conn.execute(&s_str, pg_params) {
                     Ok(count) => Ok(count),
                     Err(e) => Err(format!("{:?}", e)),
                 },
@@ -1681,7 +2284,7 @@ pub unsafe extern "C" fn rocFxDbExecute(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (c, s);
+        let _ = (c, s, p);
         ptr::write(out, RocResult::ok(1));
     }
 }
@@ -1692,8 +2295,35 @@ pub unsafe extern "C" fn rocFxDbQuery(
     sql: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let c = if conn_str.is_null() { "" } else { (*conn_str).as_str() };
+    rocFxDbQueryParams(conn_str, sql, ptr::null(), out);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rocFxDbQueryParams(
+    conn_str: *const RocStr,
+    sql: *const RocStr,
+    params_json: *const RocStr,
+    out: *mut RocResult<RocStr, RocStr>,
+) {
+    let c = if conn_str.is_null() {
+        ""
+    } else {
+        (*conn_str).as_str()
+    };
     let s = if sql.is_null() { "" } else { (*sql).as_str() };
+    let p = if params_json.is_null() {
+        "[]"
+    } else {
+        (*params_json).as_str()
+    };
+
+    // Statement caching
+    STMT_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        let counter = map.entry((c.to_string(), s.to_string())).or_insert(0);
+        *counter += 1;
+    });
+
     #[cfg(target_arch = "wasm32")]
     {
         let c_str = c.to_string();
@@ -1702,27 +2332,32 @@ pub unsafe extern "C" fn rocFxDbQuery(
             match golem::rdbms::mysql::DbConnection::open(&c_str) {
                 Ok(conn) => match conn.query(&s_str, &[]) {
                     Ok(res) => {
-                        let cols: Vec<String> = res.columns.into_iter().map(|col| col.name).collect();
+                        let cols: Vec<String> =
+                            res.columns.into_iter().map(|col| col.name).collect();
                         let rows_count = res.rows.len();
                         Ok(serde_json::json!({
                             "columns": cols,
                             "rowCount": rows_count,
-                        }).to_string())
+                        })
+                        .to_string())
                     }
                     Err(e) => Err(format!("{:?}", e)),
                 },
                 Err(e) => Err(format!("{:?}", e)),
             }
         } else {
+            let pg_params = parse_pg_params(p);
             match golem::rdbms::postgres::DbConnection::open(&c_str) {
-                Ok(conn) => match conn.query(&s_str, Vec::new()) {
+                Ok(conn) => match conn.query(&s_str, pg_params) {
                     Ok(res) => {
-                        let cols: Vec<String> = res.columns.into_iter().map(|col| col.name).collect();
+                        let cols: Vec<String> =
+                            res.columns.into_iter().map(|col| col.name).collect();
                         let rows_count = res.rows.len();
                         Ok(serde_json::json!({
                             "columns": cols,
                             "rowCount": rows_count,
-                        }).to_string())
+                        })
+                        .to_string())
                     }
                     Err(e) => Err(format!("{:?}", e)),
                 },
@@ -1739,9 +2374,37 @@ pub unsafe extern "C" fn rocFxDbQuery(
         let _ = (c, s);
         let mock_res = serde_json::json!({
             "columns": ["id", "status"],
-            "rowCount": 1
-        }).to_string();
+            "rowCount": 1,
+            "params": p,
+        })
+        .to_string();
         ptr::write(out, RocResult::ok(RocStr::from_str(&mock_res)));
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn parse_pg_params(params_json: &str) -> Vec<golem::rdbms::postgres::DbValue> {
+    if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(params_json) {
+        items
+            .into_iter()
+            .map(|item| match item {
+                serde_json::Value::Null => golem::rdbms::postgres::DbValue::Null,
+                serde_json::Value::Bool(b) => golem::rdbms::postgres::DbValue::Boolean(b),
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        golem::rdbms::postgres::DbValue::Int8(i)
+                    } else if let Some(f) = n.as_f64() {
+                        golem::rdbms::postgres::DbValue::Float8(f)
+                    } else {
+                        golem::rdbms::postgres::DbValue::Text(n.to_string())
+                    }
+                }
+                serde_json::Value::String(s) => golem::rdbms::postgres::DbValue::Text(s),
+                other => golem::rdbms::postgres::DbValue::Json(other.to_string()),
+            })
+            .collect()
+    } else {
+        Vec::new()
     }
 }
 
@@ -2091,8 +2754,15 @@ mod tests {
     fn test_canary_release_suite() {
         // Assertion 1: Multi-Agent Discovery
         let types = GolemAgentHost::discover_agent_types().expect("failed to discover agent types");
-        assert!(types.iter().any(|t| t.type_name == "canary-release" && matches!(t.mode, AgentMode::Durable)));
-        assert!(types.iter().any(|t| t.type_name == "diagnostics-worker" && matches!(t.mode, AgentMode::Ephemeral)));
+        assert!(types
+            .iter()
+            .any(|t| t.type_name == "canary-release" && matches!(t.mode, AgentMode::Durable)));
+        assert!(
+            types
+                .iter()
+                .any(|t| t.type_name == "diagnostics-worker"
+                    && matches!(t.mode, AgentMode::Ephemeral))
+        );
 
         // Assertion 2: Ephemeral Direct Invocation
         WORKER_STATE.with(|s| {
@@ -2109,7 +2779,9 @@ mod tests {
         assert!(diag_init.is_ok());
         let diag_run = GolemAgentHost::invoke(
             "run_diagnostics".to_string(),
-            wrap_string_data_value("{\"service\":\"auth-service\",\"lines\":\"log line 1\\nlog line 2\"}".to_string()),
+            wrap_string_data_value(
+                "{\"service\":\"auth-service\",\"lines\":\"log line 1\\nlog line 2\"}".to_string(),
+            ),
             Principal::Anonymous,
         );
         assert!(diag_run.is_ok());
@@ -2142,8 +2814,14 @@ mod tests {
         assert!(start_out.contains("\"weight\":10") || start_out.contains("\"weight\": 10"));
 
         let state_after_start = get_current_state();
-        assert!(state_after_start.contains("\"weight\":10") || state_after_start.contains("\"weight\": 10"));
-        assert!(state_after_start.contains("\"canaryVersion\":\"v1.1.0\"") || state_after_start.contains("\"canaryVersion\": \"v1.1.0\""));
+        assert!(
+            state_after_start.contains("\"weight\":10")
+                || state_after_start.contains("\"weight\": 10")
+        );
+        assert!(
+            state_after_start.contains("\"canaryVersion\":\"v1.1.0\"")
+                || state_after_start.contains("\"canaryVersion\": \"v1.1.0\"")
+        );
 
         // Assertion 4: Read-only get_status skips state re-serialization
         let status_res = GolemAgentHost::invoke(
@@ -2162,8 +2840,14 @@ mod tests {
         );
         assert!(approve_res.is_ok());
         let state_after_approve = get_current_state();
-        assert!(state_after_approve.contains("\"weight\":100") || state_after_approve.contains("\"weight\": 100"));
-        assert!(state_after_approve.contains("\"activeVersion\":\"v1.1.0\"") || state_after_approve.contains("\"activeVersion\": \"v1.1.0\""));
+        assert!(
+            state_after_approve.contains("\"weight\":100")
+                || state_after_approve.contains("\"weight\": 100")
+        );
+        assert!(
+            state_after_approve.contains("\"activeVersion\":\"v1.1.0\"")
+                || state_after_approve.contains("\"activeVersion\": \"v1.1.0\"")
+        );
 
         // Assertion 6b: Emergency Rollback
         let rollback_res = GolemAgentHost::invoke(
@@ -2173,7 +2857,10 @@ mod tests {
         );
         assert!(rollback_res.is_ok());
         let state_after_rollback = get_current_state();
-        assert!(state_after_rollback.contains("\"weight\":0") || state_after_rollback.contains("\"weight\": 0"));
+        assert!(
+            state_after_rollback.contains("\"weight\":0")
+                || state_after_rollback.contains("\"weight\": 0")
+        );
 
         // Assertion 5: Unhealthy Log Abort
         let unhealthy_start_res = GolemAgentHost::invoke(
@@ -2186,12 +2873,17 @@ mod tests {
         assert!(unhealthy_out.contains("aborted_unhealthy"));
         // Weight remains 0
         let state_after_unhealthy = get_current_state();
-        assert!(state_after_unhealthy.contains("\"weight\":0") || state_after_unhealthy.contains("\"weight\": 0"));
+        assert!(
+            state_after_unhealthy.contains("\"weight\":0")
+                || state_after_unhealthy.contains("\"weight\": 0")
+        );
 
         // Assertion 7: Tool Surface Parity (analyze_logs)
         let tool_call_res = GolemAgentHost::invoke(
             "analyze_logs".to_string(),
-            wrap_string_data_value("service log line\\nPANIC: out of memory\\nworker line".to_string()),
+            wrap_string_data_value(
+                "service log line\\nPANIC: out of memory\\nworker line".to_string(),
+            ),
             Principal::Anonymous,
         );
         assert!(tool_call_res.is_ok());
@@ -2256,7 +2948,9 @@ mod tests {
         let test_file = temp_dir.join("roc_binary_test.bin");
         let path_str = test_file.to_str().unwrap();
 
-        let binary_payload = vec![0x00u8, 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0xFE];
+        let binary_payload = vec![
+            0x00u8, 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0xFE,
+        ];
         let roc_path = RocStr::from_str(path_str);
         let roc_bytes = RocList::from_slice(&binary_payload);
 
@@ -2287,7 +2981,10 @@ mod tests {
         let mut kv_get_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         unsafe {
             rocFxKvGetBytes(&bucket, &key, kv_get_out.as_mut_ptr());
-            let res = kv_get_out.assume_init().into_result().expect("kv get failed");
+            let res = kv_get_out
+                .assume_init()
+                .into_result()
+                .expect("kv get failed");
             assert_eq!(res.as_slice(), binary_payload.as_slice());
         }
 
@@ -2303,7 +3000,10 @@ mod tests {
         let mut blob_get_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         unsafe {
             rocFxBlobGetBytes(&container, &object, blob_get_out.as_mut_ptr());
-            let res = blob_get_out.assume_init().into_result().expect("blob get failed");
+            let res = blob_get_out
+                .assume_init()
+                .into_result()
+                .expect("blob get failed");
             assert_eq!(res.as_slice(), binary_payload.as_slice());
         }
     }
@@ -2317,7 +3017,10 @@ mod tests {
         let mut handle_out = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
         let handle = unsafe {
             rocFxGetSecretHandle(&secret_name, handle_out.as_mut_ptr());
-            handle_out.assume_init().into_result().expect("failed to get secret handle")
+            handle_out
+                .assume_init()
+                .into_result()
+                .expect("failed to get secret handle")
         };
         assert!(handle > 0);
 
@@ -2325,7 +3028,10 @@ mod tests {
         let mut handle_out_2 = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
         let handle_2 = unsafe {
             rocFxGetSecretHandle(&secret_name, handle_out_2.as_mut_ptr());
-            handle_out_2.assume_init().into_result().expect("failed to get existing handle")
+            handle_out_2
+                .assume_init()
+                .into_result()
+                .expect("failed to get existing handle")
         };
         assert_eq!(handle, handle_2);
 
@@ -2341,7 +3047,10 @@ mod tests {
         let mut reveal_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let revealed = unsafe {
             rocFxRevealSecret(handle, reveal_out.as_mut_ptr());
-            reveal_out.assume_init().into_result().expect("failed to reveal secret")
+            reveal_out
+                .assume_init()
+                .into_result()
+                .expect("failed to reveal secret")
         };
         assert_eq!(revealed.as_str(), "super-secret-token-12345");
 
@@ -2363,12 +3072,16 @@ mod tests {
                     "handle": handle
                 }
             ]
-        }).to_string();
+        })
+        .to_string();
         let roc_req = RocStr::from_str(&http_req_json);
         let mut http_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let http_res = unsafe {
             rocFxHttpRequest(&roc_req, http_out.as_mut_ptr());
-            http_out.assume_init().into_result().expect("http request failed")
+            http_out
+                .assume_init()
+                .into_result()
+                .expect("http request failed")
         };
         assert!(http_res.as_str().contains("\"injected_headers_count\":1"));
     }
@@ -2379,7 +3092,10 @@ mod tests {
         let mut key_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let key = unsafe {
             rocFxGenerateIdempotencyKey(key_out.as_mut_ptr());
-            key_out.assume_init().into_result().expect("failed to generate idempotency key")
+            key_out
+                .assume_init()
+                .into_result()
+                .expect("failed to generate idempotency key")
         };
         assert!(!key.as_str().is_empty());
 
@@ -2392,7 +3108,10 @@ mod tests {
         let mut promise_out = MaybeUninit::<RocResult<u64, RocStr>>::uninit();
         let promise_handle = unsafe {
             rocFxCreatePromise(promise_out.as_mut_ptr());
-            promise_out.assume_init().into_result().expect("failed to create promise")
+            promise_out
+                .assume_init()
+                .into_result()
+                .expect("failed to create promise")
         };
         assert!(promise_handle > 0);
 
@@ -2400,9 +3119,14 @@ mod tests {
         let mut webhook_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let webhook_url = unsafe {
             rocFxCreateWebhook(promise_handle, webhook_out.as_mut_ptr());
-            webhook_out.assume_init().into_result().expect("failed to create webhook")
+            webhook_out
+                .assume_init()
+                .into_result()
+                .expect("failed to create webhook")
         };
-        assert!(webhook_url.as_str().contains(&format!("{}", promise_handle)));
+        assert!(webhook_url
+            .as_str()
+            .contains(&format!("{}", promise_handle)));
 
         // Get promise before completion should return err (not yet completed)
         let mut get_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
@@ -2417,7 +3141,10 @@ mod tests {
         let mut complete_out = MaybeUninit::<RocResult<bool, RocStr>>::uninit();
         let completed = unsafe {
             rocFxCompletePromise(promise_handle, &roc_payload, complete_out.as_mut_ptr());
-            complete_out.assume_init().into_result().expect("failed to complete promise")
+            complete_out
+                .assume_init()
+                .into_result()
+                .expect("failed to complete promise")
         };
         assert!(completed);
 
@@ -2425,7 +3152,10 @@ mod tests {
         let mut get_out_completed = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         let retrieved = unsafe {
             rocFxGetPromise(promise_handle, get_out_completed.as_mut_ptr());
-            get_out_completed.assume_init().into_result().expect("failed to get completed promise")
+            get_out_completed
+                .assume_init()
+                .into_result()
+                .expect("failed to get completed promise")
         };
         assert_eq!(retrieved.as_slice(), payload.as_slice());
 
@@ -2448,7 +3178,10 @@ mod tests {
         let mut connect_out = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
         let handle = unsafe {
             rocFxWsConnect(&ws_url, connect_out.as_mut_ptr());
-            connect_out.assume_init().into_result().expect("ws connect failed")
+            connect_out
+                .assume_init()
+                .into_result()
+                .expect("ws connect failed")
         };
         assert!(handle > 0);
 
@@ -2464,7 +3197,10 @@ mod tests {
         let mut recv_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let received = unsafe {
             rocFxWsReceive(handle, recv_out.as_mut_ptr());
-            recv_out.assume_init().into_result().expect("ws receive failed")
+            recv_out
+                .assume_init()
+                .into_result()
+                .expect("ws receive failed")
         };
         assert_eq!(received.as_str(), "hello websocket");
 
@@ -2498,7 +3234,10 @@ mod tests {
         let mut invoke_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let inv_res = unsafe {
             rocFxRpcInvoke(&target, &method, &payload, invoke_out.as_mut_ptr());
-            invoke_out.assume_init().into_result().expect("rpc invoke failed")
+            invoke_out
+                .assume_init()
+                .into_result()
+                .expect("rpc invoke failed")
         };
         assert!(inv_res.as_str().contains("rpc_invoked"));
 
@@ -2506,7 +3245,10 @@ mod tests {
         let mut sched_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let sched_res = unsafe {
             rocFxRpcSchedule(&target, &method, &payload, 5000, sched_out.as_mut_ptr());
-            sched_out.assume_init().into_result().expect("rpc schedule failed")
+            sched_out
+                .assume_init()
+                .into_result()
+                .expect("rpc schedule failed")
         };
         assert!(sched_res.as_str().contains("scheduled"));
         assert!(sched_res.as_str().contains("5000"));
@@ -2515,7 +3257,10 @@ mod tests {
         let mut fnf_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let fnf_res = unsafe {
             rocFxRpcFireAndForget(&target, &method, &payload, fnf_out.as_mut_ptr());
-            fnf_out.assume_init().into_result().expect("rpc fire and forget failed")
+            fnf_out
+                .assume_init()
+                .into_result()
+                .expect("rpc fire and forget failed")
         };
         assert!(fnf_res.as_str().contains("rpc_fired"));
 
@@ -2543,7 +3288,10 @@ mod tests {
         let mut conf_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let conf_val = unsafe {
             rocFxConfigGet(&conf_key, conf_out.as_mut_ptr());
-            conf_out.assume_init().into_result().expect("failed to get config key")
+            conf_out
+                .assume_init()
+                .into_result()
+                .expect("failed to get config key")
         };
         assert_eq!(conf_val.as_str(), "config_test_val_99");
 
@@ -2572,7 +3320,10 @@ mod tests {
         let mut headers_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let headers_res = unsafe {
             rocFxTraceHeaders(headers_out.as_mut_ptr());
-            headers_out.assume_init().into_result().expect("failed to get trace headers")
+            headers_out
+                .assume_init()
+                .into_result()
+                .expect("failed to get trace headers")
         };
         assert!(headers_res.as_str().contains("traceparent"));
 
@@ -2594,7 +3345,10 @@ mod tests {
         let mut exec_out = MaybeUninit::<RocResult<u64, RocStr>>::uninit();
         let count = unsafe {
             rocFxDbExecute(&pg_conn, &sql_stmt, exec_out.as_mut_ptr());
-            exec_out.assume_init().into_result().expect("db execute failed")
+            exec_out
+                .assume_init()
+                .into_result()
+                .expect("db execute failed")
         };
         assert_eq!(count, 1);
 
@@ -2602,9 +3356,74 @@ mod tests {
         let mut query_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let query_res = unsafe {
             rocFxDbQuery(&pg_conn, &sql_query, query_out.as_mut_ptr());
-            query_out.assume_init().into_result().expect("db query failed")
+            query_out
+                .assume_init()
+                .into_result()
+                .expect("db query failed")
         };
         assert!(query_res.as_str().contains("\"columns\""));
         assert!(query_res.as_str().contains("\"rowCount\""));
+
+        // 6. Parameterized DB Queries & Caching
+        let params_json = RocStr::from_str("[1, \"active\"]");
+        let mut param_exec_out = MaybeUninit::<RocResult<u64, RocStr>>::uninit();
+        let param_exec_res = unsafe {
+            rocFxDbExecuteParams(
+                &pg_conn,
+                &sql_stmt,
+                &params_json,
+                param_exec_out.as_mut_ptr(),
+            );
+            param_exec_out
+                .assume_init()
+                .into_result()
+                .expect("db execute with params failed")
+        };
+        assert_eq!(param_exec_res, 1);
+
+        // 7. Binary RPC
+        let raw_bytes = vec![1u8, 2, 3, 4, 5];
+        let roc_raw_bytes = RocList::from_slice(&raw_bytes);
+        let target = RocStr::from_str("worker-peer-99");
+        let method = RocStr::from_str("process_bytes");
+        let mut bin_rpc_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        let returned_bytes = unsafe {
+            rocFxRpcInvokeBytes(&target, &method, &roc_raw_bytes, bin_rpc_out.as_mut_ptr());
+            bin_rpc_out
+                .assume_init()
+                .into_result()
+                .expect("binary rpc failed")
+        };
+        assert_eq!(returned_bytes.as_slice(), raw_bytes.as_slice());
+
+        // 8. Chunked HTTP Response Streams
+        let stream_req =
+            RocStr::from_str("{\"url\":\"https://api.example.com/stream\",\"method\":\"GET\"}");
+        let stream_body = RocList::from_slice(&[10u8, 20, 30, 40]);
+        let mut stream_open_out = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
+        let stream_handle = unsafe {
+            rocFxHttpStreamOpen(&stream_req, &stream_body, stream_open_out.as_mut_ptr());
+            stream_open_out
+                .assume_init()
+                .into_result()
+                .expect("failed to open http stream")
+        };
+        assert!(stream_handle > 0);
+
+        let mut read_chunk_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        let chunk = unsafe {
+            rocFxHttpStreamRead(stream_handle, 2, read_chunk_out.as_mut_ptr());
+            read_chunk_out
+                .assume_init()
+                .into_result()
+                .expect("failed to read chunk")
+        };
+        assert_eq!(chunk.as_slice(), &[10u8, 20]);
+
+        let mut close_stream_out = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxHttpStreamClose(stream_handle, close_stream_out.as_mut_ptr());
+            assert!(close_stream_out.assume_init().into_result().is_ok());
+        }
     }
 }

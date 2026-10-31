@@ -47,6 +47,14 @@ module [
 	revertAgent,
 	dbExecute,
 	dbQuery,
+	rpcInvokeBytes,
+	rpcScheduleBytes,
+	rpcFireAndForgetBytes,
+	httpStreamOpen,
+	httpStreamReadChunk,
+	httpStreamClose,
+	dbExecuteParams,
+	dbQueryParams,
 ]
 
 import Types exposing [LogLevel, PersistenceMode]
@@ -92,6 +100,18 @@ rpcSchedule = |targetWorker, fnName, payload, delayMillis|
 rpcFireAndForget : Str, Str, Str -> Effect(Result(Str, Str))
 rpcFireAndForget = |targetWorker, fnName, payload|
 	Effect(|_| rocFxRpcFireAndForget(targetWorker, fnName, payload))
+
+rpcInvokeBytes : Str, Str, List(U8) -> Effect(Result(List(U8), Str))
+rpcInvokeBytes = |targetWorker, fnName, payload|
+	Effect(|_| rocFxRpcInvokeBytes(targetWorker, fnName, payload))
+
+rpcScheduleBytes : Str, Str, List(U8), U64 -> Effect(Result(List(U8), Str))
+rpcScheduleBytes = |targetWorker, fnName, payload, delayMillis|
+	Effect(|_| rocFxRpcScheduleBytes(targetWorker, fnName, payload, delayMillis))
+
+rpcFireAndForgetBytes : Str, Str, List(U8) -> Effect(Result({}, Str))
+rpcFireAndForgetBytes = |targetWorker, fnName, payload|
+	Effect(|_| rocFxRpcFireAndForgetBytes(targetWorker, fnName, payload))
 
 setPersistenceMode : PersistenceMode -> Effect({})
 setPersistenceMode = |mode|
@@ -332,9 +352,29 @@ dbExecute : Str, Str -> Effect(Result(U64, Str))
 dbExecute = |connStr, sql|
 	Effect(|_| rocFxDbExecute(connStr, sql))
 
+dbExecuteParams : Str, Str, Str -> Effect(Result(U64, Str))
+dbExecuteParams = |connStr, sql, paramsJson|
+	Effect(|_| rocFxDbExecuteParams(connStr, sql, paramsJson))
+
 dbQuery : Str, Str -> Effect(Result(Str, Str))
 dbQuery = |connStr, sql|
 	Effect(|_| rocFxDbQuery(connStr, sql))
+
+dbQueryParams : Str, Str, Str -> Effect(Result(Str, Str))
+dbQueryParams = |connStr, sql, paramsJson|
+	Effect(|_| rocFxDbQueryParams(connStr, sql, paramsJson))
+
+httpStreamOpen : Str, List(U8) -> Effect(Result(U32, Str))
+httpStreamOpen = |reqJson, bodyBytes|
+	Effect(|_| rocFxHttpStreamOpen(reqJson, bodyBytes))
+
+httpStreamReadChunk : U32, U64 -> Effect(Result(List(U8), Str))
+httpStreamReadChunk = |handle, maxBytes|
+	Effect(|_| rocFxHttpStreamRead(handle, maxBytes))
+
+httpStreamClose : U32 -> Effect(Result({}, Str))
+httpStreamClose = |handle|
+	Effect(|_| rocFxHttpStreamClose(handle))
 
 rocFxConfigGet : Str -> Result(Str, Str)
 
@@ -352,4 +392,20 @@ rocFxRevertAgent : U64 -> Result({}, Str)
 
 rocFxDbExecute : Str, Str -> Result(U64, Str)
 
+rocFxDbExecuteParams : Str, Str, Str -> Result(U64, Str)
+
 rocFxDbQuery : Str, Str -> Result(Str, Str)
+
+rocFxDbQueryParams : Str, Str, Str -> Result(Str, Str)
+
+rocFxRpcInvokeBytes : Str, Str, List(U8) -> Result(List(U8), Str)
+
+rocFxRpcScheduleBytes : Str, Str, List(U8), U64 -> Result(List(U8), Str)
+
+rocFxRpcFireAndForgetBytes : Str, Str, List(U8) -> Result({}, Str)
+
+rocFxHttpStreamOpen : Str, List(U8) -> Result(U32, Str)
+
+rocFxHttpStreamRead : U32, U64 -> Result(List(U8), Str)
+
+rocFxHttpStreamClose : U32 -> Result({}, Str)

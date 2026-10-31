@@ -77,6 +77,14 @@ module [
 	revertAgent,
 	dbExecute,
 	dbQuery,
+	rpcBytes,
+	rpcScheduleBytes,
+	rpcFireAndForgetBytes,
+	httpStreamOpen,
+	httpStreamReadChunk,
+	httpStreamClose,
+	dbExecuteParams,
+	dbQueryParams,
 ]
 
 import Types exposing [
@@ -724,6 +732,19 @@ rpcFireAndForget : Str, Method(_in, _out), Str -> Effect.Effect(Result(Str, Str)
 rpcFireAndForget = |targetWorker, m, payload|
 	Effect.rpcFireAndForget(targetWorker, m.name, payload)
 
+## Binary Remote Procedure Call (Direct bytes over WasmRpc)
+rpcBytes : Str, Method(_in, _out), List(U8) -> Effect.Effect(Result(List(U8), Str))
+rpcBytes = |targetWorker, m, payload|
+	Effect.rpcInvokeBytes(targetWorker, m.name, payload)
+
+rpcScheduleBytes : Str, Method(_in, _out), List(U8), U64 -> Effect.Effect(Result(List(U8), Str))
+rpcScheduleBytes = |targetWorker, m, payload, delayMillis|
+	Effect.rpcScheduleBytes(targetWorker, m.name, payload, delayMillis)
+
+rpcFireAndForgetBytes : Str, Method(_in, _out), List(U8) -> Effect.Effect(Result({}, Str))
+rpcFireAndForgetBytes = |targetWorker, m, payload|
+	Effect.rpcFireAndForgetBytes(targetWorker, m.name, payload)
+
 ## Typed Remote Procedure Call with input and output codecs
 rpcTyped :
 	Str,
@@ -963,8 +984,33 @@ dbExecute : Str, Str -> Effect.Effect(Result(U64, Str))
 dbExecute = |connStr, sql|
 	Effect.dbExecute(connStr, sql)
 
+## Execute a parameterized SQL statement on PostgreSQL or MySQL database with JSON parameters
+dbExecuteParams : Str, Str, Str -> Effect.Effect(Result(U64, Str))
+dbExecuteParams = |connStr, sql, paramsJson|
+	Effect.dbExecuteParams(connStr, sql, paramsJson)
+
 ## Execute a SQL query on PostgreSQL or MySQL database returning JSON results
 dbQuery : Str, Str -> Effect.Effect(Result(Str, Str))
 dbQuery = |connStr, sql|
 	Effect.dbQuery(connStr, sql)
+
+## Execute a parameterized SQL query on PostgreSQL or MySQL database returning JSON results
+dbQueryParams : Str, Str, Str -> Effect.Effect(Result(Str, Str))
+dbQueryParams = |connStr, sql, paramsJson|
+	Effect.dbQueryParams(connStr, sql, paramsJson)
+
+## Open a chunked streaming HTTP response stream (returns stream handle)
+httpStreamOpen : Str, List(U8) -> Effect.Effect(Result(U32, Str))
+httpStreamOpen = |reqJson, bodyBytes|
+	Effect.httpStreamOpen(reqJson, bodyBytes)
+
+## Read up to maxBytes chunk from an active HTTP response stream (empty list signifies EOF)
+httpStreamReadChunk : U32, U64 -> Effect.Effect(Result(List(U8), Str))
+httpStreamReadChunk = |handle, maxBytes|
+	Effect.httpStreamReadChunk(handle, maxBytes)
+
+## Close an active HTTP response stream handle
+httpStreamClose : U32 -> Effect.Effect(Result({}, Str))
+httpStreamClose = |handle|
+	Effect.httpStreamClose(handle)
 

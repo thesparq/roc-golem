@@ -8,7 +8,11 @@ pub unsafe extern "C" fn roc__main_init_for_host_1_exposed_generic(
     config: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let cfg_str = if config.is_null() { "{}" } else { (*config).as_str() };
+    let cfg_str = if config.is_null() {
+        "{}"
+    } else {
+        (*config).as_str()
+    };
     let agent_type = if let Ok(val) = serde_json::from_str::<serde_json::Value>(cfg_str) {
         val.get("agent_type")
             .and_then(|v| v.as_str())
@@ -34,8 +38,16 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
     message: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let msg_str = if message.is_null() { "" } else { (*message).as_str() };
-    let state_str = if state.is_null() { "{}" } else { (*state).as_str() };
+    let msg_str = if message.is_null() {
+        ""
+    } else {
+        (*message).as_str()
+    };
+    let state_str = if state.is_null() {
+        "{}"
+    } else {
+        (*state).as_str()
+    };
 
     let mut agent_type = String::new();
     let mut method = String::new();
@@ -63,7 +75,10 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
             "state": "",
             "response": "{\"healthy\": true, \"faults\": 0}",
         });
-        ptr::write(out, RocResult::ok(RocStr::from_str(&payload_val.to_string())));
+        ptr::write(
+            out,
+            RocResult::ok(RocStr::from_str(&payload_val.to_string())),
+        );
         return;
     }
 
@@ -117,14 +132,16 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
                     "pendingTimerHandle": 0,
                     "approvalWebhookUrl": "",
                     "events": ["coordinator_initialized", "canary_aborted: faults detected"]
-                }).to_string(),
+                })
+                .to_string(),
                 serde_json::json!({
                     "status": "aborted_unhealthy",
                     "version": "v1.1.0",
                     "weight": 0,
                     "approvalWebhookUrl": "",
                     "faults": 1
-                }).to_string(),
+                })
+                .to_string(),
             )
         } else {
             (
@@ -148,7 +165,8 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
             )
         }
     } else if method == "approve_gate" {
-        let is_approved = input.contains("\"approved\":true") || input.contains("\"approved\": true");
+        let is_approved =
+            input.contains("\"approved\":true") || input.contains("\"approved\": true");
         if is_approved {
             (
                 serde_json::json!({
@@ -160,7 +178,8 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
                     "pendingTimerHandle": 0,
                     "approvalWebhookUrl": "",
                     "events": ["coordinator_initialized", "promoted v1.1.0 to 100%"]
-                }).to_string(),
+                })
+                .to_string(),
                 String::from("Promoted v1.1.0 to 100% (approved by alice)"),
             )
         } else {
@@ -174,7 +193,8 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
                     "pendingTimerHandle": 0,
                     "approvalWebhookUrl": "",
                     "events": ["coordinator_initialized", "canary rejected"]
-                }).to_string(),
+                })
+                .to_string(),
                 String::from("Canary rejected by bob"),
             )
         }
@@ -189,11 +209,24 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
                 "pendingTimerHandle": 0,
                 "approvalWebhookUrl": "",
                 "events": ["coordinator_initialized", "emergency_rollback: critical issue"]
-            }).to_string(),
+            })
+            .to_string(),
             String::from("Rolled back to 0%: critical issue"),
         )
-    } else if method == "analyze_logs" || method == "analyze-logs" || method == "calculator" || method == "echo" || method == "get_count" || method == "stream_message" {
-        ptr::write(out, RocResult::err(RocStr::from_str(&format!("Method '{}' not found, trying tool", method))));
+    } else if method == "analyze_logs"
+        || method == "analyze-logs"
+        || method == "calculator"
+        || method == "echo"
+        || method == "get_count"
+        || method == "stream_message"
+    {
+        ptr::write(
+            out,
+            RocResult::err(RocStr::from_str(&format!(
+                "Method '{}' not found, trying tool",
+                method
+            ))),
+        );
         return;
     } else {
         (
@@ -216,8 +249,16 @@ pub unsafe extern "C" fn roc__main_handle_tool_call_for_host_1_exposed_generic(
     tool_call_json: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
-    let call_str = if tool_call_json.is_null() { "{}" } else { (*tool_call_json).as_str() };
-    let state_str = if state.is_null() { "{}" } else { (*state).as_str() };
+    let call_str = if tool_call_json.is_null() {
+        "{}"
+    } else {
+        (*tool_call_json).as_str()
+    };
+    let state_str = if state.is_null() {
+        "{}"
+    } else {
+        (*state).as_str()
+    };
 
     let mut tool_name = String::from("default");
     let mut call_id = String::from("call-1");
