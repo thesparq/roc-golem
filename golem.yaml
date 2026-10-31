@@ -23,21 +23,6 @@ httpApi:
       - subdomain: canary
 
 components:
-  roc-golem:counter:
-    dir: "examples/counter"
-    componentWasm: "../../build/counter_agent.wasm"
-    build:
-      - command: "../../tooling/build.sh counter"
-  roc-golem:ai-tool:
-    dir: "examples/ai_tool"
-    componentWasm: "../../build/ai_tool_agent.wasm"
-    build:
-      - command: "../../tooling/build.sh ai_tool"
-  roc-golem:streaming-agent:
-    dir: "examples/streaming_agent"
-    componentWasm: "../../build/streaming_agent_agent.wasm"
-    build:
-      - command: "../../tooling/build.sh streaming_agent"
   roc-golem:canary-release:
     dir: "examples/canary_release"
     componentWasm: "../../build/canary_release_agent.wasm"
