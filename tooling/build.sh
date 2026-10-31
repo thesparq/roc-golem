@@ -66,8 +66,8 @@ build_app() {
 
     # Step 1: Format & validate Roc code
     if command -v roc &> /dev/null; then
-        echo "==> Validating Roc Agent format ($APP_FILE)..."
-        roc fmt --check "$APP_FILE" "$PLATFORM_DIR/main.roc"
+        echo "==> Formatting & validating Roc code ($APP_FILE)..."
+        roc fmt "$APP_FILE" "$PLATFORM_DIR/main.roc"
     fi
 
     # Step 2: Componentize WASM module with generic Golem WIT interfaces
