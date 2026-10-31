@@ -125,9 +125,10 @@ case "$COMMAND" in
         build_app "counter"
         build_app "ai_tool"
         build_app "streaming_agent"
+        build_app "canary_release"
         package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
-    counter|ai_tool|streaming_agent)
+    counter|ai_tool|streaming_agent|canary_release)
         build_app "$COMMAND"
         ;;
     all)
@@ -135,6 +136,7 @@ case "$COMMAND" in
         build_app "counter"
         build_app "ai_tool"
         build_app "streaming_agent"
+        build_app "canary_release"
         package_platform "v0.1.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)

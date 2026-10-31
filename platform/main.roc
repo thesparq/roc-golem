@@ -18,75 +18,110 @@ import Types exposing [
 	ToolDefinition,
 	ToolParameter,
 	ToolCall,
+	MethodDeclaration,
+	AgentMode,
 ]
 import Golem
 
 ## Entry point for agent initialization called by Rust Host
 main_init_for_host : Str -> Result(Str, Str)
-main_init_for_host = |config_str|
-	match agent.init(config_str) {
-		Ok(initial_model) =>
-			Ok(agent.serializeState(initial_model))
+main_init_for_host = |envelope_or_config| {
+	agent_type = extract_json_field(envelope_or_config, "agent_type") ?? ""
+	config = extract_json_field(envelope_or_config, "config") ?? envelope_or_config
+	match find_agent_by_name(agent.agents, agent_type) {
+		Err(err) => Err(err),
+		Ok(target_agent) => (target_agent.init)(config),
+	}
+}
 
-		Err(err) =>
-			Err(err)
-		}
-
-## Entry point for handling a message called by Rust Host
+## Entry point for handling a message or typed method call by Rust Host
 main_handle_message_for_host : Str, Str -> Result(Str, Str)
-main_handle_message_for_host = |state_json, message_str|
-	match agent.deserializeState(state_json) {
-		Err(err) =>
-			Err("Failed to deserialize state: ${err}")
+main_handle_message_for_host = |state_json, envelope_or_msg| {
+	agent_type = extract_json_field(envelope_or_msg, "agent_type") ?? ""
+	method_name = extract_json_field(envelope_or_msg, "method") ?? ""
+	input_str = extract_json_field(envelope_or_msg, "input") ?? envelope_or_msg
 
-		Ok(current_model) =>
-			match agent.handleMessage(current_model, message_str) {
-				Ok({ state: next_model, response }) => {
-					next_state_json = agent.serializeState(next_model)
-					escaped_response = escape_json_str(response)
-					Ok("{\"state\":${next_state_json},\"response\":\"${escaped_response}\"}")
+	match find_agent_by_name(agent.agents, agent_type) {
+		Err(err) => Err(err),
+		Ok(target_agent) =>
+			if Str.is_empty(method_name) || method_name == "handle-message" || method_name == "message" {
+				match (target_agent.handleMessage)(state_json, input_str) {
+					Ok(res) => {
+						escaped_response = escape_json_str(res.response)
+						Ok("{\"state\":\"${res.nextStateJson}\",\"response\":\"${escaped_response}\"}")
+					}
+					Err(err) => Err(err),
 				}
-
-				Err(err) =>
-					Err(err)
+			} else {
+				match (target_agent.invokeMethod)(method_name, state_json, input_str) {
+					Ok(res) => {
+						escaped_out = escape_json_str(res.out)
+						Ok("{\"state\":\"${res.nextStateJson}\",\"response\":\"${escaped_out}\"}")
+					}
+					Err(err) => Err(err),
 				}
-		}
+			},
+	}
+}
 
 ## Entry point for handling a tool invocation called by Rust Host
 main_handle_tool_call_for_host : Str, Str -> Result(Str, Str)
-main_handle_tool_call_for_host = |state_json, tool_call_json|
-	match agent.deserializeState(state_json) {
-		Err(err) =>
-			Err("Failed to deserialize state: ${err}")
-
-		Ok(current_model) => {
-			parsed_call = parse_tool_call(tool_call_json)
-			match agent.handleToolCall(current_model, parsed_call) {
-				Ok({ state: next_model, result }) => {
-					next_state_json = agent.serializeState(next_model)
-					success_str = if result.success "true" else "false"
-					escaped_output = escape_json_str(result.output)
-					Ok("{\"state\":${next_state_json},\"success\":${success_str},\"output\":\"${escaped_output}\"}")
+main_handle_tool_call_for_host = |state_json, tool_call_json| {
+	agent_type = extract_json_field(tool_call_json, "agent_type") ?? ""
+	parsed_call = parse_tool_call(tool_call_json)
+	match find_agent_by_name(agent.agents, agent_type) {
+		Err(err) => Err(err),
+		Ok(target_agent) =>
+			match (target_agent.handleToolCall)(state_json, parsed_call) {
+				Ok(res) => {
+					success_str = if res.result.success "true" else "false"
+					escaped_output = escape_json_str(res.result.output)
+					Ok("{\"state\":\"${res.nextStateJson}\",\"success\":${success_str},\"output\":\"${escaped_output}\"}")
 				}
-
-				Err(err) =>
-					Err(err)
-				}
-		}
+				Err(err) => Err(err),
+			},
 	}
+}
 
 ## Expose metadata to Rust Host as a JSON string
 main_metadata_for_host : Str
 main_metadata_for_host = {
-	meta = agent.metadata
+	agents_json =
+		agent.agents
+			|> List.map(format_agent_metadata)
+			|> Str.join_with(",")
+	"{\"agents\":[${agents_json}]}"
+}
+
+format_agent_metadata : Golem.ErasedAgent -> Str
+format_agent_metadata = |erased| {
+	meta = erased.metadata
+	name_escaped = escape_json_str(meta.name)
+	version_escaped = escape_json_str(meta.version)
+	desc_escaped = escape_json_str(meta.description)
+	mode_str =
+		match meta.mode {
+			Durable => "durable",
+			Ephemeral => "ephemeral",
+		}
 	tools_json =
 		meta.tools
 			|> List.map(format_tool_definition)
 			|> Str.join_with(",")
-	name_escaped = escape_json_str(meta.name)
-	version_escaped = escape_json_str(meta.version)
-	desc_escaped = escape_json_str(meta.description)
-	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"tools\":[${tools_json}]}"
+	methods_json =
+		meta.methods
+			|> List.map(format_method_declaration)
+			|> Str.join_with(",")
+	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"mode\":\"${mode_str}\",\"methods\":[${methods_json}],\"tools\":[${tools_json}]}"
+}
+
+format_method_declaration : MethodDeclaration -> Str
+format_method_declaration = |m| {
+	name_escaped = escape_json_str(m.name)
+	desc_escaped = escape_json_str(m.description)
+	hint_escaped = escape_json_str(m.promptHint)
+	ro_str = if m.readOnly "true" else "false"
+	"{\"name\":\"${name_escaped}\",\"description\":\"${desc_escaped}\",\"prompt_hint\":\"${hint_escaped}\",\"read_only\":${ro_str}}"
 }
 
 format_tool_definition : ToolDefinition -> Str
@@ -131,11 +166,30 @@ extract_json_field = |json, field_name| {
 	match Str.split_first(json, target) {
 		Ok({ after }) =>
 			match Str.split_first(after, "\"") {
-				Ok({ before }) => Ok(before)
-				Err(_) => Err(NotFound)
+				Ok({ before }) => Ok(before),
+				Err(_) => Err(NotFound),
 			}
 
 		Err(_) =>
-			Err(NotFound)
+			Err(NotFound),
 		}
 }
+
+find_agent_by_name : List(Golem.ErasedAgent), Str -> Result(Golem.ErasedAgent, Str)
+find_agent_by_name = |agents, target_name|
+	if Str.is_empty(target_name) {
+		match agents {
+			[] => Err("No agents defined in component"),
+			[first, ..] => Ok(first),
+		}
+	} else {
+		match agents {
+			[] => Err("Agent type '${target_name}' not found"),
+			[first, .. as rest] =>
+				if first.metadata.name == target_name {
+					Ok(first)
+				} else {
+					find_agent_by_name(rest, target_name)
+				},
+		}
+	}

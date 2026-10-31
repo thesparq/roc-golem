@@ -1,14 +1,38 @@
 module [
 	Metadata,
+	MethodDeclaration,
+	AgentMode,
 	ToolDefinition,
 	ToolParameter,
 	ToolCall,
 	ToolResult,
 	PersistenceMode,
 	LogLevel,
+	SecretHandle,
+	SecretHeader,
 ]
 
-## Types representing Golem Agent Metadata and Tool specifications
+## Types representing Golem Agent Metadata, Methods, and Tool specifications
+
+SecretHandle : U32
+
+SecretHeader : {
+	name : Str,
+	prefix : Str,
+	handle : SecretHandle,
+}
+
+AgentMode : [
+	Durable,
+	Ephemeral,
+]
+
+MethodDeclaration : {
+	name : Str,
+	description : Str,
+	promptHint : Str,
+	readOnly : Bool,
+}
 
 ToolParameter : {
 	name : Str,
@@ -28,6 +52,8 @@ Metadata : {
 	version : Str,
 	description : Str,
 	tools : List(ToolDefinition),
+	methods : List(MethodDeclaration),
+	mode : AgentMode,
 }
 
 ToolCall : {

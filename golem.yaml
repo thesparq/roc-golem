@@ -13,6 +13,25 @@ environments:
     server: cloud
     componentPresets: release
 
+tools:
+  analyze-logs:
+    description: "Scans log lines for panics and OOMs"
+    component: roc-golem:canary-release
+    method: analyze_logs
+
+httpApi:
+  - path: /webhooks/canary/{service}/gate-approve
+    method: POST
+    component: roc-golem:canary-release
+    worker: "canary-release({service})"
+    methodName: approve_gate
+  - path: /canary/{id}/*
+    method: GET
+    component: roc-golem:canary-release
+    worker: "canary-release({id})"
+    httpMount:
+      pathPrefix: "/canary/{id}"
+
 components:
   roc-golem:counter:
     dir: "examples/counter"
@@ -29,3 +48,10 @@ components:
     componentWasm: "../../build/streaming_agent_agent.wasm"
     build:
       - command: "../../tooling/build.sh streaming_agent"
+  roc-golem:canary-release:
+    dir: "examples/canary_release"
+    componentWasm: "../../build/canary_release_agent.wasm"
+    build:
+      - command: "../../tooling/build.sh canary_release"
+    httpMount:
+      pathPrefix: "/canary/{id}"

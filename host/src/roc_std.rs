@@ -1,3 +1,5 @@
+#![allow(clippy::missing_safety_doc, clippy::should_implement_trait)]
+
 use core::alloc::Layout;
 use core::fmt;
 use core::mem::{self, ManuallyDrop};
@@ -168,10 +170,6 @@ impl RocStr {
     pub fn as_str(&self) -> &str {
         str::from_utf8(self.as_slice()).unwrap_or("")
     }
-
-    pub fn to_string(&self) -> String {
-        String::from(self.as_str())
-    }
 }
 
 impl Clone for RocStr {
@@ -251,6 +249,67 @@ impl<T> RocList<T> {
     }
 }
 
+impl<T: Copy> RocList<T> {
+    pub fn from_slice(slice: &[T]) -> Self {
+        let len = slice.len();
+        if len == 0 {
+            return Self::empty();
+        }
+        let bytes_len = core::mem::size_of_val(slice);
+        let align = mem::align_of::<usize>().max(mem::align_of::<T>()) as u32;
+        let header_size = mem::size_of::<isize>().max(mem::align_of::<T>());
+        let total_size = header_size + bytes_len;
+        unsafe {
+            let data_ptr = roc_alloc(total_size, align);
+            *(data_ptr as *mut isize) = 1;
+            let elems_ptr = data_ptr.add(header_size) as *mut T;
+            ptr::copy_nonoverlapping(slice.as_ptr(), elems_ptr, len);
+            Self {
+                ptr: elems_ptr,
+                len,
+                capacity: len,
+            }
+        }
+    }
+}
+
+impl<T: Copy> Clone for RocList<T> {
+    fn clone(&self) -> Self {
+        Self::from_slice(self.as_slice())
+    }
+}
+
+impl<T> Drop for RocList<T> {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() && self.capacity > 0 {
+            unsafe {
+                let header_size = mem::size_of::<isize>().max(mem::align_of::<T>());
+                let data_ptr = (self.ptr as *mut u8).sub(header_size);
+                let ref_count = data_ptr as *mut isize;
+                *ref_count -= 1;
+                if *ref_count <= 0 {
+                    let align = mem::align_of::<usize>().max(mem::align_of::<T>()) as u32;
+                    roc_dealloc(data_ptr, align);
+                }
+            }
+        }
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for RocList<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.as_slice()).finish()
+    }
+}
+
+impl<T: PartialEq> PartialEq for RocList<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: Eq> Eq for RocList<T> {}
+
 /// Roc Result (RocResult<T, E>) layout
 #[repr(C)]
 pub struct RocResult<T, E> {
@@ -311,5 +370,21 @@ impl<T, E> Drop for RocResult<T, E> {
         } else {
             unsafe { ManuallyDrop::drop(&mut self.payload.err) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_roclist_from_slice_and_drop() {
+        let sample_bytes = b"Hello binary world! \x00\xFF\xFE\x80";
+        let roc_list = RocList::from_slice(sample_bytes);
+        assert_eq!(roc_list.len(), sample_bytes.len());
+        assert_eq!(roc_list.as_slice(), sample_bytes);
+        let cloned = roc_list.clone();
+        assert_eq!(cloned.as_slice(), sample_bytes);
+        assert_eq!(roc_list, cloned);
     }
 }
