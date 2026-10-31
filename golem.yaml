@@ -1,7 +1,7 @@
 # Schema for IDEA / VSCode:
-# $schema: https://schema.golem.cloud/app/golem/1.5.0/golem.schema.json
+# $schema: https://schema.golem.cloud/app/golem/1.6.0/golem.schema.json
 
-manifestVersion: 1.5.0
+manifestVersion: 1.6.0
 
 app: roc-golem
 
@@ -15,22 +15,14 @@ environments:
 
 tools:
   analyze-logs:
-    description: "Scans log lines for panics and OOMs"
     component: roc-golem:canary-release
-    method: analyze_logs
 
 httpApi:
-  - path: /webhooks/canary/{service}/gate-approve
-    method: POST
-    component: roc-golem:canary-release
-    worker: "canary-release({service})"
-    methodName: approve_gate
-  - path: /canary/{id}/*
-    method: GET
-    component: roc-golem:canary-release
-    worker: "canary-release({id})"
-    httpMount:
-      pathPrefix: "/canary/{id}"
+  deployments:
+    local:
+      - subdomain: canary
+    cloud:
+      - subdomain: canary
 
 components:
   roc-golem:counter:
@@ -53,5 +45,3 @@ components:
     componentWasm: "../../build/canary_release_agent.wasm"
     build:
       - command: "../../tooling/build.sh canary_release"
-    httpMount:
-      pathPrefix: "/canary/{id}"
