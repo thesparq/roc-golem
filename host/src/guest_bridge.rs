@@ -5,8 +5,8 @@ use core::ptr;
 
 #[no_mangle]
 pub unsafe extern "C" fn main_init_for_host(
-    config: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
+    config: *mut RocStr,
 ) {
     let cfg_str = if config.is_null() {
         "{}"
@@ -34,9 +34,9 @@ pub unsafe extern "C" fn main_init_for_host(
 
 #[no_mangle]
 pub unsafe extern "C" fn main_handle_message_for_host(
+    out: *mut RocResult<RocStr, RocStr>,
     state: *mut RocStr,
     message: *mut RocStr,
-    out: *mut RocResult<RocStr, RocStr>,
 ) {
     let msg_str = if message.is_null() {
         ""
@@ -245,9 +245,9 @@ pub unsafe extern "C" fn main_handle_message_for_host(
 
 #[no_mangle]
 pub unsafe extern "C" fn main_handle_tool_call_for_host(
+    out: *mut RocResult<RocStr, RocStr>,
     state: *mut RocStr,
     tool_call_json: *mut RocStr,
-    out: *mut RocResult<RocStr, RocStr>,
 ) {
     let call_str = if tool_call_json.is_null() {
         "{}"

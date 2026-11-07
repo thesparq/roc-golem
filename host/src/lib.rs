@@ -15,16 +15,16 @@ use guest_bridge::*;
 
 #[cfg(not(feature = "stub-guest"))]
 extern "C" {
-    pub fn main_init_for_host(config: *mut RocStr, out: *mut RocResult<RocStr, RocStr>);
+    pub fn main_init_for_host(out: *mut RocResult<RocStr, RocStr>, config: *mut RocStr);
     pub fn main_handle_message_for_host(
+        out: *mut RocResult<RocStr, RocStr>,
         state: *mut RocStr,
         message: *mut RocStr,
-        out: *mut RocResult<RocStr, RocStr>,
     );
     pub fn main_handle_tool_call_for_host(
+        out: *mut RocResult<RocStr, RocStr>,
         state: *mut RocStr,
         tool_call_json: *mut RocStr,
-        out: *mut RocResult<RocStr, RocStr>,
     );
     pub fn main_metadata_for_host(out: *mut RocStr);
 }
@@ -272,6 +272,72 @@ pub struct MockPromise {
     pub payload: Vec<u8>,
 }
 
+#[cfg(target_arch = "wasm32")]
+pub struct GlobalCell<T> {
+    cell: core::cell::UnsafeCell<Option<RefCell<T>>>,
+    init: fn() -> T,
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe impl<T> Sync for GlobalCell<T> {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> GlobalCell<T> {
+    pub const fn new(init: fn() -> T) -> Self {
+        GlobalCell {
+            cell: core::cell::UnsafeCell::new(None),
+            init,
+        }
+    }
+
+    pub fn with<R>(&self, f: impl FnOnce(&RefCell<T>) -> R) -> R {
+        unsafe {
+            let ptr = self.cell.get();
+            if (*ptr).is_none() {
+                *ptr = Some(RefCell::new((self.init)()));
+            }
+            let ref_cell = (*ptr).as_ref().unwrap();
+            f(ref_cell)
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn default_worker_state() -> WorkerState {
+    WorkerState {
+        active_agent_type: None,
+        current_state_json: None,
+        is_ephemeral: false,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+static WORKER_STATE: GlobalCell<WorkerState> = GlobalCell::new(default_worker_state);
+#[cfg(target_arch = "wasm32")]
+static KV_STORE: GlobalCell<HashMap<(String, String), Vec<u8>>> = GlobalCell::new(HashMap::new);
+#[cfg(target_arch = "wasm32")]
+static BLOB_STORE: GlobalCell<HashMap<(String, String), Vec<u8>>> = GlobalCell::new(HashMap::new);
+#[cfg(target_arch = "wasm32")]
+static SECRETS: GlobalCell<Vec<Option<SecretEntry>>> = GlobalCell::new(Vec::new);
+#[cfg(target_arch = "wasm32")]
+pub static SECRET_ENV: GlobalCell<HashMap<String, String>> = GlobalCell::new(HashMap::new);
+#[cfg(target_arch = "wasm32")]
+static WS_TABLE: GlobalCell<Vec<Option<golem::websocket::client::WebsocketConnection>>> =
+    GlobalCell::new(Vec::new);
+#[cfg(target_arch = "wasm32")]
+static WS_MOCK_MESSAGES: GlobalCell<HashMap<u32, Vec<String>>> = GlobalCell::new(HashMap::new);
+#[cfg(target_arch = "wasm32")]
+static PROMISE_TABLE: GlobalCell<Vec<Option<golem::core::types::PromiseId>>> =
+    GlobalCell::new(Vec::new);
+#[cfg(target_arch = "wasm32")]
+static MOCK_PROMISES: GlobalCell<HashMap<u64, MockPromise>> = GlobalCell::new(HashMap::new);
+#[cfg(target_arch = "wasm32")]
+static HTTP_STREAM_TABLE: GlobalCell<Vec<Option<wasi::io::streams::InputStream>>> =
+    GlobalCell::new(Vec::new);
+#[cfg(target_arch = "wasm32")]
+static STMT_CACHE: GlobalCell<HashMap<(String, String), u64>> = GlobalCell::new(HashMap::new);
+
+#[cfg(not(target_arch = "wasm32"))]
 thread_local! {
     static WORKER_STATE: RefCell<WorkerState> = const {
         RefCell::new(WorkerState {
@@ -296,10 +362,6 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
     static MOCK_PROMISES: RefCell<HashMap<u64, MockPromise>> =
         RefCell::new(HashMap::new());
-    #[cfg(target_arch = "wasm32")]
-    static HTTP_STREAM_TABLE: RefCell<Vec<Option<wasi::io::streams::InputStream>>> =
-        const { RefCell::new(Vec::new()) };
-    #[cfg(not(target_arch = "wasm32"))]
     static MOCK_HTTP_STREAMS: RefCell<HashMap<u32, Vec<u8>>> =
         RefCell::new(HashMap::new());
     static STMT_CACHE: RefCell<HashMap<(String, String), u64>> =
@@ -2447,7 +2509,8 @@ impl Guest for GolemAgentHost {
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
         unsafe {
-            main_init_for_host(&mut roc_config, roc_out.as_mut_ptr());
+            main_init_for_host(roc_out.as_mut_ptr(), &mut roc_config);
+            core::mem::forget(roc_config);
             let res = roc_out.assume_init().into_result();
             match res {
                 Ok(new_state) => {
@@ -2503,7 +2566,9 @@ impl Guest for GolemAgentHost {
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
         unsafe {
-            main_handle_message_for_host(&mut roc_state, &mut roc_message, roc_out.as_mut_ptr());
+            main_handle_message_for_host(roc_out.as_mut_ptr(), &mut roc_state, &mut roc_message);
+            core::mem::forget(roc_state);
+            core::mem::forget(roc_message);
             let res = roc_out.assume_init().into_result();
             match res {
                 Ok(response_payload) => {
@@ -2556,10 +2621,12 @@ impl Guest for GolemAgentHost {
                     let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
                     main_handle_tool_call_for_host(
+                        roc_out.as_mut_ptr(),
                         &mut roc_state,
                         &mut roc_call,
-                        roc_out.as_mut_ptr(),
                     );
+                    core::mem::forget(roc_state);
+                    core::mem::forget(roc_call);
                     let res = roc_out.assume_init().into_result();
                     match res {
                         Ok(result_payload) => {

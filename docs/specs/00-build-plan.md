@@ -25,7 +25,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 **04. Layer 4 runtime test**
 *What it builds:* A runtime test that deploys the `counter` component built from real Roc to a local Golem server 1.6, invokes it, restarts the worker, and checks the count. The exact commands are recorded in `docs/feature-checklist.md`.
 *Dependencies:* 01, 02, 03.
-*Status:* Spec written.
+*Status:* Complete.
 
 ## Phase 1 — Make every effect honest
 

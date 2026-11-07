@@ -150,8 +150,8 @@ impl RocStr {
 
                 let mut roc_str = Self::empty();
                 roc_str.words[0] = str_bytes_ptr as usize;
-                roc_str.words[1] = len;
-                roc_str.words[2] = len; // capacity
+                roc_str.words[1] = len; // capacity
+                roc_str.words[2] = len; // length
                 roc_str
             }
         }
@@ -168,7 +168,7 @@ impl RocStr {
         } else {
             unsafe {
                 let ptr = self.words[0] as *const u8;
-                let len = self.words[1];
+                let len = self.words[2];
                 if ptr.is_null() || len == 0 {
                     &[]
                 } else {
@@ -197,16 +197,18 @@ impl Drop for RocStr {
     fn drop(&mut self) {
         if !self.is_small() {
             let data_ptr = self.words[0] as *mut u8;
-            let capacity = self.words[2];
+            let capacity = self.words[1];
             if !data_ptr.is_null() && capacity > 0 {
                 unsafe {
                     let header_size = mem::size_of::<isize>();
                     let ptr = data_ptr.sub(header_size);
                     let ref_count = ptr as *mut isize;
-                    *ref_count -= 1;
-                    if *ref_count <= 0 {
-                        let align = mem::align_of::<usize>() as u32;
-                        roc_dealloc(ptr, align);
+                    if *ref_count > 0 {
+                        *ref_count -= 1;
+                        if *ref_count == 0 {
+                            let align = mem::align_of::<usize>() as u32;
+                            roc_dealloc(ptr, align);
+                        }
                     }
                 }
             }
@@ -297,10 +299,12 @@ impl<T> Drop for RocList<T> {
                 let header_size = mem::size_of::<isize>().max(mem::align_of::<T>());
                 let data_ptr = (self.ptr as *mut u8).sub(header_size);
                 let ref_count = data_ptr as *mut isize;
-                *ref_count -= 1;
-                if *ref_count <= 0 {
-                    let align = mem::align_of::<usize>().max(mem::align_of::<T>()) as u32;
-                    roc_dealloc(data_ptr, align);
+                if *ref_count > 0 {
+                    *ref_count -= 1;
+                    if *ref_count == 0 {
+                        let align = mem::align_of::<usize>().max(mem::align_of::<T>()) as u32;
+                        roc_dealloc(data_ptr, align);
+                    }
                 }
             }
         }
@@ -340,7 +344,7 @@ impl<T, E> RocResult<T, E> {
             payload: RocResultPayload {
                 ok: ManuallyDrop::new(value),
             },
-            discriminant: 0,
+            discriminant: 1,
         }
     }
 
@@ -349,20 +353,20 @@ impl<T, E> RocResult<T, E> {
             payload: RocResultPayload {
                 err: ManuallyDrop::new(error),
             },
-            discriminant: 1,
+            discriminant: 0,
         }
     }
 
     pub fn is_ok(&self) -> bool {
-        self.discriminant == 0
+        self.discriminant == 1
     }
 
     pub fn is_err(&self) -> bool {
-        self.discriminant != 0
+        self.discriminant == 0
     }
 
     pub fn into_result(mut self) -> Result<T, E> {
-        if self.discriminant == 0 {
+        if self.discriminant == 1 {
             let ok = unsafe { ManuallyDrop::take(&mut self.payload.ok) };
             mem::forget(self);
             Ok(ok)
@@ -376,7 +380,7 @@ impl<T, E> RocResult<T, E> {
 
 impl<T, E> Drop for RocResult<T, E> {
     fn drop(&mut self) {
-        if self.discriminant == 0 {
+        if self.discriminant == 1 {
             unsafe { ManuallyDrop::drop(&mut self.payload.ok) };
         } else {
             unsafe { ManuallyDrop::drop(&mut self.payload.err) };

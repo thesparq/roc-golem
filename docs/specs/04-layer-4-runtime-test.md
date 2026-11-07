@@ -2,7 +2,7 @@
 
 - **Unit:** 04
 - **File:** `docs/specs/04-layer-4-runtime-test.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Phase:** Phase 0 — Make it real (final unit of Phase 0)
 - **Fixes:** `docs/feature-checklist.md` tests 3, 5, 6, 7, 8; `docs/testing.md` Layer 4 requirement
 
@@ -101,10 +101,10 @@ The test harness verifies the following feature checklist capabilities:
 
 ## 5. Verification Criteria
 
-- [ ] `./tooling/test_runtime.sh` starts a local Golem server cleanly on port 9881.
-- [ ] `./tooling/test_runtime.sh` successfully deploys real `build/counter_agent.wasm`.
-- [ ] Worker `counter-test-worker` is created and initialized.
-- [ ] Calling `increment` 3 times increases count to 3.
-- [ ] Restarting or interrupting/recovering the worker preserves count at 3.
-- [ ] Server process is cleanly shut down on exit without lingering background processes.
-- [ ] Feature checklist rows 3, 5, 6, 7, 8 are verified against real runtime behavior.
+- [x] `./tooling/test_runtime.sh` starts a local Golem server cleanly on port 9881.
+- [x] `./tooling/test_runtime.sh` successfully deploys real `build/counter_agent.wasm`.
+- [x] Worker `counter-test-worker` is created and initialized.
+- [x] Calling `increment` 3 times increases count to 3.
+- [x] Restarting or interrupting/recovering the worker preserves count at 3.
+- [x] Server process is cleanly shut down on exit without lingering background processes.
+- [x] Feature checklist rows 3, 5, 6, 7, 8 are verified against real runtime behavior.

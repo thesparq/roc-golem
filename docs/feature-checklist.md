@@ -12,7 +12,7 @@ Run these against a **local Golem server, version 1.6**, with components built f
 |---|------|-----|----------|:---:|
 | 1 | Build one example | `./tooling/build.sh counter` | a component appears in `build/` and `wasm-tools validate` accepts it (KI-01) | **PASSED** (2026-11-07) |
 | 2 | Examples differ | build all four examples; compare `sha256sum build/*_agent.wasm` | four different hashes (KI-01) | **PASSED** (2026-11-07) |
-| 3 | Deploy | add the `counter` component to a running local Golem server | the component is accepted and its agent type is listed | Pending Runtime (Unit 04) |
+| 3 | Deploy | add the `counter` component to a running local Golem server | the component is accepted and its agent type is listed | **PASSED** (2026-11-07) |
 | 4 | Agent definitions | ask the server for the agent types of `canary_release` | two agent types: the `canary-release` coordinator (durable) and the diagnostics worker (ephemeral) | Pending Runtime (Unit 04) |
 
 ---
@@ -21,10 +21,10 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 | # | Test | How | Expected | Status |
 |---|------|-----|----------|:---:|
-| 5 | First call | on a new worker, call `increment` once | the reply reports the new count | Pending Runtime (Unit 04) |
-| 6 | State across calls | call `increment` three times, then `get` | 3 (KI-03) | Resolved in Unit 02; Pending Runtime (Unit 04) |
-| 7 | State across restart | restart the worker, then `get` | still 3 (KI-03) | Resolved in Unit 02; Pending Runtime (Unit 04) |
-| 8 | Awkward state text | use an agent whose state holds quotes, backslashes, newlines, non-ASCII text and an empty string; save, then load | exactly the same text comes back (KI-03, KI-09) | Resolved in Unit 02; Pending Runtime (Unit 04) |
+| 5 | First call | on a new worker, call `increment` once | the reply reports the new count | **PASSED** (2026-11-07) |
+| 6 | State across calls | call `increment` three times, then `get` | 3 (KI-03) | **PASSED** (2026-11-07) |
+| 7 | State across restart | restart the worker, then `get` | still 3 (KI-03) | **PASSED** (2026-11-07) |
+| 8 | Awkward state text | use an agent whose state holds quotes, backslashes, newlines, non-ASCII text and an empty string; save, then load | exactly the same text comes back (KI-03, KI-09) | **PASSED** (2026-11-07) |
 
 ---
 

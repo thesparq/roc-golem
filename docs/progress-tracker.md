@@ -2,13 +2,28 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 0 — Make it real (2026-11-07)
+### Current Phase: Phase 0 — Make it real (2026-11-07) — COMPLETE!
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Unit 01, Unit 02 & Unit 03 Complete & Verified** (`docs/specs/01-real-roc-build.md`, `docs/specs/02-valid-reply-envelopes.md`, `docs/specs/03-roc-in-ci.md`). Ready for Unit 04 (`Layer 4 runtime test`).
+Status: **Phase 0 Complete! Units 01, 02, 03 & 04 Complete & Verified.** Real pure functional Roc agents deploy, mutate state, recover across crashes, and handle read-only invocations on real local Golem server infrastructure! Ready for Phase 1 (`Make every effect honest`).
 
 ## Done
+
+- **Unit 04 (Layer 4 Runtime Test Harness) Complete & Verified (2026-11-07)**:
+  - Created automated test harness `tooling/test_runtime.sh` deploying real `build/counter_agent.wasm` to local Golem server (v1.2.5 / 1.6).
+  - Aligned low-level Roc / Rust Host WebAssembly ABI:
+    - Fixed Roc C ABI return pointer order in `host/src/lib.rs` and `host/src/guest_bridge.rs` (return pointer is argument 0).
+    - Fixed `RocResult` discriminant (`Ok=1, Err=0`) matching Roc variant alphabetic ordering.
+    - Implemented `GlobalCell<T>` on `wasm32-unknown-unknown` linear memory to prevent thread-local storage destruction across invocations.
+    - Fixed `RocStr` 3-word struct layout (`words[0]=bytes, words[1]=capacity, words[2]=length`) and Drop refcount handling for static constants (`*ref_count > 0`).
+    - Fixed C ABI ownership conventions across host/guest boundary via `core::mem::forget` on parameters passed to Roc callee, eliminating double-free corruption in `dlmalloc`.
+  - Verified checklist tests against live Golem server:
+    - #3 Deploy component to local Golem server.
+    - #5 First call on new worker increments count to 1.
+    - #6 State preserved across multiple turns (count = 3).
+    - #7 Durable state recovered across simulated worker crash (`golem worker simulate-crash`).
+    - #8 Read-only bypass preserves state across repeated invocations without mutation.
 
 - **Unit 03 (Roc in CI) Complete & Verified (2026-11-07)**:
   - Consolidated duplicate CI workflows into unified `.github/workflows/ci.yaml` and deleted redundant `.github/workflows/ci.yml` (KI-12).
