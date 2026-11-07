@@ -10,30 +10,30 @@ State : {
 agent : Agent(State)
 agent = defineAgent({
 	init: |_config|
-		Ok({ count: 0 }),
+		Ok({ count: 0.I64 }),
 
 	handleMessage: |state, message|
 		match message {
 			"increment" => {
-				nextCount = state.count + 1
+				nextCount = state.count + 1.I64
 				Ok({
 					state: { count: nextCount },
-					response: "Counter incremented to ${Num.to_str(nextCount)}",
+					response: "Counter incremented to ${Str.inspect(nextCount)}",
 				})
 			}
 
 			"decrement" => {
-				nextCount = state.count - 1
+				nextCount = state.count - 1.I64
 				Ok({
 					state: { count: nextCount },
-					response: "Counter decremented to ${Num.to_str(nextCount)}",
+					response: "Counter decremented to ${Str.inspect(nextCount)}",
 				})
 			}
 
 			"get" =>
 				Ok({
 					state,
-					response: "Current count is ${Num.to_str(state.count)}",
+					response: "Current count is ${Str.inspect(state.count)}",
 				})
 
 			_ =>
@@ -41,7 +41,7 @@ agent = defineAgent({
 					state,
 					response: "Unknown command '${message}'. Available: increment, decrement, get",
 				})
-			},
+		},
 
 	handleToolCall: |state, toolCall|
 		match toolCall.name {
@@ -50,8 +50,8 @@ agent = defineAgent({
 					state,
 					result: {
 						id: toolCall.id,
-						success: Bool.true,
-						output: "{\"count\": ${Num.to_str(state.count)}}",
+						success: True,
+						output: "{\"count\": ${Str.inspect(state.count)}}",
 					},
 				})
 
@@ -60,11 +60,11 @@ agent = defineAgent({
 					state,
 					result: {
 						id: toolCall.id,
-						success: Bool.false,
+						success: False,
 						output: "Unknown tool ${toolCall.name}",
 					},
 				})
-			},
+		},
 
 	metadata: {
 		name: "counter-agent",
@@ -80,25 +80,22 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"count\":${Num.to_str(state.count)}}",
+		"{\"count\":${Str.inspect(state.count)}}",
 
 	deserializeState: |stateJson| {
+		count : I64
 		count =
 			match Str.split_first(stateJson, "\"count\":") {
-				Ok({ after }) => {
+				Ok({ after, .. }) => {
 					cleaned = Str.trim(after)
 					match Str.split_first(cleaned, "}") {
-						Ok({ before }) => Str.to_i64(Str.trim(before)) ?? 0
-						Err(_) => 0
+						Ok({ before, .. }) => I64.from_str(Str.trim(before)) ?? 0.I64
+						Err(_) => 0.I64
 					}
 				}
 
-				Err(_) => 0
+				Err(_) => 0.I64
 			}
-		Ok(
-			{
-				count
-			},
-		)
+		Ok({ count: count })
 	},
 })

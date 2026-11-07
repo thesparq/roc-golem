@@ -8,13 +8,77 @@ platform "golem"
 	]
 	packages {}
 	provides {
-		"roc__main_init_for_host_1_exposed_generic": main_init_for_host,
-		"roc__main_handle_message_for_host_1_exposed_generic": main_handle_message_for_host,
-		"roc__main_handle_tool_call_for_host_1_exposed_generic": main_handle_tool_call_for_host,
-		"roc__main_metadata_for_host_1_exposed_generic": main_metadata_for_host,
+		"main_init_for_host": main_init_for_host,
+		"main_handle_message_for_host": main_handle_message_for_host!,
+		"main_handle_tool_call_for_host": main_handle_tool_call_for_host!,
+		"main_metadata_for_host": main_metadata_for_host,
+	}
+	hosted {
+		"rocFxLog": Effect.rocFxLog!,
+		"rocFxGetWorkerId": Effect.rocFxGetWorkerId!,
+		"rocFxRpcInvoke": Effect.rocFxRpcInvoke!,
+		"rocFxRpcSchedule": Effect.rocFxRpcSchedule!,
+		"rocFxRpcFireAndForget": Effect.rocFxRpcFireAndForget!,
+		"rocFxSetPersistence": Effect.rocFxSetPersistence!,
+		"rocFxHttpRequest": Effect.rocFxHttpRequest!,
+		"rocFxWsConnect": Effect.rocFxWsConnect!,
+		"rocFxWsSend": Effect.rocFxWsSend!,
+		"rocFxWsReceive": Effect.rocFxWsReceive!,
+		"rocFxWsClose": Effect.rocFxWsClose!,
+		"rocFxSleepMillis": Effect.rocFxSleepMillis!,
+		"rocFxNowMillis": Effect.rocFxNowMillis!,
+		"rocFxReadFileBytes": Effect.rocFxReadFileBytes!,
+		"rocFxWriteFileBytes": Effect.rocFxWriteFileBytes!,
+		"rocFxAppendFileBytes": Effect.rocFxAppendFileBytes!,
+		"rocFxReadFile": Effect.rocFxReadFile!,
+		"rocFxWriteFile": Effect.rocFxWriteFile!,
+		"rocFxKvGetBytes": Effect.rocFxKvGetBytes!,
+		"rocFxKvSetBytes": Effect.rocFxKvSetBytes!,
+		"rocFxKvGet": Effect.rocFxKvGet!,
+		"rocFxKvSet": Effect.rocFxKvSet!,
+		"rocFxBlobGetBytes": Effect.rocFxBlobGetBytes!,
+		"rocFxBlobPutBytes": Effect.rocFxBlobPutBytes!,
+		"rocFxBlobGet": Effect.rocFxBlobGet!,
+		"rocFxBlobPut": Effect.rocFxBlobPut!,
+		"rocFxHttpRequestBytes": Effect.rocFxHttpRequestBytes!,
+		"rocFxGetSecretHandle": Effect.rocFxGetSecretHandle!,
+		"rocFxRevealSecret": Effect.rocFxRevealSecret!,
+		"rocFxGenerateIdempotencyKey": Effect.rocFxGenerateIdempotencyKey!,
+		"rocFxGetOplogIndex": Effect.rocFxGetOplogIndex!,
+		"rocFxOplogCommit": Effect.rocFxOplogCommit!,
+		"rocFxCreatePromise": Effect.rocFxCreatePromise!,
+		"rocFxCompletePromise": Effect.rocFxCompletePromise!,
+		"rocFxGetPromise": Effect.rocFxGetPromise!,
+		"rocFxCreateWebhook": Effect.rocFxCreateWebhook!,
+		"rocFxConfigGet": Effect.rocFxConfigGet!,
+		"rocFxTraceId": Effect.rocFxTraceId!,
+		"rocFxSpanId": Effect.rocFxSpanId!,
+		"rocFxTraceHeaders": Effect.rocFxTraceHeaders!,
+		"rocFxGetIdempotenceMode": Effect.rocFxGetIdempotenceMode!,
+		"rocFxSetIdempotenceMode": Effect.rocFxSetIdempotenceMode!,
+		"rocFxRevertAgent": Effect.rocFxRevertAgent!,
+		"rocFxDbExecute": Effect.rocFxDbExecute!,
+		"rocFxDbExecuteParams": Effect.rocFxDbExecuteParams!,
+		"rocFxDbQuery": Effect.rocFxDbQuery!,
+		"rocFxDbQueryParams": Effect.rocFxDbQueryParams!,
+		"rocFxRpcInvokeBytes": Effect.rocFxRpcInvokeBytes!,
+		"rocFxRpcScheduleBytes": Effect.rocFxRpcScheduleBytes!,
+		"rocFxRpcFireAndForgetBytes": Effect.rocFxRpcFireAndForgetBytes!,
+		"rocFxHttpStreamOpen": Effect.rocFxHttpStreamOpen!,
+		"rocFxHttpStreamRead": Effect.rocFxHttpStreamRead!,
+		"rocFxHttpStreamClose": Effect.rocFxHttpStreamClose!,
+	}
+	targets: {
+		inputs_dir: "targets/",
+		wasm32: {
+			inputs: ["libroc_golem_host.a", app],
+			output: Shared,
+			exports: ["main_init_for_host", "main_handle_message_for_host", "main_handle_tool_call_for_host", "main_metadata_for_host", "golem:agent/guest@2.0.0#discover-agent-types", "golem:agent/guest@2.0.0#get-definition", "golem:agent/guest@2.0.0#initialize", "golem:agent/guest@2.0.0#invoke", "cabi_post_golem:agent/guest@2.0.0#discover-agent-types", "cabi_post_golem:agent/guest@2.0.0#get-definition", "cabi_post_golem:agent/guest@2.0.0#initialize", "cabi_post_golem:agent/guest@2.0.0#invoke", "cabi_realloc"],
+		},
 	}
 
 import Types exposing [
+	Result,
 	ToolDefinition,
 	ToolParameter,
 	ToolCall,
@@ -22,6 +86,7 @@ import Types exposing [
 	AgentMode,
 ]
 import Golem
+import Effect
 
 ## Entry point for agent initialization called by Rust Host
 main_init_for_host : Str -> Result(Str, Str)
@@ -29,20 +94,20 @@ main_init_for_host = |envelope_or_config| {
 	agent_type = extract_json_field(envelope_or_config, "agent_type") ?? ""
 	config = extract_json_field(envelope_or_config, "config") ?? envelope_or_config
 	match find_agent_by_name(agent.agents, agent_type) {
-		Err(err) => Err(err),
-		Ok(target_agent) => (target_agent.init)(config),
+		Err(err) => Err(err)
+		Ok(target_agent) => (target_agent.init)(config)
 	}
 }
 
 ## Entry point for handling a message or typed method call by Rust Host
-main_handle_message_for_host : Str, Str -> Result(Str, Str)
-main_handle_message_for_host = |state_json, envelope_or_msg| {
+main_handle_message_for_host! : Str, Str => Result(Str, Str)
+main_handle_message_for_host! = |state_json, envelope_or_msg| {
 	agent_type = extract_json_field(envelope_or_msg, "agent_type") ?? ""
 	method_name = extract_json_field(envelope_or_msg, "method") ?? ""
 	input_str = extract_json_field(envelope_or_msg, "input") ?? envelope_or_msg
 
 	match find_agent_by_name(agent.agents, agent_type) {
-		Err(err) => Err(err),
+		Err(err) => Err(err)
 		Ok(target_agent) =>
 			if Str.is_empty(method_name) or method_name == "handle-message" or method_name == "message" {
 				match (target_agent.handleMessage)(state_json, input_str) {
@@ -50,7 +115,7 @@ main_handle_message_for_host = |state_json, envelope_or_msg| {
 						escaped_response = escape_json_str(res.response)
 						Ok("{\"state\":\"${res.nextStateJson}\",\"response\":\"${escaped_response}\"}")
 					}
-					Err(err) => Err(err),
+					Err(err) => Err(err)
 				}
 			} else {
 				match (target_agent.invokeMethod)(method_name, state_json, input_str) {
@@ -58,19 +123,19 @@ main_handle_message_for_host = |state_json, envelope_or_msg| {
 						escaped_out = escape_json_str(res.out)
 						Ok("{\"state\":\"${res.nextStateJson}\",\"response\":\"${escaped_out}\"}")
 					}
-					Err(err) => Err(err),
+					Err(err) => Err(err)
 				}
-			},
+			}
 	}
 }
 
 ## Entry point for handling a tool invocation called by Rust Host
-main_handle_tool_call_for_host : Str, Str -> Result(Str, Str)
-main_handle_tool_call_for_host = |state_json, tool_call_json| {
+main_handle_tool_call_for_host! : Str, Str => Result(Str, Str)
+main_handle_tool_call_for_host! = |state_json, tool_call_json| {
 	agent_type = extract_json_field(tool_call_json, "agent_type") ?? ""
 	parsed_call = parse_tool_call(tool_call_json)
 	match find_agent_by_name(agent.agents, agent_type) {
-		Err(err) => Err(err),
+		Err(err) => Err(err)
 		Ok(target_agent) =>
 			match (target_agent.handleToolCall)(state_json, parsed_call) {
 				Ok(res) => {
@@ -78,14 +143,14 @@ main_handle_tool_call_for_host = |state_json, tool_call_json| {
 					escaped_output = escape_json_str(res.result.output)
 					Ok("{\"state\":\"${res.nextStateJson}\",\"success\":${success_str},\"output\":\"${escaped_output}\"}")
 				}
-				Err(err) => Err(err),
-			},
+				Err(err) => Err(err)
+			}
 	}
 }
 
 ## Expose metadata to Rust Host as a JSON string
-main_metadata_for_host : Str
-main_metadata_for_host = {
+main_metadata_for_host : {} -> Str
+main_metadata_for_host = |{}| {
 	agents_json =
 		agent.agents
 			|> List.map(format_agent_metadata)
@@ -101,8 +166,8 @@ format_agent_metadata = |erased| {
 	desc_escaped = escape_json_str(meta.description)
 	mode_str =
 		match meta.mode {
-			Durable => "durable",
-			Ephemeral => "ephemeral",
+			Durable => "durable"
+			Ephemeral => "ephemeral"
 		}
 	tools_json =
 		meta.tools
@@ -164,32 +229,32 @@ extract_json_field : Str, Str -> Result(Str, [NotFound])
 extract_json_field = |json, field_name| {
 	target = "\"${field_name}\":\""
 	match Str.split_first(json, target) {
-		Ok({ after }) =>
+		Ok({ after, .. }) =>
 			match Str.split_first(after, "\"") {
-				Ok({ before }) => Ok(before),
-				Err(_) => Err(NotFound),
+				Ok({ before, .. }) => Ok(before)
+				Err(_) => Err(NotFound)
 			}
 
 		Err(_) =>
-			Err(NotFound),
-		}
+			Err(NotFound)
+	}
 }
 
 find_agent_by_name : List(Golem.ErasedAgent), Str -> Result(Golem.ErasedAgent, Str)
 find_agent_by_name = |agents, target_name|
 	if Str.is_empty(target_name) {
 		match agents {
-			[] => Err("No agents defined in component"),
-			[first, ..] => Ok(first),
+			[] => Err("No agents defined in component")
+			[first, ..] => Ok(first)
 		}
 	} else {
 		match agents {
-			[] => Err("Agent type '${target_name}' not found"),
+			[] => Err("Agent type '${target_name}' not found")
 			[first, .. as rest] =>
 				if first.metadata.name == target_name {
 					Ok(first)
 				} else {
 					find_agent_by_name(rest, target_name)
-				},
+				}
 		}
 	}

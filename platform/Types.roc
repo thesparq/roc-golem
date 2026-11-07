@@ -1,4 +1,5 @@
 module [
+	Result,
 	Metadata,
 	MethodDeclaration,
 	AgentMode,
@@ -11,6 +12,9 @@ module [
 	SecretHandle,
 	SecretHeader,
 ]
+
+## Compatibility alias for Try in modern Roc
+Result(ok, err) : Try(ok, err)
 
 ## Types representing Golem Agent Metadata, Methods, and Tool specifications
 

@@ -11,7 +11,7 @@ State : {
 agent : Agent(State)
 agent = defineAgent({
 	init: |_config|
-		Ok({ invocations: 0, lastTool: "none" }),
+		Ok({ invocations: 0.I64, lastTool: "none" }),
 
 	handleMessage: |state, _message|
 		Ok({
@@ -20,14 +20,14 @@ agent = defineAgent({
 		}),
 
 	handleToolCall: |state, toolCall| {
-		nextInvocations = state.invocations + 1
+		nextInvocations = state.invocations + 1.I64
 		match toolCall.name {
 			"calculator" =>
 				Ok({
 					state: { invocations: nextInvocations, lastTool: "calculator" },
 					result: {
 						id: toolCall.id,
-						success: Bool.true,
+						success: True,
 						output: "{\"result\": 42}",
 					},
 				})
@@ -41,7 +41,7 @@ agent = defineAgent({
 					state: { invocations: nextInvocations, lastTool: "echo" },
 					result: {
 						id: toolCall.id,
-						success: Bool.true,
+						success: True,
 						output: "{\"echo\": \"${escapedArgs}\"}",
 					},
 				})
@@ -52,11 +52,11 @@ agent = defineAgent({
 					state,
 					result: {
 						id: toolCall.id,
-						success: Bool.false,
+						success: False,
 						output: "{\"error\": \"Tool not found\"}",
 					},
 				})
-			}
+		}
 	},
 
 	metadata: {
@@ -72,7 +72,7 @@ agent = defineAgent({
 						name: "expression",
 						description: "Math expression to evaluate",
 						paramType: "string",
-						required: Bool.true,
+						required: True,
 					},
 				],
 			},
@@ -84,7 +84,7 @@ agent = defineAgent({
 						name: "text",
 						description: "Text to echo",
 						paramType: "string",
-						required: Bool.true,
+						required: True,
 					},
 				],
 			},
@@ -92,29 +92,30 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"invocations\":${Num.to_str(state.invocations)},\"lastTool\":\"${state.lastTool}\"}",
+		"{\"invocations\":${Str.inspect(state.invocations)},\"lastTool\":\"${state.lastTool}\"}",
 
 	deserializeState: |stateJson| {
+		invocations : I64
 		invocations =
 			match Str.split_first(stateJson, "\"invocations\":") {
-				Ok({ after }) =>
+				Ok({ after, .. }) =>
 					match Str.split_first(after, ",") {
-						Ok({ before }) => Str.to_i64(Str.trim(before)) ?? 0
-						Err(_) => 0
+						Ok({ before, .. }) => I64.from_str(Str.trim(before)) ?? 0.I64
+						Err(_) => 0.I64
 					}
 
-				Err(_) => 0
+				Err(_) => 0.I64
 			}
 		lastTool =
 			match Str.split_first(stateJson, "\"lastTool\":\"") {
-				Ok({ after }) =>
+				Ok({ after, .. }) =>
 					match Str.split_first(after, "\"") {
-						Ok({ before }) => before
+						Ok({ before, .. }) => before
 						Err(_) => "none"
 					}
 
 				Err(_) => "none"
 			}
-		Ok({ invocations, lastTool })
+		Ok({ invocations: invocations, lastTool: lastTool })
 	},
 })

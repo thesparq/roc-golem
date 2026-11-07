@@ -22,6 +22,8 @@ module [
 	registerEffectfulTyped,
 	build,
 	bundle,
+	bundle2,
+	erase,
 	defineAgent,
 	logTrace,
 	logDebug,
@@ -57,8 +59,6 @@ module [
 	websocketClose,
 	sleep,
 	now,
-	SecretHandle,
-	SecretHeader,
 	getSecretHandle,
 	revealSecret,
 	generateIdempotencyKey,
@@ -88,6 +88,7 @@ module [
 ]
 
 import Types exposing [
+	Result,
 	Metadata,
 	MethodDeclaration,
 	AgentMode,
@@ -99,6 +100,7 @@ import Types exposing [
 	SecretHeader,
 ]
 import Effect
+
 
 ## Phantom-typed Method declaration
 Method(input, output) : {
@@ -118,7 +120,7 @@ method = |cfg| {
 ## Method handler tracking whether state changed
 Handler(state) : {
 	declaration : MethodDeclaration,
-	invoke : state, Str -> Result({ state : state, stateChanged : Bool, out : Str }, Str),
+	invoke : state, Str => Result({ state : state, stateChanged : Bool, out : Str }, Str),
 }
 
 ## Specification builder for a strongly-typed agent
@@ -130,7 +132,7 @@ Spec(state) : {
 	init : Str -> Result(state, Str),
 	handlers : List(Handler(state)),
 	tools : List(ToolDefinition),
-	toolHandler : state, ToolCall -> Result({ state : state, stateChanged : Bool, result : ToolResult }, Str),
+	toolHandler : state, ToolCall => Result({ state : state, stateChanged : Bool, result : ToolResult }, Str),
 	serializeState : state -> Str,
 	deserializeState : Str -> Result(state, Str),
 }
@@ -139,9 +141,9 @@ Spec(state) : {
 ErasedAgent : {
 	metadata : Metadata,
 	init : Str -> Result(Str, Str),
-	invokeMethod : Str, Str, Str -> Result({ nextStateJson : Str, stateChanged : Bool, out : Str }, Str),
-	handleToolCall : Str, ToolCall -> Result({ nextStateJson : Str, stateChanged : Bool, result : ToolResult }, Str),
-	handleMessage : Str, Str -> Result({ nextStateJson : Str, stateChanged : Bool, response : Str }, Str),
+	invokeMethod : Str, Str, Str => Result({ nextStateJson : Str, stateChanged : Bool, out : Str }, Str),
+	handleToolCall : Str, ToolCall => Result({ nextStateJson : Str, stateChanged : Bool, result : ToolResult }, Str),
+	handleMessage : Str, Str => Result({ nextStateJson : Str, stateChanged : Bool, response : Str }, Str),
 }
 
 ## Component Agent container (holds 1 or N bundled agents)
@@ -167,8 +169,8 @@ define = |meta, initFn, serializeFn, deserializeFn| {
 	toolHandler: |st, call|
 		Ok({
 			state: st,
-			stateChanged: Bool.false,
-			result: { id: call.id, success: Bool.false, output: "Tool not found: ${call.name}" },
+			stateChanged: False,
+			result: { id: call.id, success: False, output: "Tool not found: ${call.name}" },
 		}),
 	serializeState: serializeFn,
 	deserializeState: deserializeFn,
@@ -189,8 +191,8 @@ defineEphemeral = |meta| {
 	toolHandler: |st, call|
 		Ok({
 			state: st,
-			stateChanged: Bool.false,
-			result: { id: call.id, success: Bool.false, output: "Tool not found: ${call.name}" },
+			stateChanged: False,
+			result: { id: call.id, success: False, output: "Tool not found: ${call.name}" },
 		}),
 	serializeState: |_| "{}",
 	deserializeState: |_| Ok({}),
@@ -207,7 +209,7 @@ withToolHandler = |spec, handler| {
 	toolHandler: |st, call|
 		match handler(st, call) {
 			Ok({ state: nextSt, result }) =>
-				Ok({ state: nextSt, stateChanged: Bool.true, result }),
+				Ok({ state: nextSt, stateChanged: True, result }),
 			Err(e) => Err(e),
 		},
 }
@@ -219,7 +221,7 @@ withStatelessToolHandler = |spec, handler| {
 	toolHandler: |st, call|
 		match handler(call) {
 			Ok(result) =>
-				Ok({ state: st, stateChanged: Bool.false, result }),
+				Ok({ state: st, stateChanged: False, result }),
 			Err(e) => Err(e),
 		},
 }
@@ -230,9 +232,9 @@ withEffectfulToolHandler = |spec, handler| {
 	..spec,
 	toolHandler: |st, call| {
 		eff = handler(st, call)
-		match Effect.run(eff) {
+		match Effect.run!(eff) {
 			Ok({ state: nextSt, result }) =>
-				Ok({ state: nextSt, stateChanged: Bool.true, result }),
+				Ok({ state: nextSt, stateChanged: True, result }),
 			Err(e) => Err(e),
 		}
 	},
@@ -244,9 +246,9 @@ withEffectfulStatelessToolHandler = |spec, handler| {
 	..spec,
 	toolHandler: |st, call| {
 		eff = handler(call)
-		match Effect.run(eff) {
+		match Effect.run!(eff) {
 			Ok(result) =>
-				Ok({ state: st, stateChanged: Bool.false, result }),
+				Ok({ state: st, stateChanged: False, result }),
 			Err(e) => Err(e),
 		}
 	},
@@ -259,7 +261,7 @@ register = |spec, m, fn| {
 		name: m.name,
 		description: m.description,
 		promptHint: m.promptHint,
-		readOnly: Bool.false,
+		readOnly: False,
 	}
 	handler : Handler(state)
 	handler = {
@@ -267,7 +269,7 @@ register = |spec, m, fn| {
 		invoke: |st, inp|
 			match fn(st, inp) {
 				Ok({ state: nextSt, out }) =>
-					Ok({ state: nextSt, stateChanged: Bool.true, out }),
+					Ok({ state: nextSt, stateChanged: True, out }),
 				Err(e) => Err(e),
 			},
 	}
@@ -281,7 +283,7 @@ registerReadOnly = |spec, m, fn| {
 		name: m.name,
 		description: m.description,
 		promptHint: m.promptHint,
-		readOnly: Bool.true,
+		readOnly: True,
 	}
 	handler : Handler(state)
 	handler = {
@@ -289,7 +291,7 @@ registerReadOnly = |spec, m, fn| {
 		invoke: |st, inp|
 			match fn(st, inp) {
 				Ok(out) =>
-					Ok({ state: st, stateChanged: Bool.false, out }),
+					Ok({ state: st, stateChanged: False, out }),
 				Err(e) => Err(e),
 			},
 	}
@@ -303,7 +305,7 @@ registerEphemeral = |spec, m, fn| {
 		name: m.name,
 		description: m.description,
 		promptHint: m.promptHint,
-		readOnly: Bool.false,
+		readOnly: False,
 	}
 	handler : Handler({})
 	handler = {
@@ -311,7 +313,7 @@ registerEphemeral = |spec, m, fn| {
 		invoke: |st, inp|
 			match fn(inp) {
 				Ok(out) =>
-					Ok({ state: st, stateChanged: Bool.false, out }),
+					Ok({ state: st, stateChanged: False, out }),
 				Err(e) => Err(e),
 			},
 	}
@@ -331,7 +333,7 @@ registerTyped = |spec, m, fn, decodeInput, encodeOutput| {
 		name: m.name,
 		description: m.description,
 		promptHint: m.promptHint,
-		readOnly: Bool.false,
+		readOnly: False,
 	}
 	handler : Handler(state)
 	handler = {
@@ -342,7 +344,7 @@ registerTyped = |spec, m, fn, decodeInput, encodeOutput| {
 				Ok(parsedInp) =>
 					match fn(st, parsedInp) {
 						Ok({ state: nextSt, out }) =>
-							Ok({ state: nextSt, stateChanged: Bool.true, out: encodeOutput(out) }),
+							Ok({ state: nextSt, stateChanged: True, out: encodeOutput(out) }),
 						Err(e) => Err(e),
 					},
 			},
@@ -363,7 +365,7 @@ registerReadOnlyTyped = |spec, m, fn, decodeInput, encodeOutput| {
 		name: m.name,
 		description: m.description,
 		promptHint: m.promptHint,
-		readOnly: Bool.true,
+		readOnly: True,
 	}
 	handler : Handler(state)
 	handler = {
@@ -374,7 +376,7 @@ registerReadOnlyTyped = |spec, m, fn, decodeInput, encodeOutput| {
 				Ok(parsedInp) =>
 					match fn(st, parsedInp) {
 						Ok(out) =>
-							Ok({ state: st, stateChanged: Bool.false, out: encodeOutput(out) }),
+							Ok({ state: st, stateChanged: False, out: encodeOutput(out) }),
 						Err(e) => Err(e),
 					},
 			},
@@ -395,7 +397,7 @@ registerEphemeralTyped = |spec, m, fn, decodeInput, encodeOutput| {
 		name: m.name,
 		description: m.description,
 		promptHint: m.promptHint,
-		readOnly: Bool.false,
+		readOnly: False,
 	}
 	handler : Handler({})
 	handler = {
@@ -406,7 +408,7 @@ registerEphemeralTyped = |spec, m, fn, decodeInput, encodeOutput| {
 				Ok(parsedInp) =>
 					match fn(parsedInp) {
 						Ok(out) =>
-							Ok({ state: st, stateChanged: Bool.false, out: encodeOutput(out) }),
+							Ok({ state: st, stateChanged: False, out: encodeOutput(out) }),
 						Err(e) => Err(e),
 					},
 			},
@@ -425,16 +427,16 @@ registerEffectful = |spec, m, fn| {
 		name: m.name,
 		description: m.description,
 		promptHint: m.promptHint,
-		readOnly: Bool.false,
+		readOnly: False,
 	}
 	handler : Handler(state)
 	handler = {
 		declaration: decl,
 		invoke: |st, rawInp| {
 			eff = fn(st, rawInp)
-			match Effect.run(eff) {
+			match Effect.run!(eff) {
 				Ok({ state: nextSt, out }) =>
-					Ok({ state: nextSt, stateChanged: Bool.true, out }),
+					Ok({ state: nextSt, stateChanged: True, out }),
 				Err(e) => Err(e),
 			}
 		},
@@ -455,7 +457,7 @@ registerEffectfulTyped = |spec, m, fn, decodeInput, encodeOutput| {
 		name: m.name,
 		description: m.description,
 		promptHint: m.promptHint,
-		readOnly: Bool.false,
+		readOnly: False,
 	}
 	handler : Handler(state)
 	handler = {
@@ -465,9 +467,9 @@ registerEffectfulTyped = |spec, m, fn, decodeInput, encodeOutput| {
 				Err(e) => Err("invalid input for ${m.name}: ${e}"),
 				Ok(parsedInp) => {
 					eff = fn(st, parsedInp)
-					match Effect.run(eff) {
+					match Effect.run!(eff) {
 						Ok({ state: nextSt, out }) =>
-							Ok({ state: nextSt, stateChanged: Bool.true, out: encodeOutput(out) }),
+							Ok({ state: nextSt, stateChanged: True, out: encodeOutput(out) }),
 						Err(e) => Err(e),
 					}
 				},
@@ -490,12 +492,12 @@ build = |spec| {
 			mode: spec.mode,
 		},
 		init: |configStr|
-			match spec.init(configStr) {
+			match (spec.init)(configStr) {
 				Ok(initState) =>
 					if spec.mode == Ephemeral {
 						Ok("{}")
 					} else {
-						Ok(spec.serializeState(initState))
+						Ok((spec.serializeState)(initState))
 					}
 				Err(err) => Err(err),
 			},
@@ -505,19 +507,19 @@ build = |spec| {
 				Ok(handler) => {
 					stateRes =
 						if spec.mode == Ephemeral {
-							spec.deserializeState("{}")
+							(spec.deserializeState)("{}")
 						} else {
-							spec.deserializeState(stateJson)
+							(spec.deserializeState)(stateJson)
 						}
 					match stateRes {
 						Err(err) => Err("Failed to deserialize state: ${err}"),
 						Ok(currentState) =>
-							match handler.invoke(currentState, inputJson) {
+							match (handler.invoke)(currentState, inputJson) {
 								Err(err) => Err(err),
 								Ok(res) => {
 									nextStateJson =
 										if res.stateChanged and spec.mode == Durable {
-											spec.serializeState(res.state)
+											(spec.serializeState)(res.state)
 										} else {
 											""
 										}
@@ -535,9 +537,9 @@ build = |spec| {
 		handleToolCall: |stateJson, call| {
 			stateRes =
 				if spec.mode == Ephemeral {
-					spec.deserializeState("{}")
+					(spec.deserializeState)("{}")
 				} else {
-					spec.deserializeState(stateJson)
+					(spec.deserializeState)(stateJson)
 				}
 			match stateRes {
 				Err(err) => Err("Failed to deserialize state: ${err}"),
@@ -547,7 +549,7 @@ build = |spec| {
 						Ok(res) => {
 							nextStateJson =
 								if res.stateChanged and spec.mode == Durable {
-									spec.serializeState(res.state)
+									(spec.serializeState)(res.state)
 								} else {
 									""
 								}
@@ -565,19 +567,19 @@ build = |spec| {
 				Ok(handler) => {
 					stateRes =
 						if spec.mode == Ephemeral {
-							spec.deserializeState("{}")
+							(spec.deserializeState)("{}")
 						} else {
-							spec.deserializeState(stateJson)
+							(spec.deserializeState)(stateJson)
 						}
 					match stateRes {
 						Err(err) => Err("Failed to deserialize state: ${err}"),
 						Ok(currentState) =>
-							match handler.invoke(currentState, msgStr) {
+							match (handler.invoke)(currentState, msgStr) {
 								Err(err) => Err(err),
 								Ok(res) => {
 									nextStateJson =
 										if res.stateChanged and spec.mode == Durable {
-											spec.serializeState(res.state)
+											(spec.serializeState)(res.state)
 										} else {
 											""
 										}
@@ -593,7 +595,7 @@ build = |spec| {
 				Err(_) =>
 					Ok({
 						nextStateJson: "",
-						stateChanged: Bool.false,
+						stateChanged: False,
 						response: "Agent received: ${msgStr}",
 					}),
 			}
@@ -603,11 +605,19 @@ build = |spec| {
 }
 
 ## Bundle multiple agents into a single Wasm component
-bundle : List(Agent(_)) -> Agent({})
+bundle : List(Agent({})) -> Agent({})
 bundle = |agentList| {
 	flattened = List.join_map(agentList, |a| a.agents)
 	{ agents: flattened }
 }
+
+bundle2 : Agent(_), Agent(_) -> Agent({})
+bundle2 = |a, b| {
+	{ agents: List.concat(a.agents, b.agents) }
+}
+
+erase : Agent(_) -> Agent({})
+erase = |a| { agents: a.agents }
 
 ## Backwards-compatible legacy single-agent definition
 defineAgent :
@@ -636,47 +646,47 @@ defineAgent = |config| {
 			mode: Durable,
 		},
 		init: |configStr|
-			match config.init(configStr) {
-				Ok(st) => Ok(config.serializeState(st)),
+			match (config.init)(configStr) {
+				Ok(st) => Ok((config.serializeState)(st)),
 				Err(e) => Err(e),
 			},
 		invokeMethod: |_methodName, stateJson, inputJson|
-			match config.deserializeState(stateJson) {
+			match (config.deserializeState)(stateJson) {
 				Err(e) => Err("Failed to deserialize state: ${e}"),
 				Ok(st) =>
-					match config.handleMessage(st, inputJson) {
+					match (config.handleMessage)(st, inputJson) {
 						Ok({ state: nextSt, response }) =>
 							Ok({
-								nextStateJson: config.serializeState(nextSt),
-								stateChanged: Bool.true,
+								nextStateJson: (config.serializeState)(nextSt),
+								stateChanged: True,
 								out: response,
 							}),
 						Err(e) => Err(e),
 					},
 			},
 		handleToolCall: |stateJson, call|
-			match config.deserializeState(stateJson) {
+			match (config.deserializeState)(stateJson) {
 				Err(e) => Err("Failed to deserialize state: ${e}"),
 				Ok(st) =>
-					match config.handleToolCall(st, call) {
+					match (config.handleToolCall)(st, call) {
 						Ok({ state: nextSt, result }) =>
 							Ok({
-								nextStateJson: config.serializeState(nextSt),
-								stateChanged: Bool.true,
+								nextStateJson: (config.serializeState)(nextSt),
+								stateChanged: True,
 								result,
 							}),
 						Err(e) => Err(e),
 					},
 			},
 		handleMessage: |stateJson, msgStr|
-			match config.deserializeState(stateJson) {
+			match (config.deserializeState)(stateJson) {
 				Err(e) => Err("Failed to deserialize state: ${e}"),
 				Ok(st) =>
-					match config.handleMessage(st, msgStr) {
+					match (config.handleMessage)(st, msgStr) {
 						Ok({ state: nextSt, response }) =>
 							Ok({
-								nextStateJson: config.serializeState(nextSt),
-								stateChanged: Bool.true,
+								nextStateJson: (config.serializeState)(nextSt),
+								stateChanged: True,
 								response,
 							}),
 						Err(e) => Err(e),

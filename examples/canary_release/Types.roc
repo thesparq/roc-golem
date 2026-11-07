@@ -1,4 +1,5 @@
 module [
+	Result,
 	State,
 	StartInput,
 	StartOutput,
@@ -22,6 +23,8 @@ module [
 	encodeDiagnosticReport,
 	decodeDiagnosticReport,
 ]
+
+Result(ok, err) : Try(ok, err)
 
 ## Shared wire and state types for the Release Guardian Canary Rollout Suite
 
@@ -87,29 +90,29 @@ DiagnosticReport : {
 
 encodeStartInput : StartInput -> Str
 encodeStartInput = |inp|
-	"{\"version\":\"${inp.version}\",\"weight\":${Num.to_str(inp.weight)},\"logs\":\"${escapeJson(inp.logs)}\",\"permissionCard\":\"${escapeJson(inp.permissionCard)}\"}"
+	"{\"version\":\"${inp.version}\",\"weight\":${Str.inspect(inp.weight)},\"logs\":\"${escapeJson(inp.logs)}\",\"permissionCard\":\"${escapeJson(inp.permissionCard)}\"}"
 
 decodeStartInput : Str -> Result(StartInput, Str)
 decodeStartInput = |json|
 	Ok({
 		version: extractStr(json, "version") ?? "v1.1.0",
-		weight: extractU64(json, "weight") ?? 10,
+		weight: extractU64(json, "weight") ?? 10.U64,
 		logs: extractStr(json, "logs") ?? "",
 		permissionCard: extractStr(json, "permissionCard") ?? "",
 	})
 
 encodeStartOutput : StartOutput -> Str
 encodeStartOutput = |out|
-	"{\"status\":\"${out.status}\",\"version\":\"${out.version}\",\"weight\":${Num.to_str(out.weight)},\"approvalWebhookUrl\":\"${out.approvalWebhookUrl}\",\"faults\":${Num.to_str(out.faults)}}"
+	"{\"status\":\"${out.status}\",\"version\":\"${out.version}\",\"weight\":${Str.inspect(out.weight)},\"approvalWebhookUrl\":\"${out.approvalWebhookUrl}\",\"faults\":${Str.inspect(out.faults)}}"
 
 decodeStartOutput : Str -> Result(StartOutput, Str)
 decodeStartOutput = |json|
 	Ok({
 		status: extractStr(json, "status") ?? "",
 		version: extractStr(json, "version") ?? "",
-		weight: extractU64(json, "weight") ?? 0,
+		weight: extractU64(json, "weight") ?? 0.U64,
 		approvalWebhookUrl: extractStr(json, "approvalWebhookUrl") ?? "",
-		faults: extractU64(json, "faults") ?? 0,
+		faults: extractU64(json, "faults") ?? 0.U64,
 	})
 
 encodeDecisionInput : DecisionInput -> Str
@@ -122,12 +125,12 @@ decodeDecisionInput : Str -> Result(DecisionInput, Str)
 decodeDecisionInput = |json| {
 	approved =
 		match Str.split_first(json, "\"approved\":") {
-			Ok({ after }) =>
-				if Str.starts_with(Str.trim(after), "true") Bool.true else Bool.false
-			Err(_) => Bool.false
+			Ok({ after, .. }) =>
+				if Str.starts_with(Str.trim(after), "true") True else False
+			Err(_) => False
 		}
 	reviewer = extractStr(json, "reviewer") ?? "unknown"
-	Ok({ approved, reviewer })
+	Ok({ approved: approved, reviewer: reviewer })
 }
 
 encodeRollbackInput : RollbackInput -> Str
@@ -146,7 +149,7 @@ encodeStatus = |st| {
 		st.events
 			|> List.map(|e| "\"${escapeJson(e)}\"")
 			|> Str.join_with(",")
-	"{\"service\":\"${escapeJson(st.service)}\",\"activeVersion\":\"${escapeJson(st.activeVersion)}\",\"canaryVersion\":\"${escapeJson(st.canaryVersion)}\",\"weight\":${Num.to_str(st.weight)},\"region\":\"${escapeJson(st.region)}\",\"pendingTimerHandle\":${Num.to_str(st.pendingTimerHandle)},\"approvalWebhookUrl\":\"${escapeJson(st.approvalWebhookUrl)}\",\"events\":[${evts}]}"
+	"{\"service\":\"${escapeJson(st.service)}\",\"activeVersion\":\"${escapeJson(st.activeVersion)}\",\"canaryVersion\":\"${escapeJson(st.canaryVersion)}\",\"weight\":${Str.inspect(st.weight)},\"region\":\"${escapeJson(st.region)}\",\"pendingTimerHandle\":${Str.inspect(st.pendingTimerHandle)},\"approvalWebhookUrl\":\"${escapeJson(st.approvalWebhookUrl)}\",\"events\":[${evts}]}"
 }
 
 decodeStatus : Str -> Result(Status, Str)
@@ -155,9 +158,9 @@ decodeStatus = |json|
 		service: extractStr(json, "service") ?? "",
 		activeVersion: extractStr(json, "activeVersion") ?? "",
 		canaryVersion: extractStr(json, "canaryVersion") ?? "",
-		weight: extractU64(json, "weight") ?? 0,
+		weight: extractU64(json, "weight") ?? 0.U64,
 		region: extractStr(json, "region") ?? "",
-		pendingTimerHandle: Num.to_u32(extractU64(json, "pendingTimerHandle") ?? 0),
+		pendingTimerHandle: U64.to_u32_wrap(extractU64(json, "pendingTimerHandle") ?? 0.U64),
 		approvalWebhookUrl: extractStr(json, "approvalWebhookUrl") ?? "",
 		events: extractStringList(json, "events"),
 	})
@@ -176,22 +179,22 @@ decodeLogBatch = |json|
 encodeDiagnosticReport : DiagnosticReport -> Str
 encodeDiagnosticReport = |rep| {
 	healthyStr = if rep.healthy "true" else "false"
-	"{\"service\":\"${escapeJson(rep.service)}\",\"faults\":${Num.to_str(rep.faults)},\"healthy\":${healthyStr},\"summary\":\"${escapeJson(rep.summary)}\"}"
+	"{\"service\":\"${escapeJson(rep.service)}\",\"faults\":${Str.inspect(rep.faults)},\"healthy\":${healthyStr},\"summary\":\"${escapeJson(rep.summary)}\"}"
 }
 
 decodeDiagnosticReport : Str -> Result(DiagnosticReport, Str)
 decodeDiagnosticReport = |json| {
-	faults = extractU64(json, "faults") ?? 0
+	faults = extractU64(json, "faults") ?? 0.U64
 	healthy =
 		match Str.split_first(json, "\"healthy\":") {
-			Ok({ after }) =>
-				if Str.starts_with(Str.trim(after), "true") Bool.true else Bool.false
-			Err(_) => faults == 0
+			Ok({ after, .. }) =>
+				if Str.starts_with(Str.trim(after), "true") True else False
+			Err(_) => faults == 0.U64
 		}
 	Ok({
 		service: extractStr(json, "service") ?? "",
-		faults,
-		healthy,
+		faults: faults,
+		healthy: healthy,
 		summary: extractStr(json, "summary") ?? "",
 	})
 }
@@ -203,17 +206,14 @@ escapeJson = |s|
 	s
 		|> Str.replace_each("\\", "\\\\")
 		|> Str.replace_each("\"", "\\\"")
-		|> Str.replace_each("\n", "\\n")
-		|> Str.replace_each("\r", "\\r")
-		|> Str.replace_each("\t", "\\t")
 
 extractStr : Str, Str -> Result(Str, [NotFound])
 extractStr = |json, field_name| {
 	target = "\"${field_name}\":\""
 	match Str.split_first(json, target) {
-		Ok({ after }) =>
+		Ok({ after, .. }) =>
 			match Str.split_first(after, "\"") {
-				Ok({ before }) => Ok(before),
+				Ok({ before, .. }) => Ok(before),
 				Err(_) => Err(NotFound),
 			}
 		Err(_) => Err(NotFound),
@@ -224,19 +224,18 @@ extractU64 : Str, Str -> Result(U64, [NotFound])
 extractU64 = |json, field_name| {
 	target = "\"${field_name}\":"
 	match Str.split_first(json, target) {
-		Ok({ after }) => {
+		Ok({ after, .. }) => {
 			trimmed = Str.trim(after)
-			# Find end delimiter (, or } or whitespace)
 			delimited =
 				match Str.split_first(trimmed, ",") {
-					Ok({ before }) => before,
+					Ok({ before, .. }) => before,
 					Err(_) =>
 						match Str.split_first(trimmed, "}") {
-							Ok({ before }) => before,
+							Ok({ before, .. }) => before,
 							Err(_) => trimmed,
 						},
 				}
-			match Str.to_u64(Str.trim(delimited)) {
+			match U64.from_str(Str.trim(delimited)) {
 				Ok(val) => Ok(val),
 				Err(_) => Err(NotFound),
 			}
@@ -249,9 +248,9 @@ extractStringList : Str, Str -> List(Str)
 extractStringList = |json, field_name| {
 	target = "\"${field_name}\":["
 	match Str.split_first(json, target) {
-		Ok({ after }) =>
+		Ok({ after, .. }) =>
 			match Str.split_first(after, "]") {
-				Ok({ before }) =>
+				Ok({ before, .. }) =>
 					if Str.is_empty(Str.trim(before)) {
 						[]
 					} else {

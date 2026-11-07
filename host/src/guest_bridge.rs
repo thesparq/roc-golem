@@ -4,7 +4,7 @@ use core::ptr;
 // Stub guest implementations of the Roc platform exposed entry points for testing.
 
 #[no_mangle]
-pub unsafe extern "C" fn roc__main_init_for_host_1_exposed_generic(
+pub unsafe extern "C" fn main_init_for_host(
     config: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
 ) {
@@ -33,7 +33,7 @@ pub unsafe extern "C" fn roc__main_init_for_host_1_exposed_generic(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
+pub unsafe extern "C" fn main_handle_message_for_host(
     state: *mut RocStr,
     message: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
@@ -244,7 +244,7 @@ pub unsafe extern "C" fn roc__main_handle_message_for_host_1_exposed_generic(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc__main_handle_tool_call_for_host_1_exposed_generic(
+pub unsafe extern "C" fn main_handle_tool_call_for_host(
     state: *mut RocStr,
     tool_call_json: *mut RocStr,
     out: *mut RocResult<RocStr, RocStr>,
@@ -334,7 +334,7 @@ pub unsafe extern "C" fn roc__main_handle_tool_call_for_host_1_exposed_generic(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc__main_metadata_for_host_1_exposed_generic(out: *mut RocStr) {
+pub unsafe extern "C" fn main_metadata_for_host(out: *mut RocStr) {
     let meta_json = r#"{
         "agents": [
             {

@@ -1,10 +1,10 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [bundle]
+import pf.Golem exposing [Agent, bundle2]
 import ReleaseCoordinator
 import DiagnosticsWorker
 
-agent = bundle([
-	ReleaseCoordinator.agent,
-	DiagnosticsWorker.agent,
-])
+State : {}
+
+agent : Agent(State)
+agent = bundle2(ReleaseCoordinator.agent, DiagnosticsWorker.agent)

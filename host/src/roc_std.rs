@@ -33,7 +33,6 @@ pub unsafe extern "C" fn roc_alloc(size: usize, alignment: u32) -> *mut u8 {
 pub unsafe extern "C" fn roc_realloc(
     c_ptr: *mut u8,
     new_size: usize,
-    _old_size: usize,
     alignment: u32,
 ) -> *mut u8 {
     if c_ptr.is_null() {
@@ -75,6 +74,22 @@ pub unsafe extern "C" fn roc_panic(msg: *mut RocStr, _tag_id: u32) {
         (*msg).as_str()
     };
     panic!("Roc guest panic: {}", msg_str);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn roc_crashed(_msg: *const u8, _tag_id: u32) {
+    #[cfg(target_arch = "wasm32")]
+    core::arch::wasm32::unreachable();
+    #[cfg(not(target_arch = "wasm32"))]
+    panic!("Roc guest crashed with tag {}", _tag_id);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn roc_expect_failed(_loc: *mut RocStr, _source: *mut RocStr) {
+    #[cfg(target_arch = "wasm32")]
+    core::arch::wasm32::unreachable();
+    #[cfg(not(target_arch = "wasm32"))]
+    panic!("Roc guest expect failed");
 }
 
 #[no_mangle]

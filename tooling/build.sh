@@ -91,6 +91,9 @@ build_platform() {
     cargo build --manifest-path "$HOST_DIR/Cargo.toml" --target wasm32-unknown-unknown --release --no-default-features
 
     cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PRECOMPILED_HOST_A"
+    mkdir -p "$PLATFORM_DIR/targets/wasm32"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a"
+    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PLATFORM_DIR/libhost.a"
 
     echo "==> Platform pre-compiled successfully:"
     echo "    Static Library: $PRECOMPILED_HOST_A"
@@ -116,42 +119,37 @@ build_app() {
     verify_toolchain
 
     local OUTPUT_COMPONENT="$BUILD_DIR/${TARGET_APP}_agent.wasm"
-    local APP_OBJ="$BUILD_DIR/${TARGET_APP}.o"
     local CORE_WASM="$BUILD_DIR/${TARGET_APP}_core.wasm"
 
-    echo "============================================================"
+    echo "=============================================================="
     echo " [Phase: App Build] Building Roc Golem Agent: $TARGET_APP"
-    echo "============================================================"
+    echo "=============================================================="
 
     # Ensure pre-compiled host exists
-    if [[ ! -f "$PRECOMPILED_HOST_A" ]]; then
+    if [[ ! -f "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a" ]]; then
         echo "==> Pre-compiled host static library not found. Building platform host first..."
         build_platform
     fi
 
     # Step 1: Format & validate Roc code
     echo "==> Formatting Roc code ($APP_FILE)..."
-    roc fmt "$APP_FILE" "$PLATFORM_DIR/main.roc"
+    roc fmt "$APP_FILE" "$PLATFORM_DIR/main.roc" || true
 
-    # Step 2: Compile Roc code to WebAssembly object file
-    echo "==> Compiling Roc application to WebAssembly object ($APP_OBJ)..."
-    roc build --target wasm32 --no-link "$APP_FILE" --output "$APP_OBJ"
+    # Step 2: Compile Roc application and host into core WebAssembly module
+    echo "==> Compiling Roc application to WebAssembly core module ($CORE_WASM)..."
+    roc build --target=wasm32 "$APP_FILE" --output="$CORE_WASM" || {
+        local STATUS=$?
+        if [[ $STATUS -ne 2 || ! -f "$CORE_WASM" ]]; then
+            echo "Error: roc build failed with status $STATUS" >&2
+            exit $STATUS
+        fi
+    }
 
-    # Step 3: Link Roc object and host static library into core WebAssembly module
-    echo "==> Linking core WebAssembly module with wasm-ld ($CORE_WASM)..."
-    wasm-ld \
-        --no-entry \
-        --export-dynamic \
-        --allow-undefined \
-        "$APP_OBJ" \
-        "$PRECOMPILED_HOST_A" \
-        -o "$CORE_WASM"
-
-    # Step 4: Componentize WASM module into Golem Component Model
+    # Step 3: Componentize WASM module into Golem Component Model
     echo "==> Componentizing WASM module into Golem Component Model ($OUTPUT_COMPONENT)..."
     wasm-tools component new "$CORE_WASM" -o "$OUTPUT_COMPONENT"
 
-    # Step 5: Validate Component Model compatibility
+    # Step 4: Validate Component Model compatibility
     echo "==> Validating Component Model compatibility..."
     wasm-tools validate "$OUTPUT_COMPONENT"
 

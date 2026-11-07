@@ -14,17 +14,17 @@ agent : Agent(State)
 agent = defineAgent({
 	init: |_config|
 		Ok({
-			connected: Bool.false,
-			handle: 0,
-			sent: 0,
-			received: 0,
+			connected: False,
+			handle: 0.U32,
+			sent: 0.U64,
+			received: 0.U64,
 		}),
 
 	handleMessage: |state, message|
 		match message {
 			"connect" =>
 				Ok({
-					state: { ..state, connected: Bool.true, handle: 1 },
+					state: { ..state, connected: True, handle: 1.U32 },
 					response: "WebSocket connected (handle=1)",
 				})
 
@@ -32,14 +32,14 @@ agent = defineAgent({
 				statusStr = if state.connected "connected" else "disconnected"
 				Ok({
 					state,
-					response: "WebSocket is ${statusStr}. Sent ${Num.to_str(state.sent)}, Received ${Num.to_str(state.received)}",
+					response: "WebSocket is ${statusStr}. Sent ${Str.inspect(state.sent)}, Received ${Str.inspect(state.received)}",
 				})
 			}
 
 			_ =>
 				if state.connected {
 					Ok({
-						state: { ..state, sent: state.sent + 1 },
+						state: { ..state, sent: state.sent + 1.U64 },
 						response: "Queued message for WebSocket: ${message}",
 					})
 				} else {
@@ -48,7 +48,7 @@ agent = defineAgent({
 						response: "Not connected. Send 'connect' first.",
 					})
 				}
-			},
+		},
 
 	handleToolCall: |state, toolCall|
 		match toolCall.name {
@@ -57,8 +57,8 @@ agent = defineAgent({
 					state,
 					result: {
 						id: toolCall.id,
-						success: Bool.true,
-						output: "{\"status\": \"stream_active\", \"sent_count\": ${Num.to_str(state.sent)}}",
+						success: True,
+						output: "{\"status\": \"stream_active\", \"sent_count\": ${Str.inspect(state.sent)}}",
 					},
 				})
 
@@ -67,11 +67,11 @@ agent = defineAgent({
 					state,
 					result: {
 						id: toolCall.id,
-						success: Bool.false,
+						success: False,
 						output: "{\"error\": \"Unknown tool ${toolCall.name}\"}",
 					},
 				})
-			},
+		},
 
 	metadata: {
 		name: "streaming-agent",
@@ -86,7 +86,7 @@ agent = defineAgent({
 						name: "content",
 						description: "Message to stream",
 						paramType: "string",
-						required: Bool.true,
+						required: True,
 					},
 				],
 			},
@@ -95,52 +95,55 @@ agent = defineAgent({
 
 	serializeState: |state| {
 		connStr = if state.connected "true" else "false"
-		"{\"connected\":${connStr},\"handle\":${Num.to_str(state.handle)},\"sent\":${Num.to_str(state.sent)},\"received\":${Num.to_str(state.received)}}"
+		"{\"connected\":${connStr},\"handle\":${Str.inspect(state.handle)},\"sent\":${Str.inspect(state.sent)},\"received\":${Str.inspect(state.received)}}"
 	},
 
 	deserializeState: |stateJson| {
 		connected =
 			match Str.split_first(stateJson, "\"connected\":true") {
-				Ok(_) => Bool.true
-				Err(_) => Bool.false
+				Ok(_) => True
+				Err(_) => False
 			}
+		handle : U32
 		handle =
 			match Str.split_first(stateJson, "\"handle\":") {
-				Ok({ after }) =>
+				Ok({ after, .. }) =>
 					match Str.split_first(after, ",") {
-						Ok({ before }) => Str.to_u32(Str.trim(before)) ?? 0
-						Err(_) => 0
+						Ok({ before, .. }) => U32.from_str(Str.trim(before)) ?? 0.U32
+						Err(_) => 0.U32
 					}
 
-				Err(_) => 0
+				Err(_) => 0.U32
 			}
+		sent : U64
 		sent =
 			match Str.split_first(stateJson, "\"sent\":") {
-				Ok({ after }) =>
+				Ok({ after, .. }) =>
 					match Str.split_first(after, ",") {
-						Ok({ before }) => Str.to_u64(Str.trim(before)) ?? 0
-						Err(_) => 0
+						Ok({ before, .. }) => U64.from_str(Str.trim(before)) ?? 0.U64
+						Err(_) => 0.U64
 					}
 
-				Err(_) => 0
+				Err(_) => 0.U64
 			}
+		received : U64
 		received =
 			match Str.split_first(stateJson, "\"received\":") {
-				Ok({ after }) => {
+				Ok({ after, .. }) => {
 					cleaned = Str.trim(after)
 					match Str.split_first(cleaned, "}") {
-						Ok({ before }) => Str.to_u64(Str.trim(before)) ?? 0
-						Err(_) => 0
+						Ok({ before, .. }) => U64.from_str(Str.trim(before)) ?? 0.U64
+						Err(_) => 0.U64
 					}
 				}
 
-				Err(_) => 0
+				Err(_) => 0.U64
 			}
 		Ok({
-			connected,
-			handle,
-			sent,
-			received,
+			connected: connected,
+			handle: handle,
+			sent: sent,
+			received: received,
 		})
 	},
 })

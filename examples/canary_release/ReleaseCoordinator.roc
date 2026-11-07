@@ -17,8 +17,9 @@ import pf.Golem exposing [
 	method,
 	build,
 ]
-import pf.Types exposing [ToolCall, ToolResult]
+import pf.Types as PfTypes exposing [ToolCall, ToolResult]
 import Types exposing [
+	Result,
 	State,
 	StartInput,
 	StartOutput,
@@ -94,8 +95,8 @@ agent =
 					{
 						name: "logs",
 						description: "Raw log text to analyze",
-						type: "string",
-						required: Bool.true,
+						paramType: "string",
+						required: True,
 					},
 				],
 			},
@@ -133,44 +134,41 @@ initCoordinator = |configJson|
 		service: extractStr(configJson, "service") ?? "default-service",
 		activeVersion: extractStr(configJson, "activeVersion") ?? "v1.0.0",
 		canaryVersion: "",
-		weight: 0,
+		weight: 0.U64,
 		region: extractStr(configJson, "region") ?? "us-east-1",
-		pendingTimerHandle: 0,
+		pendingTimerHandle: 0.U32,
 		approvalWebhookUrl: "",
 		events: ["coordinator_initialized"],
 	})
 
 handleStart : State, StartInput -> Result({ state : State, out : StartOutput }, Str)
 handleStart = |state, input| {
-	# Step 1: Run diagnostics on logs via DiagnosticsWorker logic
 	diagReport =
 		DiagnosticsWorker.handleRunDiagnostics({
 			service: state.service,
 			lines: input.logs,
 		})
-			?? { service: state.service, faults: 0, healthy: Bool.true, summary: "ok" }
+			?? { service: state.service, faults: 0.U64, healthy: True, summary: "ok" }
 
 	if !diagReport.healthy {
-		# Diagnostics failed: record abort in events and do NOT shift traffic
 		abortEvent = "canary_aborted: ${diagReport.summary}"
 		events = List.append(state.events, abortEvent)
-		nextState = { ..state, events }
+		nextState = { ..state, events: events }
 		Ok({
 			state: nextState,
 			out: {
 				status: "aborted_unhealthy",
 				version: input.version,
-				weight: 0,
+				weight: 0.U64,
 				approvalWebhookUrl: "",
 				faults: diagReport.faults,
 			},
 		})
 	} else {
-		# Step 2: Diagnostics passed: proceed with canary shift
 		webhookUrl = "https://golem.cloud/webhooks/canary/${state.service}/gate-approve"
-		startEvent = "canary_started: ${input.version} at ${Num.to_str(input.weight)}%"
+		startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
 		events = List.append(state.events, startEvent)
-		timerHandle = 42
+		timerHandle = 42.U32
 
 		nextState = {
 			..state,
@@ -178,7 +176,7 @@ handleStart = |state, input| {
 			weight: input.weight,
 			pendingTimerHandle: timerHandle,
 			approvalWebhookUrl: webhookUrl,
-			events,
+			events: events,
 		}
 
 		Ok({
@@ -188,7 +186,7 @@ handleStart = |state, input| {
 				version: input.version,
 				weight: input.weight,
 				approvalWebhookUrl: webhookUrl,
-				faults: 0,
+				faults: 0.U64,
 			},
 		})
 	}
@@ -197,30 +195,28 @@ handleStart = |state, input| {
 handleApprove : State, DecisionInput -> Result({ state : State, out : Str }, Str)
 handleApprove = |state, input| {
 	if input.approved {
-		# Promotion: activeVersion becomes canaryVersion, weight = 100
 		promotedVer = if Str.is_empty(state.canaryVersion) state.activeVersion else state.canaryVersion
 		events = List.append(state.events, "approved_by_${input.reviewer}: promoted ${promotedVer} to 100%")
 		nextState = {
 			..state,
 			activeVersion: promotedVer,
 			canaryVersion: "",
-			weight: 100,
-			pendingTimerHandle: 0,
-			events,
+			weight: 100.U64,
+			pendingTimerHandle: 0.U32,
+			events: events,
 		}
 		Ok({
 			state: nextState,
 			out: "Promoted ${promotedVer} to 100% (approved by ${input.reviewer})",
 		})
 	} else {
-		# Rejection: weight = 0
 		events = List.append(state.events, "rejected_by_${input.reviewer}: canary ${state.canaryVersion} reset to 0%")
 		nextState = {
 			..state,
 			canaryVersion: "",
-			weight: 0,
-			pendingTimerHandle: 0,
-			events,
+			weight: 0.U64,
+			pendingTimerHandle: 0.U32,
+			events: events,
 		}
 		Ok({
 			state: nextState,
@@ -234,9 +230,9 @@ handleRollback = |state, input| {
 	events = List.append(state.events, "emergency_rollback: ${input.reason}")
 	nextState = {
 		..state,
-		weight: 0,
-		pendingTimerHandle: 0,
-		events,
+		weight: 0.U64,
+		pendingTimerHandle: 0.U32,
+		events: events,
 	}
 	Ok({
 		state: nextState,
@@ -264,16 +260,15 @@ handleTool = |call| {
 		panicCount = countOccurrences(logs, "PANIC")
 		oomCount = countOccurrences(logs, "OOM")
 		faults = panicCount + oomCount
-		stdout = "analyze-logs: ${Num.to_str(faults)} fault(s)\n"
 		Ok({
 			id: call.id,
-			success: Bool.true,
-			output: "{\"faults\": ${Num.to_str(faults)}}",
+			success: True,
+			output: "{\"faults\": ${Str.inspect(faults)}}",
 		})
 	} else {
 		Ok({
 			id: call.id,
-			success: Bool.false,
+			success: False,
 			output: "{\"error\": \"Unknown tool ${call.name}\"}",
 		})
 	}
@@ -282,8 +277,8 @@ handleTool = |call| {
 countOccurrences : Str, Str -> U64
 countOccurrences = |text, needle|
 	match Str.split_first(text, needle) {
-		Ok({ after }) => 1 + countOccurrences(after, needle)
-		Err(_) => 0
+		Ok({ after, .. }) => 1.U64 + countOccurrences(after, needle)
+		Err(_) => 0.U64
 	}
 
 renderDashboard : State -> Str
@@ -292,7 +287,7 @@ renderDashboard = |st| {
 		st.events
 			|> List.map(|e| "<li>${e}</li>")
 			|> Str.join_with("")
-	"<!doctype html><html><body><h1>Release Guardian: ${st.service}</h1><p>Active: ${st.activeVersion} | Canary: ${st.canaryVersion} at ${Num.to_str(st.weight)}%</p><ul>${eventItems}</ul></body></html>"
+	"<!doctype html><html><body><h1>Release Guardian: ${st.service}</h1><p>Active: ${st.activeVersion} | Canary: ${st.canaryVersion} at ${Str.inspect(st.weight)}%</p><ul>${eventItems}</ul></body></html>"
 }
 
 serializeState : State -> Str
@@ -322,7 +317,7 @@ deserializeState = |json| {
 				approvalWebhookUrl: status.approvalWebhookUrl,
 				events: status.events,
 			})
-		Err(err) => Err(err),
+		Err(err) => Err(err)
 	}
 }
 
@@ -330,11 +325,11 @@ extractStr : Str, Str -> Result(Str, [NotFound])
 extractStr = |json, field_name| {
 	target = "\"${field_name}\":\""
 	match Str.split_first(json, target) {
-		Ok({ after }) =>
+		Ok({ after, .. }) =>
 			match Str.split_first(after, "\"") {
-				Ok({ before }) => Ok(before),
-				Err(_) => Err(NotFound),
+				Ok({ before, .. }) => Ok(before)
+				Err(_) => Err(NotFound)
 			}
-		Err(_) => Err(NotFound),
+		Err(_) => Err(NotFound)
 	}
 }

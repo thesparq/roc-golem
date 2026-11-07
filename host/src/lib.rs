@@ -15,21 +15,21 @@ use guest_bridge::*;
 
 #[cfg(not(feature = "stub-guest"))]
 extern "C" {
-    pub fn roc__main_init_for_host_1_exposed_generic(
+    pub fn main_init_for_host(
         config: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
     );
-    pub fn roc__main_handle_message_for_host_1_exposed_generic(
+    pub fn main_handle_message_for_host(
         state: *mut RocStr,
         message: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
     );
-    pub fn roc__main_handle_tool_call_for_host_1_exposed_generic(
+    pub fn main_handle_tool_call_for_host(
         state: *mut RocStr,
         tool_call_json: *mut RocStr,
         out: *mut RocResult<RocStr, RocStr>,
     );
-    pub fn roc__main_metadata_for_host_1_exposed_generic(out: *mut RocStr);
+    pub fn main_metadata_for_host(out: *mut RocStr);
 }
 
 // Generate WIT bindings for the official Golem 1.5.0 agent world
@@ -635,7 +635,7 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
 fn query_agent_types() -> Vec<AgentType> {
     let mut roc_out = MaybeUninit::<RocStr>::uninit();
     let meta_json = unsafe {
-        roc__main_metadata_for_host_1_exposed_generic(roc_out.as_mut_ptr());
+        main_metadata_for_host(roc_out.as_mut_ptr());
         roc_out.assume_init().to_string()
     };
 
@@ -2450,7 +2450,7 @@ impl Guest for GolemAgentHost {
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
         unsafe {
-            roc__main_init_for_host_1_exposed_generic(&mut roc_config, roc_out.as_mut_ptr());
+            main_init_for_host(&mut roc_config, roc_out.as_mut_ptr());
             let res = roc_out.assume_init().into_result();
             match res {
                 Ok(new_state) => {
@@ -2506,7 +2506,7 @@ impl Guest for GolemAgentHost {
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
         unsafe {
-            roc__main_handle_message_for_host_1_exposed_generic(
+            main_handle_message_for_host(
                 &mut roc_state,
                 &mut roc_message,
                 roc_out.as_mut_ptr(),
@@ -2562,7 +2562,7 @@ impl Guest for GolemAgentHost {
                     let mut roc_call = RocStr::from_str(&tool_call_json);
                     let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
-                    roc__main_handle_tool_call_for_host_1_exposed_generic(
+                    main_handle_tool_call_for_host(
                         &mut roc_state,
                         &mut roc_call,
                         roc_out.as_mut_ptr(),
@@ -2630,6 +2630,16 @@ impl Guest for GolemAgentHost {
 }
 
 export!(GolemAgentHost);
+
+#[no_mangle]
+pub unsafe extern "C" fn cabi_realloc(
+    old_ptr: *mut u8,
+    old_size: usize,
+    align: usize,
+    new_size: usize,
+) -> *mut u8 {
+    wit_bindgen::rt::cabi_realloc(old_ptr, old_size, align, new_size)
+}
 
 #[cfg(test)]
 mod tests {

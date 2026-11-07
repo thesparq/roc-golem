@@ -1,6 +1,7 @@
 module [
 	agent,
 	runDiagnostics,
+	handleRunDiagnostics,
 ]
 
 import pf.Golem exposing [
@@ -12,6 +13,7 @@ import pf.Golem exposing [
 	build,
 ]
 import Types exposing [
+	Result,
 	LogBatch,
 	DiagnosticReport,
 	encodeLogBatch,
@@ -47,25 +49,25 @@ handleRunDiagnostics = |batch| {
 	panicCount = countOccurrences(batch.lines, "PANIC")
 	oomCount = countOccurrences(batch.lines, "OOM")
 	faults = panicCount + oomCount
-	healthy = faults == 0
+	healthy = faults == 0.U64
 	summary =
 		if healthy {
 			"Clean logs: 0 faults detected across inspected lines for ${batch.service}"
 		} else {
-			"ALERT: ${Num.to_str(faults)} fault(s) detected in ${batch.service} (PANIC=${Num.to_str(panicCount)}, OOM=${Num.to_str(oomCount)})"
+			"ALERT: ${Str.inspect(faults)} fault(s) detected in ${batch.service} (PANIC=${Str.inspect(panicCount)}, OOM=${Str.inspect(oomCount)})"
 		}
 
 	Ok({
 		service: batch.service,
-		faults,
-		healthy,
-		summary,
+		faults: faults,
+		healthy: healthy,
+		summary: summary,
 	})
 }
 
 countOccurrences : Str, Str -> U64
 countOccurrences = |text, needle|
 	match Str.split_first(text, needle) {
-		Ok({ after }) => 1 + countOccurrences(after, needle)
-		Err(_) => 0
+		Ok({ after, .. }) => 1.U64 + countOccurrences(after, needle)
+		Err(_) => 0.U64
 	}
