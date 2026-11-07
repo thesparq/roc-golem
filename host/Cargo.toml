@@ -6,7 +6,7 @@ description = "Rust Host translation layer for Roc Golem Cloud platform"
 authors = ["Roc Golem Platform Contributors"]
 
 [lib]
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 wit-bindgen = { version = "0.36.0", features = ["macros", "realloc"] }
@@ -14,7 +14,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [features]
-default = ["stub-guest"]
+default = []
 stub-guest = []
 
 [profile.release]

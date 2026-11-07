@@ -6,10 +6,11 @@ Keep this file short (about 150 lines). It is a status page, not a diary. Move f
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Unit 01 spec written** (`docs/specs/01-real-roc-build.md`), awaiting review.
+Status: **Unit 01 Implemented, awaiting verification** (`docs/specs/01-real-roc-build.md`).
 
 ## Done
 
+- Unit 01: Decoupled `stub-guest` from default features in `host/Cargo.toml` (`default = []`), resolved Linux GNU `ld` version-script failure (KI-19) by removing `cdylib` from crate-types, verified clean `wasm32-unknown-unknown` release build with `--no-default-features` producing `libhost.a` without mock symbols, updated `tooling/build.sh` with pinned toolchain check (`nightly-2026-09-29-7f11a82`) and real Roc compilation & `wasm-ld` linking pipeline.
 - Rust host with real Golem calls for most effects, 13 native tests passing, `cargo fmt` and `clippy` clean (checked 2026-11-07, native only).
 - Verified: `cargo build --manifest-path host/Cargo.toml --target wasm32-unknown-unknown --release` succeeds (51s), generating `libroc_golem_host.a` and `roc_golem_host.wasm`.
 - Release packaging and eight tagged releases (v0.4.0 to v0.8.0). Latest tag v0.8.0 is six commits behind `main`.

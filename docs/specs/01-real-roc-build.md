@@ -2,7 +2,7 @@
 
 - **Unit:** 01
 - **File:** `docs/specs/01-real-roc-build.md`
-- **Status:** Spec written (Awaiting user review)
+- **Status:** Implemented, awaiting verification
 - **Fixes:** `KI-01`, `KI-02`, part of `KI-12`
 
 ---
