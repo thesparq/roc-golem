@@ -8,12 +8,12 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 ## Build and deploy
 
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| 1 | Build one example | `./tooling/build.sh counter` | a component appears in `build/` and `wasm-tools validate` accepts it (KI-01) |
-| 2 | Examples differ | build all four examples; compare `sha256sum build/*_agent.wasm` | four different hashes (KI-01) |
-| 3 | Deploy | add the `counter` component to a running local Golem server | the component is accepted and its agent type is listed |
-| 4 | Agent definitions | ask the server for the agent types of `canary_release` | two agent types: the `canary-release` coordinator (durable) and the diagnostics worker (ephemeral) |
+| # | Test | How | Expected | Status |
+|---|------|-----|----------|:---:|
+| 1 | Build one example | `./tooling/build.sh counter` | a component appears in `build/` and `wasm-tools validate` accepts it (KI-01) | **PASSED** (2026-11-07) |
+| 2 | Examples differ | build all four examples; compare `sha256sum build/*_agent.wasm` | four different hashes (KI-01) | **PASSED** (2026-11-07) |
+| 3 | Deploy | add the `counter` component to a running local Golem server | the component is accepted and its agent type is listed | Pending Runtime (Unit 04) |
+| 4 | Agent definitions | ask the server for the agent types of `canary_release` | two agent types: the `canary-release` coordinator (durable) and the diagnostics worker (ephemeral) | Pending Runtime (Unit 04) |
 
 ---
 
@@ -99,9 +99,9 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 ## Release & Host Verification
 
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| 43 | Package | `./tooling/build.sh package vX.Y.Z thesparq/roc-golem` | three archives, `checksums.txt` and `release_notes.md` in `dist/` |
-| 44 | Consume a release | a new Roc app using the README header | `roc check` and the build succeed |
-| 45 | Hash matches | recompute the BLAKE3 base64url hash of the published archive | equals the hash in the README URL |
-| 46 | Native library unit tests | `cargo test --manifest-path host/Cargo.toml --lib` | all 13 unit tests pass on host |
+| # | Test | How | Expected | Status |
+|---|------|-----|----------|:---:|
+| 43 | Package | `./tooling/build.sh package v0.1.0 thesparq/roc-golem` | three archives, `checksums.txt` and `release_notes.md` in `dist/` | **PASSED** (2026-11-07) |
+| 44 | Consume a release | a new Roc app using the README header | `roc check` and the build succeed | Pending v0.1.0 tag |
+| 45 | Hash matches | recompute the BLAKE3 base64url hash of the published archive | equals the hash in the README URL | Pending v0.1.0 tag |
+| 46 | Native library unit tests | `cargo test --manifest-path host/Cargo.toml --all-targets --features stub-guest` | all 13 unit tests pass on host | **PASSED** (2026-11-07) |
