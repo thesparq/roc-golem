@@ -30,11 +30,7 @@ pub unsafe extern "C" fn roc_alloc(size: usize, alignment: u32) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn roc_realloc(
-    c_ptr: *mut u8,
-    new_size: usize,
-    alignment: u32,
-) -> *mut u8 {
+pub unsafe extern "C" fn roc_realloc(c_ptr: *mut u8, new_size: usize, alignment: u32) -> *mut u8 {
     if c_ptr.is_null() {
         return roc_alloc(new_size, alignment);
     }

@@ -111,18 +111,12 @@ main_handle_message_for_host! = |state_json, envelope_or_msg| {
 		Ok(target_agent) =>
 			if Str.is_empty(method_name) or method_name == "handle-message" or method_name == "message" {
 				match (target_agent.handleMessage)(state_json, input_str) {
-					Ok(res) => {
-						escaped_response = escape_json_str(res.response)
-						Ok("{\"state\":\"${res.nextStateJson}\",\"response\":\"${escaped_response}\"}")
-					}
+					Ok(res) => Ok(format_reply_envelope(res.nextStateJson, res.response))
 					Err(err) => Err(err)
 				}
 			} else {
 				match (target_agent.invokeMethod)(method_name, state_json, input_str) {
-					Ok(res) => {
-						escaped_out = escape_json_str(res.out)
-						Ok("{\"state\":\"${res.nextStateJson}\",\"response\":\"${escaped_out}\"}")
-					}
+					Ok(res) => Ok(format_reply_envelope(res.nextStateJson, res.out))
 					Err(err) => Err(err)
 				}
 			}
@@ -138,11 +132,7 @@ main_handle_tool_call_for_host! = |state_json, tool_call_json| {
 		Err(err) => Err(err)
 		Ok(target_agent) =>
 			match (target_agent.handleToolCall)(state_json, parsed_call) {
-				Ok(res) => {
-					success_str = if res.result.success "true" else "false"
-					escaped_output = escape_json_str(res.result.output)
-					Ok("{\"state\":\"${res.nextStateJson}\",\"success\":${success_str},\"output\":\"${escaped_output}\"}")
-				}
+				Ok(res) => Ok(format_tool_envelope(res.nextStateJson, res.result.success, res.result.output))
 				Err(err) => Err(err)
 			}
 	}
@@ -217,6 +207,21 @@ escape_json_str = |input|
 		|> Str.replace_each("\n", "\\n")
 		|> Str.replace_each("\r", "\\r")
 		|> Str.replace_each("\t", "\\t")
+
+format_reply_envelope : Str, Str -> Str
+format_reply_envelope = |next_state_json, response| {
+	escaped_state = escape_json_str(next_state_json)
+	escaped_response = escape_json_str(response)
+	"{\"state\":\"${escaped_state}\",\"response\":\"${escaped_response}\"}"
+}
+
+format_tool_envelope : Str, Bool, Str -> Str
+format_tool_envelope = |next_state_json, success, output| {
+	escaped_state = escape_json_str(next_state_json)
+	escaped_output = escape_json_str(output)
+	success_str = if success "true" else "false"
+	"{\"state\":\"${escaped_state}\",\"success\":${success_str},\"output\":\"${escaped_output}\"}"
+}
 
 parse_tool_call : Str -> ToolCall
 parse_tool_call = |raw_json| {

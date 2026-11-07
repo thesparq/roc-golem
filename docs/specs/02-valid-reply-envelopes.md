@@ -2,7 +2,7 @@
 
 - **Unit:** 02
 - **File:** `docs/specs/02-valid-reply-envelopes.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Fixes:** `KI-03`, partial `KI-09`
 
 ---
@@ -140,9 +140,9 @@ Before modifying `platform/main.roc`:
 
 ## 5. Verification Criteria
 
-- [ ] All new host envelope unit tests pass (`cargo test --manifest-path host/Cargo.toml --features stub-guest --lib`).
-- [ ] Golden envelope round-trip tests pass without character corruption.
-- [ ] `roc check platform/main.roc` passes with zero errors.
-- [ ] `roc check examples/counter/main.roc` passes with zero errors.
-- [ ] `./tooling/build.sh counter` compiles and links against `libhost.a` cleanly.
-- [ ] `wasm-tools validate build/counter_agent.wasm` exits 0.
+- [x] All new host envelope unit tests pass (`cargo test --manifest-path host/Cargo.toml --features stub-guest --lib`).
+- [x] Golden envelope round-trip tests pass without character corruption (`roc test tests/envelope.roc`).
+- [x] `roc check platform/main.roc` passes with zero errors.
+- [x] `roc check examples/counter/main.roc` passes with zero errors.
+- [x] `./tooling/build.sh counter` compiles and links against `libhost.a` cleanly.
+- [x] `wasm-tools validate build/counter_agent.wasm` exits 0.

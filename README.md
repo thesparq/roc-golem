@@ -53,8 +53,27 @@ agent = defineAgent({
         description: "Durable Roc Counter Agent on Golem Cloud",
         tools: [],
     },
-    serializeState: |state| "{\"count\":${Num.to_str(state.count)}}",
-    deserializeState: |_json| Ok({ count: 0 }),
+    serializeState: |state| "{\"count\":${Str.inspect(state.count)}}",
+    deserializeState: |stateJson| {
+        count =
+            match Str.split_first(stateJson, "\"count\"") {
+                Ok({ after, .. }) =>
+                    match Str.split_first(after, ":") {
+                        Ok({ after: afterColon, .. }) => {
+                            cleaned = Str.trim(afterColon)
+                            numStr =
+                                match Str.split_first(cleaned, "}") {
+                                    Ok({ before, .. }) => before,
+                                    Err(_) => cleaned,
+                                }
+                            I64.from_str(Str.trim(numStr)) ?? 0.I64
+                        }
+                        Err(_) => 0.I64,
+                    }
+                Err(_) => 0.I64,
+            }
+        Ok({ count: count })
+    },
 })
 ```
 

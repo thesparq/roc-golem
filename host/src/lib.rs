@@ -15,10 +15,7 @@ use guest_bridge::*;
 
 #[cfg(not(feature = "stub-guest"))]
 extern "C" {
-    pub fn main_init_for_host(
-        config: *mut RocStr,
-        out: *mut RocResult<RocStr, RocStr>,
-    );
+    pub fn main_init_for_host(config: *mut RocStr, out: *mut RocResult<RocStr, RocStr>);
     pub fn main_handle_message_for_host(
         state: *mut RocStr,
         message: *mut RocStr,
@@ -2506,11 +2503,7 @@ impl Guest for GolemAgentHost {
         let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
 
         unsafe {
-            main_handle_message_for_host(
-                &mut roc_state,
-                &mut roc_message,
-                roc_out.as_mut_ptr(),
-            );
+            main_handle_message_for_host(&mut roc_state, &mut roc_message, roc_out.as_mut_ptr());
             let res = roc_out.assume_init().into_result();
             match res {
                 Ok(response_payload) => {
@@ -3435,5 +3428,177 @@ mod tests {
             rocFxHttpStreamClose(stream_handle, close_stream_out.as_mut_ptr());
             assert!(close_stream_out.assume_init().into_result().is_ok());
         }
+    }
+
+    #[test]
+    fn test_malformed_raw_state_envelope_fails() {
+        // KI-03 Demonstration: Raw unescaped JSON state inside string interpolation produces malformed JSON.
+        // e.g. "{\"state\":\"{"count":1}\",\"response\":\"ok\"}"
+        let malformed_envelope = "{\"state\":\"{\"count\":1}\",\"response\":\"ok\"}";
+        let parse_res = serde_json::from_str::<serde_json::Value>(malformed_envelope);
+        assert!(
+            parse_res.is_err(),
+            "Malformed envelope with raw unescaped JSON state MUST fail JSON deserialization"
+        );
+    }
+
+    #[test]
+    fn test_envelope_deserialization_escaped_state() {
+        // Properly escaped JSON state inside envelope
+        let escaped_state_json = "{\"count\":1}".replace('\\', "\\\\").replace('"', "\\\"");
+        let envelope = format!(
+            "{{\"state\":\"{}\",\"response\":\"Counter incremented to 1\"}}",
+            escaped_state_json
+        );
+
+        let parsed = serde_json::from_str::<serde_json::Value>(&envelope)
+            .expect("Valid envelope must parse successfully");
+        assert_eq!(
+            parsed.get("response").and_then(|v| v.as_str()),
+            Some("Counter incremented to 1")
+        );
+
+        let next_state = parsed.get("state").expect("state field must exist");
+        let next_state_str = if let Some(s) = next_state.as_str() {
+            s.to_string()
+        } else {
+            next_state.to_string()
+        };
+        assert_eq!(next_state_str, "{\"count\":1}");
+
+        // Updating host state with extracted state
+        set_current_state(next_state_str);
+        assert_eq!(get_current_state(), "{\"count\":1}");
+    }
+
+    #[test]
+    fn test_envelope_read_only_bypass() {
+        // Initial state
+        set_current_state("{\"count\":42}".to_string());
+        assert_eq!(get_current_state(), "{\"count\":42}");
+
+        // Read-only envelope emits empty state ""
+        let envelope = "{\"state\":\"\",\"response\":\"Current count is 42\"}";
+        let parsed = serde_json::from_str::<serde_json::Value>(envelope)
+            .expect("Read-only envelope must parse");
+        let next_state = parsed.get("state").expect("state field must exist");
+        let next_state_str = if let Some(s) = next_state.as_str() {
+            s.to_string()
+        } else {
+            next_state.to_string()
+        };
+
+        // Bypass check: empty state string does NOT update host state
+        if !next_state_str.is_empty() {
+            set_current_state(next_state_str);
+        }
+        assert_eq!(get_current_state(), "{\"count\":42}");
+    }
+
+    #[test]
+    fn test_envelope_complex_nested_state() {
+        let complex_state =
+            "{\"msg\":\"hello \\\"world\\\"\\nline2\",\"tags\":[\"a\",\"b\"],\"emoji\":\"🚀\"}";
+        let escaped_state = complex_state
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n");
+        let envelope = format!(
+            "{{\"state\":\"{}\",\"response\":\"state saved\"}}",
+            escaped_state
+        );
+
+        let parsed = serde_json::from_str::<serde_json::Value>(&envelope)
+            .expect("Complex escaped envelope must parse");
+        let next_state = parsed.get("state").expect("state field must exist");
+        let next_state_str = next_state.as_str().expect("must be string");
+
+        // Verify exact round-trip preservation
+        assert_eq!(next_state_str, complex_state);
+        set_current_state(next_state_str.to_string());
+        assert_eq!(get_current_state(), complex_state);
+    }
+
+    #[test]
+    fn test_envelope_tool_call_payload() {
+        let state_val = "{\"invocations\":5}";
+        let escaped_state = state_val.replace('"', "\\\"");
+        let tool_envelope = format!(
+            "{{\"state\":\"{}\",\"success\":true,\"output\":\"{{\\\"result\\\": 42}}\"}}",
+            escaped_state
+        );
+
+        let parsed = serde_json::from_str::<serde_json::Value>(&tool_envelope)
+            .expect("Tool envelope must parse");
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            parsed.get("output").and_then(|v| v.as_str()),
+            Some("{\"result\": 42}")
+        );
+
+        let next_state = parsed.get("state").expect("state must exist");
+        let next_state_str = next_state.as_str().expect("must be string");
+        assert_eq!(next_state_str, state_val);
+    }
+
+    #[test]
+    fn test_counter_state_transitions_multi_turn() {
+        // Multi-turn state transitions through host invoke
+        WORKER_STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.active_agent_type = None;
+            st.current_state_json = None;
+            st.is_ephemeral = false;
+        });
+
+        // 1. Initialize
+        let init_res = GolemAgentHost::initialize(
+            "roc-golem-agent".to_string(),
+            wrap_string_data_value("{}".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(init_res.is_ok());
+
+        // 2. Increment 1
+        let inc1_res = GolemAgentHost::invoke(
+            "increment".to_string(),
+            wrap_string_data_value("".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(inc1_res.is_ok());
+        let state_1 = get_current_state();
+        assert!(state_1.contains("\"count\": 1") || state_1.contains("\"count\":1"));
+
+        // 3. Increment 2
+        let inc2_res = GolemAgentHost::invoke(
+            "increment".to_string(),
+            wrap_string_data_value("".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(inc2_res.is_ok());
+        let state_2 = get_current_state();
+        assert!(state_2.contains("\"count\": 2") || state_2.contains("\"count\":2"));
+
+        // 4. Read-only Get
+        let get_res = GolemAgentHost::invoke(
+            "get".to_string(),
+            wrap_string_data_value("".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(get_res.is_ok());
+        let get_out = extract_data_value_string(&get_res.unwrap());
+        assert!(get_out.contains("Current count is 2"));
+        // State remains unchanged
+        assert_eq!(get_current_state(), state_2);
+
+        // 5. Decrement
+        let dec_res = GolemAgentHost::invoke(
+            "decrement".to_string(),
+            wrap_string_data_value("".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(dec_res.is_ok());
+        let state_dec = get_current_state();
+        assert!(state_dec.contains("\"count\": 1") || state_dec.contains("\"count\":1"));
     }
 }

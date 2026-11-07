@@ -19,12 +19,12 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 ## Counter agent (durable state)
 
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| 5 | First call | on a new worker, call `increment` once | the reply reports the new count |
-| 6 | State across calls | call `increment` three times, then `get` | 3 (KI-03) |
-| 7 | State across restart | restart the worker, then `get` | still 3 (KI-03) |
-| 8 | Awkward state text | use an agent whose state holds quotes, backslashes, newlines, non-ASCII text and an empty string; save, then load | exactly the same text comes back (KI-03, KI-09) |
+| # | Test | How | Expected | Status |
+|---|------|-----|----------|:---:|
+| 5 | First call | on a new worker, call `increment` once | the reply reports the new count | Pending Runtime (Unit 04) |
+| 6 | State across calls | call `increment` three times, then `get` | 3 (KI-03) | Resolved in Unit 02; Pending Runtime (Unit 04) |
+| 7 | State across restart | restart the worker, then `get` | still 3 (KI-03) | Resolved in Unit 02; Pending Runtime (Unit 04) |
+| 8 | Awkward state text | use an agent whose state holds quotes, backslashes, newlines, non-ASCII text and an empty string; save, then load | exactly the same text comes back (KI-03, KI-09) | Resolved in Unit 02; Pending Runtime (Unit 04) |
 
 ---
 

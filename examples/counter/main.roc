@@ -85,14 +85,25 @@ agent = defineAgent({
 	deserializeState: |stateJson| {
 		count : I64
 		count =
-			match Str.split_first(stateJson, "\"count\":") {
-				Ok({ after, .. }) => {
-					cleaned = Str.trim(after)
-					match Str.split_first(cleaned, "}") {
-						Ok({ before, .. }) => I64.from_str(Str.trim(before)) ?? 0.I64
+			match Str.split_first(stateJson, "\"count\"") {
+				Ok({ after, .. }) =>
+					match Str.split_first(after, ":") {
+						Ok({ after: afterColon, .. }) => {
+							cleaned = Str.trim(afterColon)
+							numStr =
+								match Str.split_first(cleaned, ",") {
+									Ok({ before, .. }) => before
+									Err(_) =>
+										match Str.split_first(cleaned, "}") {
+											Ok({ before, .. }) => before
+											Err(_) => cleaned
+										}
+								}
+							I64.from_str(Str.trim(numStr)) ?? 0.I64
+						}
+
 						Err(_) => 0.I64
 					}
-				}
 
 				Err(_) => 0.I64
 			}

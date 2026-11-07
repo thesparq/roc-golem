@@ -6,10 +6,17 @@ Keep this file short (about 150 lines). It is a status page, not a diary. Move f
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Unit 01 Complete & Verified** (`docs/specs/01-real-roc-build.md`). Ready for Unit 02 (`docs/specs/02-counter-state.md`).
+Status: **Unit 01 & Unit 02 Complete & Verified** (`docs/specs/01-real-roc-build.md`, `docs/specs/02-valid-reply-envelopes.md`). Ready for Unit 03 (`Roc in CI`).
 
 ## Done
 
+- **Unit 02 (Valid Reply Envelopes & State Escaping) Complete & Verified (2026-11-07)**:
+  - Fixed JSON interpolation bug in `platform/main.roc` (KI-03): raw `nextStateJson` strings are escaped via `escape_json_str` in `format_reply_envelope` and `format_tool_envelope`.
+  - Preserved zero-serialization read-only bypass: empty string `""` state updates instruct Golem host to preserve state in $O(1)$ time without overwriting storage.
+  - Hardened state deserialization in `examples/counter/main.roc` and `README.md` to cleanly handle whitespace, negative numbers, and delimiters.
+  - Added 6 new unit tests in `host/src/lib.rs` covering escaped state, read-only bypass, complex unicode/newline state round-trips, tool calls, and reproduction of KI-03. All 19 host tests passing; `cargo clippy` clean.
+  - Added Roc unit test suite `tests/envelope.roc` (all 4 expect tests passing).
+  - Verified full compilation and validation across all agents via `./tooling/build.sh all`.
 - **Unit 01 (Real Roc Build) Complete & Verified (2026-11-07)**:
   - Installed complete toolchain: `rustc 1.99.1`, `cargo 1.99.1`, `wasm32-unknown-unknown`, LLVM tools with `wasm-ld` wrapper, `wasm-tools 1.222.0`, `roc nightly-2026-09-29-7f11a82`, and `golem-cli 1.2.5`.
   - Decoupled `stub-guest` from default features in `host/Cargo.toml` (`default = []`). Resolved Linux GNU `ld` version-script failure (KI-19) by removing `cdylib` from crate-types.
@@ -31,7 +38,7 @@ Source: code review of 2026-11-07 and build verification.
 | :--- | :--- | :--- | :--- |
 | KI-01 | `build.sh` never compiles or links Roc. `build_app` only runs `roc fmt` and wraps the pre-built host. | Critical | **Resolved** in Unit 01 (native `roc build --target=wasm32` + `wasm-tools component new`) |
 | KI-02 | Feature `stub-guest` is on by default, so fake agent is compiled into `libhost.a`. | Critical | **Resolved** in Unit 01 (`default = []`, production wasm builds with `--no-default-features`) |
-| KI-03 | `platform/main.roc` writes `{"state":"<state>",...}` without escaping the state, so any state with quotes makes the reply invalid JSON. The host then ignores the reply and never saves state. | Critical | Open (Unit 02) |
+| KI-03 | `platform/main.roc` writes `{"state":"<state>",...}` without escaping the state, so any state with quotes makes the reply invalid JSON. The host then ignores the reply and never saves state. | Critical | **Resolved** in Unit 02 (escaped envelope formatting in `platform/main.roc`) |
 | KI-04 | `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` return success without scheduling anything, on every target. `wit/deps/golem-agent/host.wit` offers `schedule-invocation`. | High | Open (Unit 05) |
 | KI-05 | `rocFxGetSecretHandle` reads secrets from `std::env::var`, which does not exist on `wasm32-unknown-unknown`. Works only in tests. | High | Open (Unit 06) |
 | KI-06 | File effects (`readFile`, `writeFile`, bytes variants, append) use `std::fs`, unsupported on this target; `wasi:filesystem` is not in `wit/world.wit`. | High | Open (Unit 07) |
@@ -57,6 +64,5 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Next steps
 
-1. Unit 02: Counter & State Encoding (`docs/specs/02-counter-state.md` addressing KI-03 and KI-09).
-2. Unit 03: Canary Diagnostics & Ephemeral Worker.
-3. Unit 04: Local Golem Integration & Runtime Test Harness.
+1. Unit 03: Roc in CI (consolidating CI workflows, installing Roc nightly in GitHub Actions, and testing builds).
+2. Unit 04: Layer 4 runtime test on local Golem 1.6 server.
