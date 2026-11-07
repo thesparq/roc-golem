@@ -6,7 +6,7 @@ Keep this file short (about 150 lines). It is a status page, not a diary. Move f
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **no unit started.** Context pack (`AGENTS.md`, `PROMPTS.md`, `docs/*`) is the first thing to land.
+Status: **Unit 01 spec written** (`docs/specs/01-real-roc-build.md`), awaiting review.
 
 ## Done
 
