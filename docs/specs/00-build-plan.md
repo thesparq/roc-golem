@@ -8,7 +8,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* `tooling/build.sh` compiles and links the Roc application with the pre-compiled host. Decouples `stub-guest` into an optional test-only feature in `host/Cargo.toml`; builds the shipped host library `libhost.a` with `--no-default-features` so the fake agent is excluded. Compiles Roc application code (`roc build --target wasm32 --no-link <app.roc>`), links with `wasm-ld` against `libhost.a`, and componentizes the resulting WebAssembly binary with `wasm-tools component new`. Each example produces a distinct component. The build script uses the Roc nightly pinned in `docs/architecture.md` and fails with a clear message if the installed `roc` is a different build.
 *Dependencies:* none. Needs approval to touch `host/Cargo.toml` and `tooling/build.sh`.
 *Fixes:* KI-01, KI-02, part of KI-12.
-*Status:* Implemented, awaiting verification.
+*Status:* Complete.
 
 **02. Valid reply envelopes**
 *What it builds:* Fixes the state JSON interpolation bug in `platform/main.roc` where unescaped state JSON (`"state":"${res.nextStateJson}"`) produces malformed envelope strings. Applies a shared JSON-escape step for every dynamic string in `platform/main.roc`, including the state (or outputs raw valid JSON envelopes). Adds golden-envelope and round-trip tests through real Roc.
