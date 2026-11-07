@@ -20,7 +20,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* One CI workflow that installs the pinned Roc nightly and runs `roc fmt --check`, `roc check` for the platform and every example, the host tests, the `wasm32` build, real builds of every example, and component validation. Replaces `ci.yaml` and `ci.yml`. Pins one `wasm-tools` version. Resolves the Linux `cargo test` failure by gating `cdylib` or avoiding cdylib test link on Linux.
 *Dependencies:* 01. Needs approval to change `.github/workflows/*`.
 *Fixes:* KI-08, rest of KI-12, KI-19.
-*Status:* Not started.
+*Status:* Spec written.
 
 **04. Layer 4 runtime test**
 *What it builds:* A runtime test that deploys the `counter` component built from real Roc to a local Golem server 1.6, invokes it, restarts the worker, and checks the count. The exact commands are recorded in `docs/feature-checklist.md`.
