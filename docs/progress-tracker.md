@@ -6,10 +6,19 @@ Keep this file short (about 150 lines). It is a status page, not a diary. Move f
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Unit 01 & Unit 02 Complete & Verified** (`docs/specs/01-real-roc-build.md`, `docs/specs/02-valid-reply-envelopes.md`). Ready for Unit 03 (`Roc in CI`).
+Status: **Unit 01, Unit 02 & Unit 03 Complete & Verified** (`docs/specs/01-real-roc-build.md`, `docs/specs/02-valid-reply-envelopes.md`, `docs/specs/03-roc-in-ci.md`). Ready for Unit 04 (`Layer 4 runtime test`).
 
 ## Done
 
+- **Unit 03 (Roc in CI) Complete & Verified (2026-11-07)**:
+  - Consolidated duplicate CI workflows into unified `.github/workflows/ci.yaml` and deleted redundant `.github/workflows/ci.yml` (KI-12).
+  - Pinned tools in CI: `wasm-tools 1.222.0`, Roc compiler nightly `nightly-2026-09-29-7f11a82` with cache (`~/.roc-cache`), and Rust with `wasm32-unknown-unknown`, `clippy`, `rustfmt`.
+  - Added full multi-layer pipeline to CI:
+    - Layer 1: `cargo fmt --check`, `cargo clippy`, `roc fmt --check`, and `roc check` for `platform/main.roc` and all 4 examples (KI-08).
+    - Layer 2: `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` (19 tests) and `roc test tests/envelope.roc`.
+    - Layer 3: `./tooling/build.sh all` compiling real Roc code and pre-compiled host for all 4 examples.
+    - Layer 4: `wasm-tools validate` for all 4 agent components and packaging verification (`dist/checksums.txt`, `dist/release_notes.md`).
+  - Verified every pipeline command locally with 0 errors.
 - **Unit 02 (Valid Reply Envelopes & State Escaping) Complete & Verified (2026-11-07)**:
   - Fixed JSON interpolation bug in `platform/main.roc` (KI-03): raw `nextStateJson` strings are escaped via `escape_json_str` in `format_reply_envelope` and `format_tool_envelope`.
   - Preserved zero-serialization read-only bypass: empty string `""` state updates instruct Golem host to preserve state in $O(1)$ time without overwriting storage.
@@ -43,11 +52,11 @@ Source: code review of 2026-11-07 and build verification.
 | KI-05 | `rocFxGetSecretHandle` reads secrets from `std::env::var`, which does not exist on `wasm32-unknown-unknown`. Works only in tests. | High | Open (Unit 06) |
 | KI-06 | File effects (`readFile`, `writeFile`, bytes variants, append) use `std::fs`, unsupported on this target; `wasi:filesystem` is not in `wit/world.wit`. | High | Open (Unit 07) |
 | KI-07 | `rocFxLog` uses `println!`, which likely goes nowhere on this target. | Medium | Open (Unit 08) |
-| KI-08 | No test compiles Roc: CI never runs `roc check`, `roc build` or `roc test`. The 13 tests run against `guest_bridge.rs`. | Critical | Open (Unit 04 / CI update) |
+| KI-08 | No test compiles Roc: CI never runs `roc check`, `roc build` or `roc test`. The 13 tests run against `guest_bridge.rs`. | Critical | **Resolved** in Unit 03 (full Roc checks, tests, builds, validations in CI) |
 | KI-09 | Examples parse JSON with ad-hoc text search. The README counter has `deserializeState: \|_json\| Ok({ count: 0 })`, which resets state on every load. `ai_tool` does not escape `lastTool`. | High | Open (Unit 02) |
 | KI-10 | On any message-handler error the host retries as a tool call and reports `InvalidMethod` with the first error, hiding the real failure. | Medium | Open (Unit 09) |
 | KI-11 | The host hard-codes `name == "canary-release"` to add an HTTP mount at `/canary/{id}`. | Medium | Open (Unit 10) |
-| KI-12 | Two CI files named "CI" (`ci.yaml`, `ci.yml`) with different jobs; `wasm-tools` pinned at 1.220.0 and 1.222.0; one job packages as `v0.7.0`; neither CI nor `build.sh` installs or checks the pinned Roc nightly. | Medium | Open |
+| KI-12 | Two CI files named "CI" (`ci.yaml`, `ci.yml`) with different jobs; `wasm-tools` pinned at 1.220.0 and 1.222.0; one job packages as `v0.7.0`; neither CI nor `build.sh` installs or checks the pinned Roc nightly. | Medium | **Resolved** in Unit 03 (consolidated to `ci.yaml`, removed `ci.yml`, pinned `wasm-tools 1.222.0` and Roc nightly) |
 | KI-13 | RPC always constructs the target with an empty constructor (`"{}"`), so agents with constructor arguments cannot be addressed. | Medium | Open (Unit 05) |
 | KI-14 | Canary example fakes its timer (`timerHandle = 42`) and webhook URL, defines `renderDashboard` but never serves it, and has an unused variable. | Medium | Open (Unit 11) |
 | KI-15 | README is stale: deploy command uses `golem:agent-platform/agent-api.{handle-message}`; hash points to v0.8.0; host comment still says "Golem 1.5.0". | Medium | Open |
@@ -64,5 +73,4 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Next steps
 
-1. Unit 03: Roc in CI (consolidating CI workflows, installing Roc nightly in GitHub Actions, and testing builds).
-2. Unit 04: Layer 4 runtime test on local Golem 1.6 server.
+1. Unit 04: Layer 4 runtime test on local Golem 1.6 server.

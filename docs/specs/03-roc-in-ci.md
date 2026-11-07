@@ -2,7 +2,7 @@
 
 - **Unit:** 03
 - **File:** `docs/specs/03-roc-in-ci.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Fixes:** `KI-08`, rest of `KI-12`, `KI-19`
 
 ---
@@ -117,11 +117,11 @@ flowchart TD
 
 ## 5. Verification Criteria
 
-- [ ] Redundant `.github/workflows/ci.yml` is removed.
-- [ ] `.github/workflows/ci.yaml` installs pinned `roc nightly-2026-09-29-7f11a82`.
-- [ ] `.github/workflows/ci.yaml` pins `wasm-tools 1.222.0`.
-- [ ] CI runs `cargo fmt --check`, `cargo clippy`, and `cargo test --features stub-guest --lib`.
-- [ ] CI runs `roc fmt --check` and `roc check` for platform and all 4 examples.
-- [ ] CI runs `roc test tests/envelope.roc`.
-- [ ] CI runs `./tooling/build.sh all` and validates all four generated agent components.
-- [ ] All commands defined in CI are verified to pass locally before push.
+- [x] Redundant `.github/workflows/ci.yml` is removed.
+- [x] `.github/workflows/ci.yaml` installs pinned `roc nightly-2026-09-29-7f11a82`.
+- [x] `.github/workflows/ci.yaml` pins `wasm-tools 1.222.0`.
+- [x] CI runs `cargo fmt --check`, `cargo clippy`, and `cargo test --features stub-guest --lib`.
+- [x] CI runs `roc fmt --check` and `roc check` for platform and all 4 examples.
+- [x] CI runs `roc test tests/envelope.roc`.
+- [x] CI runs `./tooling/build.sh all` and validates all four generated agent components.
+- [x] All commands defined in CI are verified to pass locally before push.

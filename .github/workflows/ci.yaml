@@ -2,43 +2,95 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - "feat/**"
-      - "fix/**"
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
-  test-and-verify:
-    name: Test & Verify Platform
+  ci:
+    name: Build, Test & Validate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y lld brotli zstd
+          if ! command -v wasm-ld &>/dev/null; then
+            sudo ln -s "$(which lld)" /usr/local/bin/wasm-ld || true
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-
-      - name: Install compression tools (brotli, zstd)
-        run: sudo apt-get update && sudo apt-get install -y brotli zstd
+          components: clippy, rustfmt
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
         with:
-          version: "1.220.0"
+          version: "1.222.0"
 
-      - name: Run Host Unit Tests
-        run: cargo test --manifest-path host/Cargo.toml --lib
+      - name: Cache Roc Compiler
+        id: cache-roc
+        uses: actions/cache@v4
+        with:
+          path: ~/.roc-cache
+          key: roc-nightly-2026-09-29-7f11a82
 
-      - name: Build All Platform & Agent Components
-        run: ./tooling/build.sh all
-
-      - name: Verify Package Generation
+      - name: Install Pinned Roc Nightly
+        if: steps.cache-roc.outputs.cache-hit != 'true'
         run: |
+          mkdir -p "$HOME/.roc-cache"
+          curl -fsSL https://github.com/roc-lang/nightlies/releases/download/nightly-2026-09-29-7f11a82/roc_nightly-linux_x86_64-2026-09-29-7f11a82.tar.gz | tar -xz -C "$HOME/.roc-cache" --strip-components=1
+
+      - name: Add Roc to PATH
+        run: |
+          echo "$HOME/.roc-cache" >> "$GITHUB_PATH"
+
+      - name: Verify Toolchain
+        run: |
+          cargo --version
+          rustc --version
+          wasm-tools --version
+          roc version
+
+      - name: "Layer 1: Static Checks (Formatting & Linting)"
+        run: |
+          echo "==> Checking Rust formatting..."
+          cargo fmt --manifest-path host/Cargo.toml --all -- --check
+          echo "==> Running Clippy..."
+          cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings
+          echo "==> Checking Roc formatting..."
+          roc fmt --check platform/main.roc examples/counter/main.roc examples/ai_tool/main.roc examples/streaming_agent/main.roc examples/canary_release/main.roc tests/envelope.roc
+          echo "==> Running Roc checks..."
+          roc check platform/main.roc || [ $? -eq 2 ]
+          roc check examples/counter/main.roc || [ $? -eq 2 ]
+          roc check examples/ai_tool/main.roc || [ $? -eq 2 ]
+          roc check examples/streaming_agent/main.roc || [ $? -eq 2 ]
+          roc check examples/canary_release/main.roc || [ $? -eq 2 ]
+
+      - name: "Layer 2: Unit Tests (Host & Platform)"
+        run: |
+          echo "==> Running Host unit tests..."
+          cargo test --manifest-path host/Cargo.toml --features stub-guest --lib
+          echo "==> Running Roc platform tests..."
+          roc test tests/envelope.roc || [ $? -eq 2 ]
+
+      - name: "Layer 3: App Builds & Packaging"
+        run: |
+          ./tooling/build.sh all
+
+      - name: "Layer 4: Component Validation & Package Verification"
+        run: |
+          echo "==> Validating WebAssembly Component Model conformance..."
+          wasm-tools validate build/counter_agent.wasm
+          wasm-tools validate build/ai_tool_agent.wasm
+          wasm-tools validate build/streaming_agent_agent.wasm
+          wasm-tools validate build/canary_release_agent.wasm
+          echo "==> Verifying release package files..."
           test -f dist/checksums.txt
           test -f dist/release_notes.md
-          echo "Package build verified successfully!"
+          echo "CI Pipeline completed successfully!"
