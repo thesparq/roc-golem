@@ -14,7 +14,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* Fixes the state JSON interpolation bug in `platform/main.roc` where unescaped state JSON (`"state":"${res.nextStateJson}"`) produces malformed envelope strings. Applies a shared JSON-escape step for every dynamic string in `platform/main.roc`, including the state (or outputs raw valid JSON envelopes). Adds golden-envelope and round-trip tests through real Roc.
 *Dependencies:* 01.
 *Fixes:* KI-03.
-*Status:* Not started.
+*Status:* Spec written.
 
 **03. Roc in CI**
 *What it builds:* One CI workflow that installs the pinned Roc nightly and runs `roc fmt --check`, `roc check` for the platform and every example, the host tests, the `wasm32` build, real builds of every example, and component validation. Replaces `ci.yaml` and `ci.yml`. Pins one `wasm-tools` version. Resolves the Linux `cargo test` failure by gating `cdylib` or avoiding cdylib test link on Linux.
