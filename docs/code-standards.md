@@ -4,6 +4,7 @@
 
 - **Keep modules small and single-purpose.** Every file has one clear responsibility. If a module does two unrelated things, split it. (`host/src/lib.rs` is already very large; do not make it larger without a unit that explicitly splits it.)
 - **Fix root causes, do not layer workarounds.** When a bug appears, trace it to its source. Do not compensate in the examples, in the README, or in tests for a defect in the platform or the host.
+- **Test-Driven Development (TDD) first.** Always write unit, round-trip, or integration tests for a feature before writing its implementation. Implement code specifically to satisfy the tests.
 - **Do not mix concerns across boundaries.** Roc agent code never touches WIT. The host never contains domain logic. The platform never contains example-specific logic. Tooling never contains runtime logic. (Boundaries are defined in `docs/architecture.md`.)
 - **Explicit is better than implicit.** All contracts (the four entry points, the envelopes, the effects, the WIT world) are written down and typed. Defaults and fallback behavior are documented where they are defined.
 - **Fail fast at the boundary.** Validate input where it enters: the envelope in the platform, the WIT values in the host, the effect arguments in each `rocFx*`.

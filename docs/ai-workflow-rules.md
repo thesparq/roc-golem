@@ -6,6 +6,7 @@ These are instructions for any AI coding agent working on this project. Follow t
 
 - **Follow the project context files as the source of truth.** Before writing any code, read `project-overview.md`, `architecture.md`, `code-standards.md` and `testing.md`, then the current `progress-tracker.md`. Every line of code must align with the architecture and its principles.
 - **Work spec-first.** Every unit of work begins with a clear specification of what changes, why, and where. Do not write code before the specification is agreed.
+- **Follow Test-Driven Development (TDD).** For every feature implementation, write appropriate tests first (defining failing tests, assertions, and boundary checks) before writing implementation code. Implement against the tests until they pass cleanly, then refactor.
 - **Deliver incrementally.** Break work into the smallest units that can be verified independently. Each unit must leave the repository in a buildable, testable state. Never batch unrelated changes.
 - **End each unit at a clean boundary.** After a unit, everything that built before still builds, nothing that passed before fails, and no half-finished work is left behind.
 - **Be honest about what you ran.** Report only what you actually executed. A check you could not run is reported as "not run", with the reason (for example: no Roc compiler available, WebAssembly target not installed, no network). Never describe code as working because it looks right.

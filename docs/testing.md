@@ -37,6 +37,18 @@ Layer 4  runtime       Does a real Roc agent behave on Golem?        proves: the
 - Layer 2 also never runs the real `wasm32` branch of any effect. Those branches (`#[cfg(target_arch = "wasm32")]`) are compiled only in Layer 3, and exercised only in Layer 4.
 - Layer 3 proves a component was produced, not that it does anything correct.
 
+## Test-Driven Development (TDD) Workflow
+
+Every feature implementation must follow Test-Driven Development:
+1. **Red (Write Tests First):** Before altering platform, host, or example code, write tests that assert the target behavior, edge cases (such as quotes, escapes, unicode, nulls), and error paths. Run the test to confirm it fails as expected or exposes the bug.
+2. **Green (Implement to Pass):** Write the minimal code necessary to satisfy the test across the host, platform, or example. Run the test suite to confirm all tests pass.
+3. **Refactor & Verify:** Clean up code, format (`roc fmt`, `cargo fmt`), verify lint (`cargo clippy`, `roc check`), and ensure no regression in existing tests.
+
+TDD applies across layers:
+- **Host / ABI tests:** Written in Rust (`host/src/lib.rs` or integration test modules) asserting JSON envelope handling, state parsing, or WIT boundary interactions.
+- **Roc Platform / Codec tests:** Written as unit/round-trip tests in Roc or as test harness checks exercising `serializeState` / `deserializeState` and envelope formatting.
+- **Component / Runtime tests:** End-to-end assertions against built `.wasm` components.
+
 ## Layer 1: Static checks
 
 | Check | Command | Passes when |

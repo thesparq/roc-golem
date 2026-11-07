@@ -16,6 +16,7 @@ Then, for the unit you are about to work on, read its spec in `docs/specs/`. The
 The full text is in `docs/ai-workflow-rules.md`. In short:
 
 - **Spec first.** Do not write code until the spec for the unit is agreed.
+- **Test-Driven Development (TDD).** For every feature implementation, write appropriate tests first following typical TDD principles (red-green-refactor) before writing implementation code. Implement against the tests until they pass cleanly.
 - **One unit at a time.** No speculative changes, no extra features, no unrelated cleanup.
 - **Stop, do not guess.** If a requirement is missing or ambiguous, stop and ask with concrete options.
 - **No fake success.** Never write code that reports success for work it did not do. Never report a check as passed unless you actually ran it. If you could not run it, say "not run" and why.
