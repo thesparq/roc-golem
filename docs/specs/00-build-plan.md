@@ -57,7 +57,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* A failing message handler returns its own error; the fallback-to-tool-call path only runs when the method is genuinely a tool.
 *Dependencies:* 02.
 *Fixes:* KI-10.
-*Status:* Not started.
+*Status:* Spec written.
 
 ## Phase 2 — Make the SDK and examples trustworthy
 
