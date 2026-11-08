@@ -45,7 +45,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* Real file effects (`readFile`, `writeFile`, `appendFileBytes`, `readFileBytes`, `writeFileBytes`) on `wasm32` through standard WASI 0.2 `wasi:filesystem/preopens` and `wasi:filesystem/types` using preopened directory descriptors, with native `std::fs` fallback for local testing.
 *Dependencies:* 04. Needs approval for any change in `wit/world.wit` (Approved).
 *Fixes:* KI-06.
-*Status:* Spec written.
+*Status:* Complete.
 
 **08. Logging**
 *What it builds:* `rocFxLog` writes to a place that Golem captures on `wasm32` (WASI/Golem logging interfaces instead of unrouted `println!`).

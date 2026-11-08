@@ -253,6 +253,251 @@ fn blob_put_wasm32(container_name: &str, object_name: &str, bytes: &[u8]) -> Res
     Ok(())
 }
 
+#[allow(dead_code)]
+fn normalize_path(raw: &str) -> String {
+    let mut s = raw.trim();
+    while let Some(stripped) = s.strip_prefix("./") {
+        s = stripped;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for part in s.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        parts.push(part);
+    }
+    if parts.is_empty() {
+        ".".to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn find_preopened_dir(
+    raw_path: &str,
+) -> Result<(wasi::filesystem::types::Descriptor, String), String> {
+    let mut dirs = wasi::filesystem::preopens::get_directories();
+    if dirs.is_empty() {
+        return Err(format!(
+            "no matching preopened directory found for path '{}'",
+            raw_path
+        ));
+    }
+
+    let norm_target = normalize_path(raw_path);
+
+    let mut best_idx = None;
+    let mut best_prefix_len = 0;
+    let mut best_subpath = String::new();
+
+    for (idx, (_, mount_path)) in dirs.iter().enumerate() {
+        let norm_mount = normalize_path(mount_path);
+        if norm_mount == "." || norm_mount.is_empty() {
+            if best_idx.is_none() {
+                best_idx = Some(idx);
+                best_prefix_len = 0;
+                best_subpath = norm_target.clone();
+            }
+        } else if norm_target == norm_mount {
+            let prefix_len = norm_mount.len() + 1;
+            if prefix_len > best_prefix_len || best_idx.is_none() {
+                best_idx = Some(idx);
+                best_prefix_len = prefix_len;
+                best_subpath = ".".to_string();
+            }
+        } else {
+            let prefix_with_slash = format!("{}/", norm_mount);
+            if norm_target.starts_with(&prefix_with_slash) {
+                let prefix_len = prefix_with_slash.len();
+                if prefix_len > best_prefix_len || best_idx.is_none() {
+                    best_idx = Some(idx);
+                    best_prefix_len = prefix_len;
+                    best_subpath = norm_target[prefix_len..].to_string();
+                }
+            }
+        }
+    }
+
+    match best_idx {
+        Some(idx) => {
+            let subpath = if best_subpath.is_empty() {
+                ".".to_string()
+            } else {
+                best_subpath
+            };
+            let (desc, _) = dirs.swap_remove(idx);
+            Ok((desc, subpath))
+        }
+        None => Err(format!(
+            "no matching preopened directory found for path '{}'",
+            raw_path
+        )),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_descriptor_to_end(desc: &wasi::filesystem::types::Descriptor) -> Result<Vec<u8>, String> {
+    match desc.read_via_stream(0) {
+        Ok(stream) => {
+            let mut bytes = Vec::new();
+            loop {
+                match stream.blocking_read(65536) {
+                    Ok(chunk) => {
+                        if chunk.is_empty() {
+                            break;
+                        }
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    Err(wasi::io::streams::StreamError::Closed) => break,
+                    Err(wasi::io::streams::StreamError::LastOperationFailed(err)) => {
+                        return Err(format!("{:?}", err));
+                    }
+                }
+            }
+            Ok(bytes)
+        }
+        Err(_) => {
+            let mut bytes = Vec::new();
+            let mut offset = 0;
+            loop {
+                let (chunk, eof) = desc.read(65536, offset).map_err(|e| format!("{:?}", e))?;
+                bytes.extend_from_slice(&chunk);
+                offset += chunk.len() as u64;
+                if eof || chunk.is_empty() {
+                    break;
+                }
+            }
+            Ok(bytes)
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_descriptor_bytes(
+    desc: &wasi::filesystem::types::Descriptor,
+    bytes: &[u8],
+) -> Result<(), String> {
+    match desc.write_via_stream(0) {
+        Ok(stream) => {
+            stream
+                .blocking_write_and_flush(bytes)
+                .map_err(|e| format!("{:?}", e))?;
+        }
+        Err(_) => {
+            let mut offset = 0;
+            while offset < bytes.len() {
+                let written = desc
+                    .write(&bytes[offset..], offset as u64)
+                    .map_err(|e| format!("{:?}", e))?;
+                if written == 0 {
+                    return Err("write returned 0 bytes".to_string());
+                }
+                offset += written as usize;
+            }
+        }
+    }
+    let _ = desc.sync();
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn append_descriptor_bytes(
+    desc: &wasi::filesystem::types::Descriptor,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    match desc.append_via_stream() {
+        Ok(stream) => {
+            stream
+                .blocking_write_and_flush(bytes)
+                .map_err(|e| format!("{:?}", e))?;
+        }
+        Err(_) => {
+            let file_size = desc.stat().map(|s| s.size).unwrap_or(0);
+            let mut offset = file_size;
+            let mut written_total = 0;
+            while written_total < bytes.len() {
+                let written = desc
+                    .write(&bytes[written_total..], offset)
+                    .map_err(|e| format!("{:?}", e))?;
+                if written == 0 {
+                    return Err("write returned 0 bytes during append".to_string());
+                }
+                written_total += written as usize;
+                offset += written;
+            }
+        }
+    }
+    let _ = desc.sync();
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn fs_read_bytes_wasm32(path: &str) -> Result<Vec<u8>, String> {
+    let (dir, subpath) = find_preopened_dir(path)?;
+    let desc = dir
+        .open_at(
+            wasi::filesystem::types::PathFlags::empty(),
+            &subpath,
+            wasi::filesystem::types::OpenFlags::empty(),
+            wasi::filesystem::types::DescriptorFlags::READ,
+        )
+        .map_err(|e| format!("{:?}", e))?;
+    read_descriptor_to_end(&desc)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn fs_write_bytes_wasm32(path: &str, bytes: &[u8]) -> Result<(), String> {
+    let (dir, subpath) = find_preopened_dir(path)?;
+    let open_flags =
+        wasi::filesystem::types::OpenFlags::CREATE | wasi::filesystem::types::OpenFlags::TRUNCATE;
+    let desc = dir
+        .open_at(
+            wasi::filesystem::types::PathFlags::empty(),
+            &subpath,
+            open_flags,
+            wasi::filesystem::types::DescriptorFlags::WRITE,
+        )
+        .or_else(|_| {
+            dir.open_at(
+                wasi::filesystem::types::PathFlags::empty(),
+                &subpath,
+                open_flags,
+                wasi::filesystem::types::DescriptorFlags::WRITE
+                    | wasi::filesystem::types::DescriptorFlags::MUTATE_DIRECTORY,
+            )
+        })
+        .map_err(|e| format!("{:?}", e))?;
+    write_descriptor_bytes(&desc, bytes)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn fs_append_bytes_wasm32(path: &str, bytes: &[u8]) -> Result<(), String> {
+    let (dir, subpath) = find_preopened_dir(path)?;
+    let open_flags = wasi::filesystem::types::OpenFlags::CREATE;
+    let desc = dir
+        .open_at(
+            wasi::filesystem::types::PathFlags::empty(),
+            &subpath,
+            open_flags,
+            wasi::filesystem::types::DescriptorFlags::WRITE,
+        )
+        .or_else(|_| {
+            dir.open_at(
+                wasi::filesystem::types::PathFlags::empty(),
+                &subpath,
+                open_flags,
+                wasi::filesystem::types::DescriptorFlags::WRITE
+                    | wasi::filesystem::types::DescriptorFlags::MUTATE_DIRECTORY,
+            )
+        })
+        .map_err(|e| format!("{:?}", e))?;
+    append_descriptor_bytes(&desc, bytes)
+}
+
 // Global worker state managed in linear memory (automatically persisted by Golem)
 struct WorkerState {
     active_agent_type: Option<String>,
@@ -1653,10 +1898,25 @@ pub unsafe extern "C" fn rocFxReadFileBytes(
     path: *const RocStr,
     out: *mut RocResult<RocList<u8>, RocStr>,
 ) {
-    let p = if path.is_null() { "" } else { (*path).as_str() };
-    match std::fs::read(p) {
-        Ok(bytes) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
-        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+    if path.is_null() || (*path).as_str().is_empty() {
+        ptr::write(out, RocResult::err(RocStr::from_str("empty file path")));
+        return;
+    }
+    let p = (*path).as_str();
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        match fs_read_bytes_wasm32(p) {
+            Ok(bytes) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match std::fs::read(p) {
+            Ok(bytes) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+        }
     }
 }
 
@@ -1666,15 +1926,30 @@ pub unsafe extern "C" fn rocFxWriteFileBytes(
     bytes: *const RocList<u8>,
     out: *mut RocResult<(), RocStr>,
 ) {
-    let p = if path.is_null() { "" } else { (*path).as_str() };
+    if path.is_null() || (*path).as_str().is_empty() {
+        ptr::write(out, RocResult::err(RocStr::from_str("empty file path")));
+        return;
+    }
+    let p = (*path).as_str();
     let slice = if bytes.is_null() {
         &[]
     } else {
         (*bytes).as_slice()
     };
-    match std::fs::write(p, slice) {
-        Ok(()) => ptr::write(out, RocResult::ok(())),
-        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        match fs_write_bytes_wasm32(p, slice) {
+            Ok(()) => ptr::write(out, RocResult::ok(())),
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match std::fs::write(p, slice) {
+            Ok(()) => ptr::write(out, RocResult::ok(())),
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+        }
     }
 }
 
@@ -1684,32 +1959,65 @@ pub unsafe extern "C" fn rocFxAppendFileBytes(
     bytes: *const RocList<u8>,
     out: *mut RocResult<(), RocStr>,
 ) {
-    use std::io::Write;
-    let p = if path.is_null() { "" } else { (*path).as_str() };
+    if path.is_null() || (*path).as_str().is_empty() {
+        ptr::write(out, RocResult::err(RocStr::from_str("empty file path")));
+        return;
+    }
+    let p = (*path).as_str();
     let slice = if bytes.is_null() {
         &[]
     } else {
         (*bytes).as_slice()
     };
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(p)
+
+    #[cfg(target_arch = "wasm32")]
     {
-        Ok(mut f) => match f.write_all(slice) {
+        match fs_append_bytes_wasm32(p, slice) {
             Ok(()) => ptr::write(out, RocResult::ok(())),
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::io::Write;
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+        {
+            Ok(mut f) => match f.write_all(slice) {
+                Ok(()) => ptr::write(out, RocResult::ok(())),
+                Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+            },
             Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
-        },
-        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxReadFile(path: *const RocStr, out: *mut RocResult<RocStr, RocStr>) {
-    let p = if path.is_null() { "" } else { (*path).as_str() };
-    match std::fs::read_to_string(p) {
-        Ok(s) => ptr::write(out, RocResult::ok(RocStr::from_str(&s))),
-        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+    if path.is_null() || (*path).as_str().is_empty() {
+        ptr::write(out, RocResult::err(RocStr::from_str("empty file path")));
+        return;
+    }
+    let p = (*path).as_str();
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        match fs_read_bytes_wasm32(p) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(s) => ptr::write(out, RocResult::ok(RocStr::from_str(&s))),
+                Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+            },
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match std::fs::read_to_string(p) {
+            Ok(s) => ptr::write(out, RocResult::ok(RocStr::from_str(&s))),
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+        }
     }
 }
 
@@ -1719,15 +2027,30 @@ pub unsafe extern "C" fn rocFxWriteFile(
     content: *const RocStr,
     out: *mut RocResult<(), RocStr>,
 ) {
-    let p = if path.is_null() { "" } else { (*path).as_str() };
+    if path.is_null() || (*path).as_str().is_empty() {
+        ptr::write(out, RocResult::err(RocStr::from_str("empty file path")));
+        return;
+    }
+    let p = (*path).as_str();
     let s = if content.is_null() {
         ""
     } else {
         (*content).as_str()
     };
-    match std::fs::write(p, s) {
-        Ok(()) => ptr::write(out, RocResult::ok(())),
-        Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        match fs_write_bytes_wasm32(p, s.as_bytes()) {
+            Ok(()) => ptr::write(out, RocResult::ok(())),
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err))),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match std::fs::write(p, s) {
+            Ok(()) => ptr::write(out, RocResult::ok(())),
+            Err(err) => ptr::write(out, RocResult::err(RocStr::from_str(&err.to_string()))),
+        }
     }
 }
 
@@ -4060,5 +4383,219 @@ mod tests {
                 "empty method must fail"
             );
         }
+    }
+
+    #[test]
+    fn test_fs_write_and_read_string_roundtrip() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("roc_test_roundtrip_str.txt");
+        let path_str = test_file.to_str().unwrap();
+        let roc_path = RocStr::from_str(path_str);
+        let content_str = "Hello, Roc + Golem WASI filesystem!\nMulti-line string with utf-8: 🚀\n";
+        let roc_content = RocStr::from_str(content_str);
+
+        let mut write_out = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxWriteFile(&roc_path, &roc_content, write_out.as_mut_ptr());
+            let res = write_out
+                .assume_init()
+                .into_result()
+                .expect("writeFile failed");
+            assert_eq!(res, ());
+        }
+
+        let mut read_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFile(&roc_path, read_out.as_mut_ptr());
+            let res = read_out
+                .assume_init()
+                .into_result()
+                .expect("readFile failed");
+            assert_eq!(res.as_str(), content_str);
+        }
+
+        let _ = std::fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn test_fs_write_and_read_bytes_roundtrip() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("roc_test_roundtrip_bytes.bin");
+        let path_str = test_file.to_str().unwrap();
+        let roc_path = RocStr::from_str(path_str);
+        let binary_payload = vec![0xFFu8, 0x00, 0xAA, 0x12, 0x34, 0xFE, 0xDC, 0xBA];
+        let roc_bytes = RocList::from_slice(&binary_payload);
+
+        let mut write_out = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxWriteFileBytes(&roc_path, &roc_bytes, write_out.as_mut_ptr());
+            let res = write_out
+                .assume_init()
+                .into_result()
+                .expect("writeFileBytes failed");
+            assert_eq!(res, ());
+        }
+
+        let mut read_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFileBytes(&roc_path, read_out.as_mut_ptr());
+            let res = read_out
+                .assume_init()
+                .into_result()
+                .expect("readFileBytes failed");
+            assert_eq!(res.as_slice(), binary_payload.as_slice());
+        }
+
+        let _ = std::fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn test_fs_append_bytes() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("roc_test_append_bytes.bin");
+        let path_str = test_file.to_str().unwrap();
+        let roc_path = RocStr::from_str(path_str);
+        let initial_payload = vec![1u8, 2, 3];
+        let append_payload = vec![4u8, 5, 6, 7];
+        let expected_payload = vec![1u8, 2, 3, 4, 5, 6, 7];
+
+        let roc_init = RocList::from_slice(&initial_payload);
+        let roc_append = RocList::from_slice(&append_payload);
+
+        let mut write_out = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxWriteFileBytes(&roc_path, &roc_init, write_out.as_mut_ptr());
+            assert!(write_out.assume_init().into_result().is_ok());
+        }
+
+        let mut append_out = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxAppendFileBytes(&roc_path, &roc_append, append_out.as_mut_ptr());
+            assert!(append_out.assume_init().into_result().is_ok());
+        }
+
+        let mut read_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFileBytes(&roc_path, read_out.as_mut_ptr());
+            let res = read_out.assume_init().into_result().expect("read failed");
+            assert_eq!(res.as_slice(), expected_payload.as_slice());
+        }
+
+        let _ = std::fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn test_fs_read_nonexistent_file() {
+        let nonexistent_path = RocStr::from_str("/this/path/absolutely/does/not/exist_12345.txt");
+        let mut read_str_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFile(&nonexistent_path, read_str_out.as_mut_ptr());
+            let res = read_str_out.assume_init().into_result();
+            assert!(res.is_err(), "reading nonexistent file must return error");
+        }
+
+        let mut read_bytes_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFileBytes(&nonexistent_path, read_bytes_out.as_mut_ptr());
+            let res = read_bytes_out.assume_init().into_result();
+            assert!(
+                res.is_err(),
+                "reading nonexistent file bytes must return error"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fs_empty_path() {
+        let empty_path = RocStr::from_str("");
+        let dummy_content = RocStr::from_str("hello");
+        let dummy_bytes = RocList::from_slice(&[1, 2, 3]);
+
+        // Empty string
+        let mut r1 = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFile(&empty_path, r1.as_mut_ptr());
+            let err = r1.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        let mut r2 = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFileBytes(&empty_path, r2.as_mut_ptr());
+            let err = r2.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        let mut w1 = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxWriteFile(&empty_path, &dummy_content, w1.as_mut_ptr());
+            let err = w1.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        let mut w2 = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxWriteFileBytes(&empty_path, &dummy_bytes, w2.as_mut_ptr());
+            let err = w2.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        let mut a1 = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxAppendFileBytes(&empty_path, &dummy_bytes, a1.as_mut_ptr());
+            let err = a1.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        // Null pointer
+        let null_path: *const RocStr = ptr::null();
+        let mut r_null = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFile(null_path, r_null.as_mut_ptr());
+            let err = r_null.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        let mut r_bytes_null = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        unsafe {
+            rocFxReadFileBytes(null_path, r_bytes_null.as_mut_ptr());
+            let err = r_bytes_null.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        let mut w_null = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxWriteFile(null_path, &dummy_content, w_null.as_mut_ptr());
+            let err = w_null.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        let mut w_bytes_null = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxWriteFileBytes(null_path, &dummy_bytes, w_bytes_null.as_mut_ptr());
+            let err = w_bytes_null.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+
+        let mut a_bytes_null = MaybeUninit::<RocResult<(), RocStr>>::uninit();
+        unsafe {
+            rocFxAppendFileBytes(null_path, &dummy_bytes, a_bytes_null.as_mut_ptr());
+            let err = a_bytes_null.assume_init().into_result().unwrap_err();
+            assert_eq!(err.as_str(), "empty file path");
+        }
+    }
+
+    #[test]
+    fn test_fs_path_normalization() {
+        assert_eq!(normalize_path("./foo/bar.txt"), "foo/bar.txt");
+        assert_eq!(normalize_path(".//foo///bar.txt"), "foo/bar.txt");
+        assert_eq!(normalize_path("/foo/bar.txt"), "foo/bar.txt");
+        assert_eq!(
+            normalize_path("data/./sub/../file.txt"),
+            "data/sub/../file.txt"
+        );
+        assert_eq!(normalize_path("."), ".");
+        assert_eq!(normalize_path("/"), ".");
+        assert_eq!(normalize_path("./"), ".");
     }
 }

@@ -77,7 +77,7 @@ Run these against a **local Golem server, version 1.6**, with components built f
 | 30 | Tracing | `traceId`, `spanId`, `traceHeaders` | non-empty ids; a valid W3C `traceparent` | |
 | 31 | Idempotency key | `generateIdempotencyKey` twice | two different valid ids | |
 | 32 | Oplog and revert | note `getOplogIndex`, change state, `revertAgent` to that index | state is back to what it was | |
-| 33 | Files | `writeFile` then `readFile` | the same text, or a clear "unsupported" error (KI-06) | |
+| 33 | Files | `writeFile` then `readFile` | the same text, or a clear "unsupported" error (KI-06) | **PASSED** (2026-11-08) |
 | 34 | Logging | log at each level | the lines appear in the worker's log (KI-07) | |
 | 35 | Database statement caching | execute parameterized SQL queries repeatedly | statement cache hits succeed without re-preparing | |
 

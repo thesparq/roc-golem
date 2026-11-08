@@ -87,7 +87,7 @@ Source: code review of 2026-11-07 and build verification.
 | KI-03 | `platform/main.roc` writes `{"state":"<state>",...}` without escaping the state, so any state with quotes makes the reply invalid JSON. The host then ignores the reply and never saves state. | Critical | **Resolved** in Unit 02 (escaped envelope formatting in `platform/main.roc`) |
 | KI-04 | `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` return success without scheduling anything, on every target. `wit/deps/golem-agent/host.wit` offers `schedule-invocation`. | High | **Resolved** in Unit 05 (real wall-clock scheduling via wasm-rpc) |
 | KI-05 | `rocFxGetSecretHandle` reads secrets from `std::env::var`, which does not exist on `wasm32-unknown-unknown`. Works only in tests. | High | **Resolved** in Unit 06 (`wasi:config/store` on `wasm32` + `SECRET_ENV`/`std::env::var` fallback) |
-| KI-06 | File effects (`readFile`, `writeFile`, bytes variants, append) use `std::fs`, unsupported on this target; `wasi:filesystem` is not in `wit/world.wit`. | High | Open (Unit 07) |
+| KI-06 | File effects (`readFile`, `writeFile`, bytes variants, append) use `std::fs`, unsupported on this target; `wasi:filesystem` is not in `wit/world.wit`. | High | **Resolved** in Unit 07 (real WASI 0.2 `wasi:filesystem` with preopens on `wasm32`, `std::fs` native fallback) |
 | KI-07 | `rocFxLog` uses `println!`, which likely goes nowhere on this target. | Medium | Open (Unit 08) |
 | KI-08 | No test compiles Roc: CI never runs `roc check`, `roc build` or `roc test`. The 13 tests run against `guest_bridge.rs`. | Critical | **Resolved** in Unit 03 (full Roc checks, tests, builds, validations in CI) |
 | KI-09 | Examples parse JSON with ad-hoc text search. The README counter has `deserializeState: \|_json\| Ok({ count: 0 })`, which resets state on every load. `ai_tool` does not escape `lastTool`. | High | Open (Unit 02) |
@@ -104,9 +104,8 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Open questions
 
-- Should file effects be supported through `wasi:filesystem`, or removed from the SDK? (unit 07)
 - Should HTTP mounts be declared in agent metadata (replacing the `canary-release` special case)? (unit 10)
 
 ## Next steps
 
-1. Unit 07: File effects.
+1. Unit 08: Logging.
