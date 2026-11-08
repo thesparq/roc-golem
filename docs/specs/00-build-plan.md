@@ -85,7 +85,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* README refreshed (deploy command, snippets compile, hash), `golem.yaml` checked against the 1.6.0 schema, duplicate skill files reduced to one source, crate metadata fixed, release v0.9.0 cut from a clean tag.
 *Dependencies:* 03 and whichever of 05 to 12 are done.
 *Fixes:* KI-15, KI-16, KI-17, KI-18.
-*Status:* Not started.
+*Status:* Spec written.
 
 **14. End-to-end Golem Cloud verification and v1.0.0 GA**
 *What it builds:* Deploys compiled Roc agents to live Golem Cloud worker infrastructure; verifies durable state persistence across worker suspension and restarts; verifies bi-directional WebSocket streaming on live Golem infrastructure; tags `v1.0.0` Production Release.
