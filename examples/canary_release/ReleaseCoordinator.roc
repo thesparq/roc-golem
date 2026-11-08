@@ -4,6 +4,7 @@ module [
 	approveGate,
 	emergencyRollback,
 	statusMethod,
+	dashboardMethod,
 ]
 
 import pf.Golem exposing [
@@ -12,14 +13,19 @@ import pf.Golem exposing [
 	define,
 	registerTyped,
 	registerReadOnlyTyped,
+	registerEffectfulTyped,
 	withTools,
 	withStatelessToolHandler,
 	withHttpMount,
 	method,
 	build,
+	createPromise,
+	createWebhook,
+	rpcSchedule,
 ]
 import pf.Types as PfTypes exposing [ToolCall, ToolResult]
-import pf.Json
+import pf.Effect
+import pf.Json as GolemJson exposing [encode, decode, decode_or]
 import Types exposing [
 	Result,
 	State,
@@ -46,8 +52,6 @@ import Types exposing [
 	decodeDiagnosticReport,
 ]
 import DiagnosticsWorker
-
-dashboardPath = "/dashboard.html"
 
 startCanary : Method(StartInput, StartOutput)
 startCanary = method({
@@ -77,6 +81,13 @@ statusMethod = method({
 	promptHint: "Query current canary status.",
 })
 
+dashboardMethod : Method({}, Str)
+dashboardMethod = method({
+	name: "dashboard",
+	description: "Serves live HTML dashboard for the canary release.",
+	promptHint: "Fetch live HTML dashboard.",
+})
+
 agent : Agent(State)
 agent =
 	define(
@@ -104,7 +115,7 @@ agent =
 			},
 		])
 		|> withStatelessToolHandler(handleTool)
-		|> registerTyped(
+		|> registerEffectfulTyped(
 			startCanary,
 			handleStart,
 			decodeStartInput,
@@ -128,6 +139,12 @@ agent =
 			|_| Ok({}),
 			encodeStatus,
 		)
+		|> registerReadOnlyTyped(
+			dashboardMethod,
+			handleDashboard,
+			|_| Ok({}),
+			|html| html,
+		)
 		|> withHttpMount({ pathPrefix: "/canary/{id}", corsOrigins: ["*"], webhookSuffix: "webhooks" })
 		|> build
 
@@ -138,7 +155,7 @@ Config : {
 initCoordinator : Str -> Result(State, Str)
 initCoordinator = |configJson| {
 	cfg : Config
-	cfg = Json.decode_or(configJson, { service: "default-service" })
+	cfg = decode_or(configJson, { service: "default-service" })
 	Ok({
 		service: cfg.service,
 		activeVersion: "v1.0.0",
@@ -151,7 +168,7 @@ initCoordinator = |configJson| {
 	})
 }
 
-handleStart : State, StartInput -> Result({ state : State, out : StartOutput }, Str)
+handleStart : State, StartInput -> Effect.Effect(Result({ state : State, out : StartOutput }, Str))
 handleStart = |state, input| {
 	diagReport =
 		DiagnosticsWorker.handleRunDiagnostics({
@@ -164,43 +181,74 @@ handleStart = |state, input| {
 		abortEvent = "canary_aborted: ${diagReport.summary}"
 		events = List.append(state.events, abortEvent)
 		nextState = { ..state, events: events }
-		Ok({
-			state: nextState,
-			out: {
-				status: "aborted_unhealthy",
-				version: input.version,
-				weight: 0.U64,
-				approvalWebhookUrl: "",
-				faults: diagReport.faults,
-			},
-		})
+		Effect.always(
+			Ok({
+				state: nextState,
+				out: {
+					status: "aborted_unhealthy",
+					version: input.version,
+					weight: 0.U64,
+					approvalWebhookUrl: "",
+					faults: diagReport.faults,
+				},
+			}),
+		)
 	} else {
-		webhookUrl = "https://golem.cloud/webhooks/canary/${state.service}/gate-approve"
-		startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
-		events = List.append(state.events, startEvent)
-		timerHandle = 42.U32
-
-		nextState = {
-			..state,
-			canaryVersion: input.version,
-			weight: input.weight,
-			pendingTimerHandle: timerHandle,
-			approvalWebhookUrl: webhookUrl,
-			events: events,
-		}
-
-		Ok({
-			state: nextState,
-			out: {
-				status: "canary_started",
-				version: input.version,
-				weight: input.weight,
-				approvalWebhookUrl: webhookUrl,
-				faults: 0.U64,
-			},
-		})
+		Effect.and_then(
+			createPromise,
+			|promiseRes|
+				match promiseRes {
+					Err(err) => Effect.always(Err("Failed to create promise: ${err}"))
+					Ok(promiseId) =>
+						Effect.and_then(
+							createWebhook(promiseId),
+							|webhookRes|
+								match webhookRes {
+									Err(err) => Effect.always(Err("Failed to create webhook: ${err}"))
+									Ok(webhookUrl) =>
+										Effect.and_then(
+											rpcSchedule(
+												state.service,
+												emergencyRollback,
+												"{\"reason\":\"approval timeout expired\"}",
+												300000.U64,
+											),
+											|_scheduleRes| {
+												timerHandle = U64.to_u32_wrap(promiseId)
+												startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
+												events = List.append(state.events, startEvent)
+												nextState = {
+													..state,
+													canaryVersion: input.version,
+													weight: input.weight,
+													pendingTimerHandle: timerHandle,
+													approvalWebhookUrl: webhookUrl,
+													events: events,
+												}
+												Effect.always(
+													Ok({
+														state: nextState,
+														out: {
+															status: "canary_started",
+															version: input.version,
+															weight: input.weight,
+															approvalWebhookUrl: webhookUrl,
+															faults: 0.U64,
+														},
+													}),
+												)
+											},
+										)
+								},
+						)
+				},
+		)
 	}
 }
+
+handleDashboard : State, {} -> Result(Str, Str)
+handleDashboard = |state, _|
+	Ok(renderDashboard(state))
 
 handleApprove : State, DecisionInput -> Result({ state : State, out : Str }, Str)
 handleApprove = |state, input| {
@@ -273,13 +321,13 @@ handleTool = |call| {
 		Ok({
 			id: call.id,
 			success: True,
-			output: Json.encode({ faults: faults }),
+			output: encode({ faults: faults }),
 		})
 	} else {
 		Ok({
 			id: call.id,
 			success: False,
-			output: Json.encode({ error: "Unknown tool ${call.name}" }),
+			output: encode({ error: "Unknown tool ${call.name}" }),
 		})
 	}
 }

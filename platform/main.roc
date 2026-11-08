@@ -6,6 +6,7 @@ platform "golem"
 		Golem,
 		Types,
 		Json,
+		Effect,
 	]
 	packages {}
 	provides {

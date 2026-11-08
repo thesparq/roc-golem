@@ -2,13 +2,29 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 2 — Make the SDK and examples trustworthy (IN PROGRESS) (2026-11-08)
+### Current Phase: Phase 2 — Make the SDK and examples trustworthy (COMPLETE) (2026-11-08)
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Unit 11 Complete & Verified.** Platform neutrality implemented: eliminated hard-coded `canary-release` HTTP mount in `host/src/lib.rs` in favor of dynamic metadata-driven parsing (`withHttpMount` / `HttpMountDetails`) (`KI-11`); upgraded RPC across C ABI, platform effects, and host to accept constructor arguments (`rpcInstance` and variants) (`KI-13`, Test #18). All 4 layers verified.
+Status: **Unit 12 Complete & Verified.** Canary release orchestrator made real: replaced fake timer with real durable timer scheduling via `rpcSchedule`, replaced fake webhook URL with real durable promise and webhook generation via `createPromise` / `createWebhook`, exposed read-only GET endpoint for live `/dashboard.html`, and cleaned unused variables/imports (`KI-14`). Phase 2 is now complete!
 
 ## Done
+
+- **Unit 12 (Canary Example Made Real) Complete & Verified (2026-11-08)**:
+  - Eliminated fake timer (`timerHandle = 42`) and hard-coded webhook URL in `examples/canary_release/ReleaseCoordinator.roc`.
+  - Converted `handleStart` to an effectful handler registered via `registerEffectfulTyped`:
+    - Calls `createPromise` to create a real durable promise.
+    - Calls `createWebhook` to generate an honest public webhook URL.
+    - Calls `rpcSchedule` to schedule a 5-minute emergency rollback timeout.
+    - Commits real promise ID as `pendingTimerHandle: U64.to_u32_wrap(promiseId)` and records start event.
+  - Added `Effect.always` and `Effect.and_then` combinators to `platform/Effect.roc` and exposed `Effect` in `platform/main.roc`.
+  - Exposed live `dashboard` read-only method in `ReleaseCoordinator.roc` returning rendered HTML from current agent state.
+  - Updated `host/src/lib.rs` to generate HTTP GET endpoints for read-only methods and attach literal `dashboard.html` suffix for `dashboard` / `dashboard.html` methods.
+  - Updated mock guest bridge to declare `dashboard` method, return real promise webhook URLs on `start_canary`, and render dashboard HTML on `dashboard` calls.
+  - Removed unused `dashboardPath` variable and fixed duplicate import/shadowing warnings in `ReleaseCoordinator.roc` and `Types.roc`.
+  - Added new assertions in `test_canary_release_suite` in `host/src/lib.rs` (53/53 tests passing).
+  - Verified across all 4 quality layers: Layer 1 static checks, Layer 2 host tests (53/53 passed) and Roc tests (`tests/envelope.roc`, `tests/json_roundtrip.roc`), Layer 3 builds with all 4 agent components validated by `wasm-tools validate`, and Layer 4 live runtime test (`./tooling/test_runtime.sh`).
+  - Resolved `KI-14`, updated `docs/feature-checklist.md` tests 36 & 41 to PASSED. Phase 2 complete!
 
 - **Unit 11 (Platform Neutrality) Complete & Verified (2026-11-08)**:
   - Eliminated hard-coded `name == "canary-release"` check in `host/src/lib.rs`.
@@ -140,7 +156,7 @@ Source: code review of 2026-11-07 and build verification.
 | KI-11 | The host hard-codes `name == "canary-release"` to add an HTTP mount at `/canary/{id}`. | Medium | **Resolved** in Unit 11 (dynamic metadata-driven HTTP mount parsing via `withHttpMount`) |
 | KI-12 | Two CI files named "CI" (`ci.yaml`, `ci.yml`) with different jobs; `wasm-tools` pinned at 1.220.0 and 1.222.0; one job packages as `v0.7.0`; neither CI nor `build.sh` installs or checks the pinned Roc nightly. | Medium | **Resolved** in Unit 03 (consolidated to `ci.yaml`, removed `ci.yml`, pinned `wasm-tools 1.222.0` and Roc nightly) |
 | KI-13 | RPC always constructs the target with an empty constructor (`"{}"`), so agents with constructor arguments cannot be addressed. | Medium | **Resolved** in Unit 11 (addressable agent worker instances via constructor argument in RPC) |
-| KI-14 | Canary example fakes its timer (`timerHandle = 42`) and webhook URL, defines `renderDashboard` but never serves it, and has an unused variable. | Medium | Open (Unit 12) |
+| KI-14 | Canary example fakes its timer (`timerHandle = 42`) and webhook URL, defines `renderDashboard` but never serves it, and has an unused variable. | Medium | **Resolved** in Unit 12 (real timer, promise, webhook, live dashboard, clean imports) |
 | KI-15 | README is stale: deploy command uses `golem:agent-platform/agent-api.{handle-message}`; hash points to v0.8.0; host comment still says "Golem 1.5.0". | Medium | Open |
 | KI-16 | `golem.yaml` has a top-level `tools:` key that does not appear in the 1.6.0 manifest schema as far as known. | Low | Open |
 | KI-17 | `.agents/skills/roc-golem.md` and `.gemini/skills/roc-golem.md` are identical copies. | Low | Open |
@@ -149,8 +165,8 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Open questions
 
-- *(None currently open; Unit 11 resolved HTTP mounts in metadata)*
+- *(None currently open; Unit 12 completed Phase 2)*
 
 ## Next steps
 
-1. Phase 2 — Unit 12: Canary example made real.
+1. Phase 3 — Unit 13: Docs, manifest and release.

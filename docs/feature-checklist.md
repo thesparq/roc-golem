@@ -85,15 +85,15 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 ## Canary example end to end
 
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| 36 | Healthy canary | `start_canary` with clean logs | `canary_started` at the requested weight, with a real approval webhook URL (KI-14) |
-| 37 | Unhealthy canary | `start_canary` with logs containing `PANIC` | `aborted_unhealthy`, weight 0 |
-| 38 | Approve | `approve_gate` with approval | the canary is promoted; weight 100 |
-| 39 | Reject | `approve_gate` with rejection | weight back to 0 |
-| 40 | Emergency rollback | `emergency_rollback` | weight 0 |
-| 41 | Dashboard | open the agent's `/dashboard.html` | the page shows the service, versions and events (KI-14) |
-| 42 | Status | `get_status` | matches the events so far |
+| # | Test | How | Expected | Status |
+|---|------|-----|----------|:---:|
+| 36 | Healthy canary | `start_canary` with clean logs | `canary_started` at the requested weight, with a real approval webhook URL (KI-14) | **PASSED** (2026-11-08) |
+| 37 | Unhealthy canary | `start_canary` with logs containing `PANIC` | `aborted_unhealthy`, weight 0 | |
+| 38 | Approve | `approve_gate` with approval | the canary is promoted; weight 100 | |
+| 39 | Reject | `approve_gate` with rejection | weight back to 0 | |
+| 40 | Emergency rollback | `emergency_rollback` | weight 0 | |
+| 41 | Dashboard | open the agent's `/dashboard.html` | the page shows the service, versions and events (KI-14) | **PASSED** (2026-11-08) |
+| 42 | Status | `get_status` | matches the events so far | |
 
 ---
 

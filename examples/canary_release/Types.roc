@@ -24,7 +24,7 @@ module [
 	decodeDiagnosticReport,
 ]
 
-import pf.Json
+import pf.Json as GolemJson exposing [encode, decode]
 
 Result(ok, err) : Try(ok, err)
 
@@ -92,56 +92,56 @@ DiagnosticReport : {
 
 encodeStartInput : StartInput -> Str
 encodeStartInput = |inp|
-	Json.encode(inp)
+	encode(inp)
 
 decodeStartInput : Str -> Result(StartInput, Str)
 decodeStartInput = |json|
-	Json.decode(json)
+	decode(json)
 
 encodeStartOutput : StartOutput -> Str
 encodeStartOutput = |out|
-	Json.encode(out)
+	encode(out)
 
 decodeStartOutput : Str -> Result(StartOutput, Str)
 decodeStartOutput = |json|
-	Json.decode(json)
+	decode(json)
 
 encodeDecisionInput : DecisionInput -> Str
 encodeDecisionInput = |inp|
-	Json.encode(inp)
+	encode(inp)
 
 decodeDecisionInput : Str -> Result(DecisionInput, Str)
 decodeDecisionInput = |json|
-	Json.decode(json)
+	decode(json)
 
 encodeRollbackInput : RollbackInput -> Str
 encodeRollbackInput = |inp|
-	Json.encode(inp)
+	encode(inp)
 
 decodeRollbackInput : Str -> Result(RollbackInput, Str)
 decodeRollbackInput = |json|
-	Json.decode(json)
+	decode(json)
 
 encodeStatus : Status -> Str
 encodeStatus = |st|
-	Json.encode(st)
+	encode(st)
 
 decodeStatus : Str -> Result(Status, Str)
 decodeStatus = |json|
-	Json.decode(json)
+	decode(json)
 
 encodeLogBatch : LogBatch -> Str
 encodeLogBatch = |batch|
-	Json.encode(batch)
+	encode(batch)
 
 decodeLogBatch : Str -> Result(LogBatch, Str)
 decodeLogBatch = |json|
-	Json.decode(json)
+	decode(json)
 
 encodeDiagnosticReport : DiagnosticReport -> Str
 encodeDiagnosticReport = |rep|
-	Json.encode(rep)
+	encode(rep)
 
 decodeDiagnosticReport : Str -> Result(DiagnosticReport, Str)
 decodeDiagnosticReport = |json|
-	Json.decode(json)
+	decode(json)

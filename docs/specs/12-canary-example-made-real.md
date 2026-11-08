@@ -2,7 +2,7 @@
 
 - **Unit:** 12
 - **File:** `docs/specs/12-canary-example-made-real.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Phase:** Phase 2 — Make the SDK and examples trustworthy
 - **Fixes:** `KI-14`, `docs/feature-checklist.md` test 36 (Healthy canary), test 41 (Dashboard)
 
@@ -168,20 +168,20 @@ When logs are healthy:
 
 To mark Unit 12 as complete, the following checks from `docs/testing.md` must be executed and reported:
 
-1. [ ] **Unit Tests (Layer 2):**
+1. [x] **Unit Tests (Layer 2):**
    - Host unit tests verify `start_canary` generates a real promise ID and webhook URL.
    - Host unit tests verify `dashboard` method serves HTML containing service name, active/canary versions, weight, and events list.
    - `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` passes all unit tests cleanly.
    - `roc test tests/envelope.roc` and `roc test tests/json_roundtrip.roc` pass cleanly.
-2. [ ] **Code Hygiene & Static Checks (Layer 1):**
+2. [x] **Code Hygiene & Static Checks (Layer 1):**
    - `roc fmt --check` passes cleanly across all Roc files.
    - `roc check platform/main.roc` and `roc check examples/*/main.roc` report zero errors.
    - `cargo fmt --check` and `cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings` report zero warnings or errors.
-3. [ ] **Component Build & Validation (Layer 3):**
+3. [x] **Component Build & Validation (Layer 3):**
    - `./tooling/build.sh all` successfully builds all four agent components.
    - `wasm-tools validate` validates all four `build/*_agent.wasm` binaries.
-4. [ ] **Layer 4 Runtime Verification:**
+4. [x] **Layer 4 Runtime Verification:**
    - `./tooling/test_runtime.sh` passes completely against a running local Golem server.
-5. [ ] **Feature Checklist & Progress Tracker:**
+5. [x] **Feature Checklist & Progress Tracker:**
    - `docs/feature-checklist.md` tests 36 & 41 marked PASSED.
    - `docs/progress-tracker.md` updated with `KI-14` marked resolved.

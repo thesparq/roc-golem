@@ -156,19 +156,54 @@ pub unsafe extern "C" fn main_handle_message_for_host(
                     "canaryVersion": "v1.1.0",
                     "weight": 10,
                     "region": "us-east-1",
-                    "pendingTimerHandle": 42,
-                    "approvalWebhookUrl": "https://golem.cloud/webhooks/canary/auth-service/gate-approve",
+                    "pendingTimerHandle": 1,
+                    "approvalWebhookUrl": "https://golem.cloud/webhooks/promise/1",
                     "events": ["coordinator_initialized", "canary_started: v1.1.0 at 10%"]
-                }).to_string(),
+                })
+                .to_string(),
                 serde_json::json!({
                     "status": "canary_started",
                     "version": "v1.1.0",
                     "weight": 10,
-                    "approvalWebhookUrl": "https://golem.cloud/webhooks/canary/auth-service/gate-approve",
+                    "approvalWebhookUrl": "https://golem.cloud/webhooks/promise/1",
                     "faults": 0
-                }).to_string(),
+                })
+                .to_string(),
             )
         }
+    } else if method == "dashboard" {
+        let val: serde_json::Value =
+            serde_json::from_str(state_str).unwrap_or_else(|_| serde_json::json!({}));
+        let service = val
+            .get("service")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auth-service");
+        let active_ver = val
+            .get("activeVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("v1.0.0");
+        let canary_ver = val
+            .get("canaryVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let weight = val.get("weight").and_then(|v| v.as_u64()).unwrap_or(0);
+        let events = val.get("events").and_then(|v| v.as_array());
+        let mut event_items = String::new();
+        if let Some(evs) = events {
+            for ev in evs {
+                if let Some(s) = ev.as_str() {
+                    event_items.push_str(&format!("<li>{}</li>", s));
+                }
+            }
+        }
+        let html = format!(
+            "<!doctype html><html><body><h1>Release Guardian: {}</h1><p>Active: {} | Canary: {} at {}%</p><ul>{}</ul></body></html>",
+            service, active_ver, canary_ver, weight, event_items
+        );
+        (
+            String::new(), // READ-ONLY BYPASS: return empty state string ""
+            html,
+        )
     } else if method == "approve_gate" {
         let is_approved =
             input.contains("\"approved\":true") || input.contains("\"approved\": true");
@@ -463,6 +498,12 @@ pub unsafe extern "C" fn main_metadata_for_host(out: *mut RocStr) {
                         "name": "get_status",
                         "description": "Returns the current rollout status.",
                         "prompt_hint": "Query current canary status.",
+                        "read_only": true
+                    },
+                    {
+                        "name": "dashboard",
+                        "description": "Serves live HTML dashboard for the canary release.",
+                        "prompt_hint": "Fetch live HTML dashboard.",
                         "read_only": true
                     }
                 ],

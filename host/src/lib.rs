@@ -711,6 +711,25 @@ fn post_endpoint(path: &str) -> HttpEndpointDetails {
     }
 }
 
+fn get_endpoint(path: &str) -> HttpEndpointDetails {
+    let segments: Vec<PathSegment> = path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| PathSegment::Literal(s.to_string()))
+        .collect();
+
+    HttpEndpointDetails {
+        http_method: HttpMethod::Get,
+        path_suffix: segments,
+        header_vars: vec![],
+        query_vars: vec![],
+        auth_details: None,
+        cors_options: CorsOptions {
+            allowed_patterns: vec!["*".to_string()],
+        },
+    }
+}
+
 fn extract_data_value_string(val: &DataValue) -> String {
     match val {
         DataValue::Tuple(elements) => {
@@ -845,11 +864,33 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
+            let m_read_only = m
+                .get("read_only")
+                .or_else(|| m.get("readOnly"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let endpoint_path = format!("/api/{}/{}", name, m_name);
+            let mut endpoints = vec![if m_read_only {
+                get_endpoint(&endpoint_path)
+            } else {
+                post_endpoint(&endpoint_path)
+            }];
+            if m_name == "dashboard" || m_name == "dashboard.html" {
+                endpoints.push(HttpEndpointDetails {
+                    http_method: HttpMethod::Get,
+                    path_suffix: vec![PathSegment::Literal("dashboard.html".to_string())],
+                    header_vars: vec![],
+                    query_vars: vec![],
+                    auth_details: None,
+                    cors_options: CorsOptions {
+                        allowed_patterns: vec!["*".to_string()],
+                    },
+                });
+            }
             methods.push(AgentMethod {
                 name: m_name,
                 description: m_desc,
-                http_endpoint: vec![post_endpoint(&endpoint_path)],
+                http_endpoint: endpoints,
                 prompt_hint,
                 input_schema: single_string_schema("input"),
                 output_schema: single_string_schema("result"),
@@ -3574,6 +3615,22 @@ mod tests {
                     && matches!(t.mode, AgentMode::Ephemeral))
         );
 
+        // Assert dashboard method is declared with HTTP GET dashboard.html endpoint
+        let canary_agent = types
+            .iter()
+            .find(|t| t.type_name == "canary-release")
+            .expect("canary-release agent not found");
+        let dashboard_method = canary_agent
+            .methods
+            .iter()
+            .find(|m| m.name == "dashboard")
+            .expect("dashboard method not found");
+        assert!(dashboard_method.http_endpoint.iter().any(|ep| {
+            matches!(ep.http_method, HttpMethod::Get)
+                && ep.path_suffix.len() == 1
+                && matches!(&ep.path_suffix[0], PathSegment::Literal(s) if s == "dashboard.html")
+        }));
+
         // Assertion 2: Ephemeral Direct Invocation
         WORKER_STATE.with(|s| {
             let mut st = s.borrow_mut();
@@ -3622,6 +3679,7 @@ mod tests {
         let start_out = extract_data_value_string(&start_res.unwrap());
         assert!(start_out.contains("canary_started"));
         assert!(start_out.contains("\"weight\":10") || start_out.contains("\"weight\": 10"));
+        assert!(start_out.contains("webhooks/promise/"));
 
         let state_after_start = get_current_state();
         assert!(
@@ -3632,6 +3690,30 @@ mod tests {
             state_after_start.contains("\"canaryVersion\":\"v1.1.0\"")
                 || state_after_start.contains("\"canaryVersion\": \"v1.1.0\"")
         );
+        assert!(state_after_start.contains("webhooks/promise/"));
+        let state_val: serde_json::Value =
+            serde_json::from_str(&state_after_start).expect("valid state json");
+        assert!(
+            state_val
+                .get("pendingTimerHandle")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0
+        );
+
+        // Assertion: Invoke dashboard method and assert HTML output
+        let dash_res = GolemAgentHost::invoke(
+            "dashboard".to_string(),
+            wrap_string_data_value("{}".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(dash_res.is_ok());
+        let dash_html = extract_data_value_string(&dash_res.unwrap());
+        assert!(dash_html.contains("<!doctype html>"));
+        assert!(dash_html.contains("<h1>Release Guardian: auth-service</h1>"));
+        assert!(dash_html.contains("Active: v1.0.0"));
+        assert!(dash_html.contains("Canary: v1.1.0 at 10%"));
+        assert!(dash_html.contains("canary_started: v1.1.0 at 10%"));
 
         // Assertion 4: Read-only get_status skips state re-serialization
         let status_res = GolemAgentHost::invoke(

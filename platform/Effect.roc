@@ -58,6 +58,20 @@ Effect(a) := [Effect({} => a)].{
 	run! : Effect(a) => a
 	run! = |Effect(thunk)| thunk({})
 
+	always : a -> Effect(a)
+	always = |val|
+		Effect(|_| val)
+
+	and_then : Effect(a), (a -> Effect(b)) -> Effect(b)
+	and_then = |Effect(thunk), fn|
+		Effect(
+			|_| {
+				a = thunk({})
+				Effect(nextThunk) = fn(a)
+				nextThunk({})
+			},
+		)
+
 	map : Effect(a), (a -> b) -> Effect(b)
 	map = |Effect(thunk), fn|
 		Effect(|_| fn(thunk({})))
