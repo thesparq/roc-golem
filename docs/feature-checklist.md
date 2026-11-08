@@ -39,12 +39,12 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 ## Typed methods and tools
 
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| 11 | Typed method over HTTP | call a registered typed method through its HTTP endpoint | a JSON reply that matches the method's output type |
-| 12 | Tool call | call the tool `analyze_logs` with text containing one `PANIC` and one `OOM` | `{"faults": 2}` |
-| 13 | Unknown method | call a method that does not exist | a clear error that names the method |
-| 14 | Handler error | call a handler that returns `Err("boom")` | the caller sees "boom", not a different error (KI-10) |
+| # | Test | How | Expected | Status |
+|---|------|-----|----------|:---:|
+| 11 | Typed method over HTTP | call a registered typed method through its HTTP endpoint | a JSON reply that matches the method's output type | Pending Phase 2 |
+| 12 | Tool call | call the tool `analyze_logs` with text containing one `PANIC` and one `OOM` | `{"faults": 2}` | **PASSED** (2026-11-08) |
+| 13 | Unknown method | call a method that does not exist | a clear error that names the method | **PASSED** (2026-11-08) |
+| 14 | Handler error | call a handler that returns `Err("boom")` | the caller sees "boom", not a different error (KI-10) | **PASSED** (2026-11-08) |
 
 ---
 

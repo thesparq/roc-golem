@@ -2,13 +2,24 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 1 — Make every effect honest (2026-11-08)
+### Current Phase: Phase 1 — Make every effect honest (COMPLETE) (2026-11-08)
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Phase 1 in progress. Unit 08 Complete & Verified.** Real logging via WASI logging (`wasi:logging/logging`) implemented on `wasm32-unknown-unknown` with level mapping (Trace, Debug, Info, Warn, Error, Critical) and context `"roc-agent"`, retaining in-memory test capture buffer and formatted stdout logging on native (`KI-07`). Ready for Unit 09 (`Surface handler errors`).
+Status: **Phase 1 COMPLETE! Unit 09 Complete & Verified.** Fails cleanly on handler errors with `AgentError::InvalidInput(err)` without falling back to tools; routes genuine tools directly to tool handlers; returns clear `AgentError::InvalidMethod("Method '<name>' not found")` for unknown methods (`KI-10`). All Phase 1 units (05, 06, 07, 08, 09) complete and verified across all 4 testing layers. Ready for Phase 2.
 
 ## Done
+
+- **Unit 09 (Surface Handler Errors) Complete & Verified (2026-11-08)**:
+  - Implemented `AgentCapabilities` struct and `get_agent_capabilities(agent_name: &str)` helper in `host/src/lib.rs` querying agent metadata for declared methods and tools (normalizing snake_case and kebab-case variants).
+  - Refactored `Guest::invoke`:
+    - Dispatches declared tools directly to `main_handle_tool_call_for_host`, returning `Ok` with tool output or `AgentError::InvalidInput(err)`.
+    - Dispatches declared methods directly to `main_handle_message_for_host`. Fails cleanly returning `AgentError::InvalidInput(err)` immediately without tool fallback.
+    - Legacy fallback to tool invocation is preserved only when capabilities are empty and error contains 'not found'.
+    - Returns `AgentError::InvalidMethod("Method '<name>' not found")` for unknown methods without attempting tool calls.
+  - Added unit tests `test_handler_error_surfaces_cleanly`, `test_unknown_method_returns_invalid_method`, and `test_direct_tool_invocation`. Total 46 host unit tests passing cleanly.
+  - Verified Layer 1 static checks (`cargo fmt`, `cargo clippy`, `roc fmt`, `roc check`), Layer 2 host tests (46/46 passed), Layer 3 builds (`./tooling/build.sh all` with 5 components validated), and Layer 4 runtime test (`./tooling/test_runtime.sh`).
+  - Resolved `KI-10` and marked `docs/feature-checklist.md` tests 13 & 14 as PASSED. Phase 1 is now complete!
 
 - **Unit 08 (Real Logging via WASI Logging) Complete & Verified (2026-11-08)**:
   - Added `import wasi:logging/logging;` to `wit/world.wit`.
@@ -102,7 +113,7 @@ Source: code review of 2026-11-07 and build verification.
 | KI-07 | `rocFxLog` uses `println!`, which likely goes nowhere on this target. | Medium | **Resolved** in Unit 08 (real WASI logging via `wasi:logging/logging` on `wasm32`, test buffer on native) |
 | KI-08 | No test compiles Roc: CI never runs `roc check`, `roc build` or `roc test`. The 13 tests run against `guest_bridge.rs`. | Critical | **Resolved** in Unit 03 (full Roc checks, tests, builds, validations in CI) |
 | KI-09 | Examples parse JSON with ad-hoc text search. The README counter has `deserializeState: \|_json\| Ok({ count: 0 })`, which resets state on every load. `ai_tool` does not escape `lastTool`. | High | Open (Unit 02) |
-| KI-10 | On any message-handler error the host retries as a tool call and reports `InvalidMethod` with the first error, hiding the real failure. | Medium | Open (Unit 09) |
+| KI-10 | On any message-handler error the host retries as a tool call and reports `InvalidMethod` with the first error, hiding the real failure. | Medium | **Resolved** in Unit 09 (capability-based routing, direct tool invocation, immediate handler error surface) |
 | KI-11 | The host hard-codes `name == "canary-release"` to add an HTTP mount at `/canary/{id}`. | Medium | Open (Unit 10) |
 | KI-12 | Two CI files named "CI" (`ci.yaml`, `ci.yml`) with different jobs; `wasm-tools` pinned at 1.220.0 and 1.222.0; one job packages as `v0.7.0`; neither CI nor `build.sh` installs or checks the pinned Roc nightly. | Medium | **Resolved** in Unit 03 (consolidated to `ci.yaml`, removed `ci.yml`, pinned `wasm-tools 1.222.0` and Roc nightly) |
 | KI-13 | RPC always constructs the target with an empty constructor (`"{}"`), so agents with constructor arguments cannot be addressed. | Medium | Open (Unit 05) |
@@ -119,4 +130,4 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Next steps
 
-1. Unit 09: Surface handler errors.
+1. Phase 2 — Unit 10: Shared JSON helpers and honest examples.

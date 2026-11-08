@@ -82,6 +82,11 @@ pub unsafe extern "C" fn main_handle_message_for_host(
         return;
     }
 
+    if method == "fail_handler" || method == "boom" {
+        ptr::write(out, RocResult::err(RocStr::from_str("boom")));
+        return;
+    }
+
     // Stateful agent
     let (next_state_json, resp) = if method == "increment" {
         let count: i64 = if let Ok(val) = serde_json::from_str::<serde_json::Value>(state_str) {
@@ -356,10 +361,34 @@ pub unsafe extern "C" fn main_metadata_for_host(out: *mut RocStr) {
                         "read_only": false
                     },
                     {
+                        "name": "decrement",
+                        "description": "Decrements the counter",
+                        "prompt_hint": "Call to decrement",
+                        "read_only": false
+                    },
+                    {
+                        "name": "get",
+                        "description": "Returns current counter value",
+                        "prompt_hint": "Call to get",
+                        "read_only": true
+                    },
+                    {
                         "name": "get_status",
                         "description": "Returns current counter status",
                         "prompt_hint": "Call to get status",
                         "read_only": true
+                    },
+                    {
+                        "name": "connect",
+                        "description": "Connects to WebSocket",
+                        "prompt_hint": "Call to connect",
+                        "read_only": false
+                    },
+                    {
+                        "name": "fail_handler",
+                        "description": "Failing handler for error testing",
+                        "prompt_hint": "",
+                        "read_only": false
                     }
                 ],
                 "tools": [

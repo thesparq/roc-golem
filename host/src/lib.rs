@@ -8,7 +8,7 @@ use core::cell::RefCell;
 use core::mem::MaybeUninit;
 use core::ptr;
 use roc_std::{RocList, RocResult, RocStr};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(feature = "stub-guest")]
 use guest_bridge::*;
@@ -2953,6 +2953,82 @@ fn parse_pg_params(params_json: &str) -> Vec<golem::rdbms::postgres::DbValue> {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+struct AgentCapabilities {
+    methods: HashSet<String>,
+    tools: HashSet<String>,
+}
+
+impl AgentCapabilities {
+    fn is_empty(&self) -> bool {
+        // True if no explicit methods or tools were declared beyond default message handlers
+        self.methods.len() <= 3 && self.tools.is_empty()
+    }
+}
+
+fn get_agent_capabilities(agent_name: &str) -> AgentCapabilities {
+    let mut caps = AgentCapabilities::default();
+
+    // Default message handlers recognized on any agent
+    caps.methods.insert(String::new());
+    caps.methods.insert("handle-message".to_string());
+    caps.methods.insert("message".to_string());
+
+    let mut roc_out = MaybeUninit::<RocStr>::uninit();
+    let meta_json = unsafe {
+        main_metadata_for_host(roc_out.as_mut_ptr());
+        roc_out.assume_init().to_string()
+    };
+
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&meta_json) {
+        let agent_entry = if let Some(agents) = val.get("agents").and_then(|v| v.as_array()) {
+            agents
+                .iter()
+                .find(|a| {
+                    a.get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|n| n == agent_name)
+                        .unwrap_or(false)
+                })
+                .or_else(|| {
+                    if agents.len() == 1 {
+                        agents.first()
+                    } else {
+                        None
+                    }
+                })
+        } else {
+            Some(&val)
+        };
+
+        if let Some(agent) = agent_entry {
+            if let Some(methods) = agent.get("methods").and_then(|v| v.as_array()) {
+                for m in methods {
+                    if let Some(m_name) = m.get("name").and_then(|v| v.as_str()) {
+                        caps.methods.insert(m_name.to_string());
+                    }
+                }
+            }
+
+            if let Some(tools) = agent.get("tools").and_then(|v| v.as_array()) {
+                for t in tools {
+                    if let Some(t_name) = t.get("name").and_then(|v| v.as_str()) {
+                        caps.tools.insert(t_name.to_string());
+                        if t_name.contains('_') {
+                            caps.tools.insert(t_name.replace('_', "-"));
+                        }
+                        if t_name.contains('-') {
+                            caps.tools.insert(t_name.replace('-', "_"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    caps
+}
+
 struct GolemAgentHost;
 
 impl Guest for GolemAgentHost {
@@ -3036,120 +3112,195 @@ impl Guest for GolemAgentHost {
 
         let target_agent = active_agent.unwrap_or_else(|| String::from("roc-agent"));
         let input_str = extract_data_value_string(&input);
-
-        // Envelope encoding for guest dispatch
-        let envelope = serde_json::json!({
-            "agent_type": target_agent,
-            "method": method_name,
-            "input": input_str,
-        })
-        .to_string();
-
         let pass_state = if is_ephemeral { "{}" } else { &state_str };
 
-        let mut roc_state = RocStr::from_str(pass_state);
-        let mut roc_message = RocStr::from_str(&envelope);
-        let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let capabilities = get_agent_capabilities(&target_agent);
 
-        unsafe {
-            main_handle_message_for_host(roc_out.as_mut_ptr(), &mut roc_state, &mut roc_message);
-            core::mem::forget(roc_state);
-            core::mem::forget(roc_message);
-            let res = roc_out.assume_init().into_result();
-            match res {
-                Ok(response_payload) => {
-                    let payload_str = response_payload.as_str();
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
-                        // ZERO-SERIALIZATION BYPASS:
-                        // If "state" is non-empty and agent is durable, update host state.
-                        // If "state" is empty (""), state was NOT modified - skip update completely!
-                        if !is_ephemeral {
-                            if let Some(next_state) = parsed.get("state") {
-                                let next_state_str = if let Some(s) = next_state.as_str() {
-                                    s.to_string()
-                                } else {
-                                    next_state.to_string()
-                                };
-                                if !next_state_str.is_empty() {
-                                    set_current_state(next_state_str);
+        // 1. Direct Tool Invocation
+        if capabilities.tools.contains(&method_name) {
+            let tool_name = if method_name.contains('-') {
+                method_name.replace('-', "_")
+            } else {
+                method_name.clone()
+            };
+            let tool_call_json = serde_json::json!({
+                "id": "call-1",
+                "name": tool_name,
+                "arguments": input_str,
+                "agent_type": target_agent,
+            })
+            .to_string();
+
+            let mut roc_state = RocStr::from_str(pass_state);
+            let mut roc_call = RocStr::from_str(&tool_call_json);
+            let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+
+            unsafe {
+                main_handle_tool_call_for_host(roc_out.as_mut_ptr(), &mut roc_state, &mut roc_call);
+                core::mem::forget(roc_state);
+                core::mem::forget(roc_call);
+                let res = roc_out.assume_init().into_result();
+                return match res {
+                    Ok(result_payload) => {
+                        let payload_str = result_payload.as_str();
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
+                            if !is_ephemeral {
+                                if let Some(next_state) = parsed.get("state") {
+                                    let next_state_str = if let Some(s) = next_state.as_str() {
+                                        s.to_string()
+                                    } else {
+                                        next_state.to_string()
+                                    };
+                                    if !next_state_str.is_empty() {
+                                        set_current_state(next_state_str);
+                                    }
                                 }
                             }
-                        }
-
-                        if let Some(resp_val) = parsed.get("response") {
-                            let resp_text = if let Some(s) = resp_val.as_str() {
-                                s.into()
+                            let output = if let Some(out_val) = parsed.get("output") {
+                                if let Some(s) = out_val.as_str() {
+                                    s.into()
+                                } else {
+                                    out_val.to_string()
+                                }
                             } else {
-                                resp_val.to_string()
+                                String::from("{}")
                             };
-                            return Ok(wrap_string_data_value(resp_text));
+                            Ok(wrap_string_data_value(output))
+                        } else {
+                            Ok(wrap_string_data_value(payload_str.into()))
                         }
                     }
-                    Ok(wrap_string_data_value(payload_str.into()))
-                }
-                Err(err) => {
-                    // Fallback to tool invocation (support both kebab-case and snake_case)
-                    let tool_name = if method_name.contains('-') {
-                        method_name.replace('-', "_")
-                    } else {
-                        method_name.clone()
-                    };
-                    let tool_call_json = serde_json::json!({
-                        "id": "call-1",
-                        "name": tool_name,
-                        "arguments": input_str,
-                        "agent_type": target_agent,
-                    })
-                    .to_string();
+                    Err(err) => Err(AgentError::InvalidInput(err.to_string())),
+                };
+            }
+        }
 
-                    let mut roc_state = RocStr::from_str(pass_state);
-                    let mut roc_call = RocStr::from_str(&tool_call_json);
-                    let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        // 2. Declared Typed Method or Standard Message (or fallback if capabilities are empty)
+        if capabilities.methods.contains(&method_name) || capabilities.is_empty() {
+            let envelope = serde_json::json!({
+                "agent_type": target_agent,
+                "method": method_name,
+                "input": input_str,
+            })
+            .to_string();
 
-                    main_handle_tool_call_for_host(
-                        roc_out.as_mut_ptr(),
-                        &mut roc_state,
-                        &mut roc_call,
-                    );
-                    core::mem::forget(roc_state);
-                    core::mem::forget(roc_call);
-                    let res = roc_out.assume_init().into_result();
-                    match res {
-                        Ok(result_payload) => {
-                            let payload_str = result_payload.as_str();
-                            if let Ok(parsed) =
-                                serde_json::from_str::<serde_json::Value>(payload_str)
-                            {
-                                if !is_ephemeral {
-                                    if let Some(next_state) = parsed.get("state") {
-                                        let next_state_str = if let Some(s) = next_state.as_str() {
-                                            s.to_string()
-                                        } else {
-                                            next_state.to_string()
-                                        };
-                                        if !next_state_str.is_empty() {
-                                            set_current_state(next_state_str);
-                                        }
+            let mut roc_state = RocStr::from_str(pass_state);
+            let mut roc_message = RocStr::from_str(&envelope);
+            let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+
+            unsafe {
+                main_handle_message_for_host(
+                    roc_out.as_mut_ptr(),
+                    &mut roc_state,
+                    &mut roc_message,
+                );
+                core::mem::forget(roc_state);
+                core::mem::forget(roc_message);
+                let res = roc_out.assume_init().into_result();
+                match res {
+                    Ok(response_payload) => {
+                        let payload_str = response_payload.as_str();
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload_str) {
+                            if !is_ephemeral {
+                                if let Some(next_state) = parsed.get("state") {
+                                    let next_state_str = if let Some(s) = next_state.as_str() {
+                                        s.to_string()
+                                    } else {
+                                        next_state.to_string()
+                                    };
+                                    if !next_state_str.is_empty() {
+                                        set_current_state(next_state_str);
                                     }
                                 }
-                                let output = if let Some(out_val) = parsed.get("output") {
-                                    if let Some(s) = out_val.as_str() {
-                                        s.into()
-                                    } else {
-                                        out_val.to_string()
-                                    }
+                            }
+
+                            if let Some(resp_val) = parsed.get("response") {
+                                let resp_text = if let Some(s) = resp_val.as_str() {
+                                    s.into()
                                 } else {
-                                    String::from("{}")
+                                    resp_val.to_string()
                                 };
-                                Ok(wrap_string_data_value(output))
-                            } else {
-                                Ok(wrap_string_data_value(payload_str.into()))
+                                return Ok(wrap_string_data_value(resp_text));
                             }
                         }
-                        Err(_) => Err(AgentError::InvalidMethod(err.to_string())),
+                        Ok(wrap_string_data_value(payload_str.into()))
+                    }
+                    Err(err) => {
+                        if capabilities.is_empty() && err.as_str().contains("not found") {
+                            // Fallback to tool invocation only for legacy empty capabilities
+                            let tool_name = if method_name.contains('-') {
+                                method_name.replace('-', "_")
+                            } else {
+                                method_name.clone()
+                            };
+                            let tool_call_json = serde_json::json!({
+                                "id": "call-1",
+                                "name": tool_name,
+                                "arguments": input_str,
+                                "agent_type": target_agent,
+                            })
+                            .to_string();
+
+                            let mut roc_state = RocStr::from_str(pass_state);
+                            let mut roc_call = RocStr::from_str(&tool_call_json);
+                            let mut roc_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+
+                            main_handle_tool_call_for_host(
+                                roc_out.as_mut_ptr(),
+                                &mut roc_state,
+                                &mut roc_call,
+                            );
+                            core::mem::forget(roc_state);
+                            core::mem::forget(roc_call);
+                            let tool_res = roc_out.assume_init().into_result();
+                            match tool_res {
+                                Ok(result_payload) => {
+                                    let payload_str = result_payload.as_str();
+                                    if let Ok(parsed) =
+                                        serde_json::from_str::<serde_json::Value>(payload_str)
+                                    {
+                                        if !is_ephemeral {
+                                            if let Some(next_state) = parsed.get("state") {
+                                                let next_state_str =
+                                                    if let Some(s) = next_state.as_str() {
+                                                        s.to_string()
+                                                    } else {
+                                                        next_state.to_string()
+                                                    };
+                                                if !next_state_str.is_empty() {
+                                                    set_current_state(next_state_str);
+                                                }
+                                            }
+                                        }
+                                        let output = if let Some(out_val) = parsed.get("output") {
+                                            if let Some(s) = out_val.as_str() {
+                                                s.into()
+                                            } else {
+                                                out_val.to_string()
+                                            }
+                                        } else {
+                                            String::from("{}")
+                                        };
+                                        Ok(wrap_string_data_value(output))
+                                    } else {
+                                        Ok(wrap_string_data_value(payload_str.into()))
+                                    }
+                                }
+                                Err(_) => Err(AgentError::InvalidMethod(err.to_string())),
+                            }
+                        } else {
+                            // Surface the handler error immediately: never retry as tool!
+                            Err(AgentError::InvalidInput(err.to_string()))
+                        }
                     }
                 }
             }
+        } else {
+            // 3. Unknown Method / Tool
+            Err(AgentError::InvalidMethod(format!(
+                "Method '{}' not found",
+                method_name
+            )))
         }
     }
 
@@ -4729,5 +4880,106 @@ mod tests {
             map_wasi_log_level(99),
             wasi::logging::logging::Level::Critical
         ));
+    }
+
+    #[test]
+    fn test_handler_error_surfaces_cleanly() {
+        WORKER_STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.active_agent_type = None;
+            st.current_state_json = None;
+            st.is_ephemeral = false;
+        });
+
+        let init_res = GolemAgentHost::initialize(
+            "roc-golem-agent".to_string(),
+            wrap_string_data_value("{}".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(init_res.is_ok());
+
+        let res = GolemAgentHost::invoke(
+            "fail_handler".to_string(),
+            wrap_string_data_value("{}".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(
+            !matches!(res, Err(AgentError::InvalidMethod(_))),
+            "Failing handler must NOT return AgentError::InvalidMethod"
+        );
+        match res {
+            Err(AgentError::InvalidInput(msg)) => {
+                assert!(msg.contains("boom"), "Expected error 'boom', got '{}'", msg);
+            }
+            other => panic!("Expected Err(AgentError::InvalidInput), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_unknown_method_returns_invalid_method() {
+        WORKER_STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.active_agent_type = None;
+            st.current_state_json = None;
+            st.is_ephemeral = false;
+        });
+
+        let init_res = GolemAgentHost::initialize(
+            "roc-golem-agent".to_string(),
+            wrap_string_data_value("{}".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(init_res.is_ok());
+
+        let res = GolemAgentHost::invoke(
+            "non_existent_method_xyz".to_string(),
+            wrap_string_data_value("{}".to_string()),
+            Principal::Anonymous,
+        );
+        match res {
+            Err(AgentError::InvalidMethod(msg)) => {
+                assert!(
+                    msg.contains("non_existent_method_xyz"),
+                    "Expected error to contain method name, got '{}'",
+                    msg
+                );
+            }
+            other => panic!("Expected Err(AgentError::InvalidMethod), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_direct_tool_invocation() {
+        WORKER_STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.active_agent_type = None;
+            st.current_state_json = None;
+            st.is_ephemeral = false;
+        });
+
+        let init_res = GolemAgentHost::initialize(
+            "canary-release".to_string(),
+            wrap_string_data_value("{\"service\":\"auth-service\"}".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(init_res.is_ok());
+
+        let res_snake = GolemAgentHost::invoke(
+            "analyze_logs".to_string(),
+            wrap_string_data_value("PANIC: fatal\nOOM: exhausted".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(res_snake.is_ok(), "analyze_logs should succeed");
+        let out_snake = extract_data_value_string(&res_snake.unwrap());
+        assert!(out_snake.contains("\"faults\": 2") || out_snake.contains("\"faults\":2"));
+
+        let res_kebab = GolemAgentHost::invoke(
+            "analyze-logs".to_string(),
+            wrap_string_data_value("PANIC: fatal".to_string()),
+            Principal::Anonymous,
+        );
+        assert!(res_kebab.is_ok(), "analyze-logs should succeed");
+        let out_kebab = extract_data_value_string(&res_kebab.unwrap());
+        assert!(out_kebab.contains("\"faults\": 1") || out_kebab.contains("\"faults\":1"));
     }
 }
