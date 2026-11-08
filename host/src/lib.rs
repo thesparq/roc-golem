@@ -29,7 +29,7 @@ extern "C" {
     pub fn main_metadata_for_host(out: *mut RocStr);
 }
 
-// Generate WIT bindings for the official Golem 1.5.0 agent world
+// Generate WIT bindings for the official Golem 1.6 / 2.0.0 agent world
 wit_bindgen::generate!({
     world: "golem-agent",
     path: "../wit",

@@ -2,7 +2,7 @@
 
 - **Unit:** 13
 - **File:** `docs/specs/13-docs-manifest-and-release.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Phase:** Phase 3 — Release
 - **Fixes:** `KI-15`, `KI-16`, `KI-17`, `KI-18`
 
@@ -140,22 +140,22 @@ Update line 34 comment to reflect modern Golem 1.6 / guest 2.0.0 architecture:
 
 To mark Unit 13 as complete, the following checks from `docs/testing.md` must be executed and reported:
 
-1. [ ] **Manifest & Tooling Conformance:**
+1. [x] **Manifest & Tooling Conformance:**
    - `golem app diagnose` or `golem-cli` successfully parses `golem.yaml` with 0 schema errors.
-2. [ ] **Skill Deduplication:**
+2. [x] **Skill Deduplication:**
    - `.gemini/skills/roc-golem.md` is verified as a valid relative symlink to `.agents/skills/roc-golem.md`.
-3. [ ] **Code Hygiene & Static Checks (Layer 1):**
+3. [x] **Code Hygiene & Static Checks (Layer 1):**
    - `roc fmt --check` passes cleanly across all Roc files.
    - `roc check platform/main.roc` and `roc check examples/*/main.roc` report 0 errors.
    - `cargo fmt --check` and `cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings` report 0 errors or warnings.
-4. [ ] **Unit Tests (Layer 2):**
+4. [x] **Unit Tests (Layer 2):**
    - `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` passes all 53 unit tests.
    - `roc test tests/envelope.roc` and `roc test tests/json_roundtrip.roc` pass cleanly.
-5. [ ] **Component Builds & Packaging (Layer 3):**
+5. [x] **Component Builds & Packaging (Layer 3):**
    - `./tooling/build.sh all` successfully builds all four agent components and produces release archives in `dist/`.
    - `wasm-tools validate` validates all 4 WebAssembly components.
    - `dist/checksums.txt` and `dist/release_notes.md` are populated for tag `v0.9.0`.
-6. [ ] **Layer 4 Runtime Verification:**
+6. [x] **Layer 4 Runtime Verification:**
    - `./tooling/test_runtime.sh` passes completely against a running local Golem server.
-7. [ ] **Feature Checklist & Progress Tracker:**
+7. [x] **Feature Checklist & Progress Tracker:**
    - `docs/progress-tracker.md` updated with `KI-15`, `KI-16`, `KI-17`, `KI-18` marked resolved.

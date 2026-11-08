@@ -2,13 +2,24 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 2 — Make the SDK and examples trustworthy (COMPLETE) (2026-11-08)
+### Current Phase: Phase 3 — Release (2026-11-08)
 
-Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
+Goal: bring documentation, application manifest, crate metadata, and platform packaging into full alignment for the `v0.9.0` release.
 
-Status: **Unit 12 Complete & Verified.** Canary release orchestrator made real: replaced fake timer with real durable timer scheduling via `rpcSchedule`, replaced fake webhook URL with real durable promise and webhook generation via `createPromise` / `createWebhook`, exposed read-only GET endpoint for live `/dashboard.html`, and cleaned unused variables/imports (`KI-14`). Phase 2 is now complete!
+Status: **Unit 13 Complete & Verified.** Refreshed README and deploy instructions with official guest 2.0.0 invocation commands and real `v0.9.0` BLAKE3 hash; restructured `golem.yaml` to conform strictly to Golem schema; deduplicated skill files via symlink; bumped `host/Cargo.toml` version to `0.9.0` with license, repository, and author attribution; generated platform package archives (`.tar.zst`, `.tar.br`, `.tar.gz`) for tag `v0.9.0` with BLAKE3 checksums (`KI-15`, `KI-16`, `KI-17`, `KI-18`).
 
 ## Done
+
+- **Unit 13 (Docs, Manifest and Release) Complete & Verified (2026-11-08)**:
+  - Restructured `golem.yaml` to conform strictly to Golem application manifest schema (removed unknown fields `manifestVersion`, `app`, `tools`, `environments`; added valid `components` and `profiles`). Verified with `golem app diagnose` and `golem app build --help` (0 schema errors, `KI-16`).
+  - Deduplicated skills by replacing `.gemini/skills/roc-golem.md` with a relative symlink to `.agents/skills/roc-golem.md` (`KI-17`).
+  - Updated `host/Cargo.toml` with `version = "0.9.0"`, `license = "Apache-2.0"`, repository URL, and author attribution (`KI-18`).
+  - Updated `host/src/lib.rs` line 34 comment to reference Golem 1.6 / 2.0.0 agent world (`KI-15`).
+  - Updated default release tag in `tooling/build.sh` from `v0.1.0` to `v0.9.0`.
+  - Packaged platform release `v0.9.0` with `.tar.zst`, `.tar.br`, `.tar.gz` and computed BLAKE3 checksums (`dist/checksums.txt`, `dist/release_notes.md`).
+  - Refreshed `README.md` with `v0.9.0` release URL, real BLAKE3 base64url checksum (`1gPx2wxKBAsOazx0-cRBGbZulce4powwuCfq7dml6_s`), official `golem:agent/guest@2.0.0.{invoke}` deploy command, and `v0.9.0` tag documentation (`KI-15`).
+  - Verified across all 4 quality layers: Layer 1 static checks (`cargo fmt`, `clippy` 0 warnings, `roc fmt --check`, `roc check` 0 errors across platform and all 4 examples), Layer 2 tests (all 53 host tests and all 27 Roc tests passing), Layer 3 builds (all 4 components built and validated with `wasm-tools validate`), and Layer 4 runtime verification (`./tooling/test_runtime.sh` passing all 5 tests against local Golem server).
+  - Resolved `KI-15`, `KI-16`, `KI-17`, `KI-18`.
 
 - **Unit 12 (Canary Example Made Real) Complete & Verified (2026-11-08)**:
   - Eliminated fake timer (`timerHandle = 42`) and hard-coded webhook URL in `examples/canary_release/ReleaseCoordinator.roc`.
@@ -157,16 +168,16 @@ Source: code review of 2026-11-07 and build verification.
 | KI-12 | Two CI files named "CI" (`ci.yaml`, `ci.yml`) with different jobs; `wasm-tools` pinned at 1.220.0 and 1.222.0; one job packages as `v0.7.0`; neither CI nor `build.sh` installs or checks the pinned Roc nightly. | Medium | **Resolved** in Unit 03 (consolidated to `ci.yaml`, removed `ci.yml`, pinned `wasm-tools 1.222.0` and Roc nightly) |
 | KI-13 | RPC always constructs the target with an empty constructor (`"{}"`), so agents with constructor arguments cannot be addressed. | Medium | **Resolved** in Unit 11 (addressable agent worker instances via constructor argument in RPC) |
 | KI-14 | Canary example fakes its timer (`timerHandle = 42`) and webhook URL, defines `renderDashboard` but never serves it, and has an unused variable. | Medium | **Resolved** in Unit 12 (real timer, promise, webhook, live dashboard, clean imports) |
-| KI-15 | README is stale: deploy command uses `golem:agent-platform/agent-api.{handle-message}`; hash points to v0.8.0; host comment still says "Golem 1.5.0". | Medium | Open |
-| KI-16 | `golem.yaml` has a top-level `tools:` key that does not appear in the 1.6.0 manifest schema as far as known. | Low | Open |
-| KI-17 | `.agents/skills/roc-golem.md` and `.gemini/skills/roc-golem.md` are identical copies. | Low | Open |
-| KI-18 | `host/Cargo.toml` still says version 0.1.0 and "Contributors". | Low | Open |
+| KI-15 | README is stale: deploy command uses `golem:agent-platform/agent-api.{handle-message}`; hash points to v0.8.0; host comment still says "Golem 1.5.0". | Medium | **Resolved** in Unit 13 (refreshed README, v0.9.0 BLAKE3 hash, guest 2.0.0 invoke, Golem 1.6 host comment) |
+| KI-16 | `golem.yaml` has a top-level `tools:` key that does not appear in the 1.6.0 manifest schema as far as known. | Low | **Resolved** in Unit 13 (conformed `golem.yaml` to Golem application manifest schema) |
+| KI-17 | `.agents/skills/roc-golem.md` and `.gemini/skills/roc-golem.md` are identical copies. | Low | **Resolved** in Unit 13 (replaced `.gemini/skills/roc-golem.md` with relative symlink) |
+| KI-18 | `host/Cargo.toml` still says version 0.1.0 and "Contributors". | Low | **Resolved** in Unit 13 (version 0.9.0, Apache-2.0, author attribution, repo URL) |
 | KI-19 | Native `cargo test --all-targets` fails to link on Linux: GNU `ld` version-script parser chokes on WIT exported symbol names containing `:`, `@`, and `#` when building `cdylib`. | Medium | **Resolved** in Unit 01 (removed `cdylib` from crate-types) |
 
 ## Open questions
 
-- *(None currently open; Unit 12 completed Phase 2)*
+- *(None currently open; all known issues resolved)*
 
 ## Next steps
 
-1. Phase 3 — Unit 13: Docs, manifest and release.
+1. Phase 3 — Unit 14: End-to-end Golem Cloud verification and v1.0.0 GA.

@@ -329,7 +329,7 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v0.1.0 thesparq/roc-golem
+   ./tooling/build.sh package v0.9.0 thesparq/roc-golem
    ```
    Generates reproducible `.tar.zst`, `.tar.br`, and `.tar.gz` bundles with BLAKE3 hashes in `dist/`.
 

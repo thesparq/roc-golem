@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.8.0/Nx4rJNk_kHTlxYCixZ-v5z0yY3mllisQFKI1mc1Vpp0.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.9.0/1gPx2wxKBAsOazx0-cRBGbZulce4powwuCfq7dml6_s.tar.zst",
 }
 
 import pf.Json
@@ -196,11 +196,11 @@ Produces `build/libhost.a` and `build/host.wasm`.
 
 ### 3. Deploy to Golem Cloud
 ```bash
-golem component add --component-name streaming-agent build/streaming_agent_agent.wasm
+golem component add --component-name streaming-agent build/streaming_agent.wasm
 golem worker add --component-name streaming-agent --worker-name stream-worker-1
 golem worker invoke-and-await --component-name streaming-agent --worker-name stream-worker-1 \
-  --function "golem:agent-platform/agent-api.{handle-message}" \
-  --args '["connect"]'
+  --function "golem:agent/guest@2.0.0.{invoke}" \
+  --args '["handle-message", "connect", "anonymous"]'
 ```
 
 ---
@@ -210,15 +210,15 @@ golem worker invoke-and-await --component-name streaming-agent --worker-name str
 ### Automatic GitHub Release (Recommended)
 1. Push a version tag to Git:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.9.0
+   git push origin v0.9.0
    ```
 2. GitHub Actions automatically builds the host, validates all agents, packages the `.tar.zst`, `.tar.br`, `.tar.gz` bundles with BLAKE3 hashes, and creates the GitHub release with ready-to-copy Roc code snippets!
 
 ### Local Release Packaging
 You can generate release tarballs locally at any time:
 ```bash
-./tooling/build.sh package v0.1.0 thesparq/roc-golem
+./tooling/build.sh package v0.9.0 thesparq/roc-golem
 ```
 Artifacts and `release_notes.md` will be placed in `dist/`.
 

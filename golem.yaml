@@ -1,30 +1,28 @@
-# Schema for IDEA / VSCode:
-# $schema: https://schema.golem.cloud/app/golem/1.6.0/golem.schema.json
-
-manifestVersion: 1.6.0
-
-app: roc-golem
-
-environments:
-  local:
-    server: local
-  cloud:
-    server: cloud
-
-tools:
-  analyze-logs:
-    component: roc-golem:canary-release
-
-httpApi:
-  deployments:
-    local:
-      - subdomain: canary
-    cloud:
-      - subdomain: canary
+# Schema for IDEA:
+# $schema: https://schema.golem.cloud/app/golem/1.2.5/golem.schema.json
+# Schema for vscode-yaml
+# yaml-language-server: $schema=https://schema.golem.cloud/app/golem/1.2.5/golem.schema.json
 
 components:
-  roc-golem:canary-release:
-    dir: "examples/canary_release"
-    componentWasm: "../../build/canary_release_agent.wasm"
+  canary-release:
+    componentWasm: "build/canary_release_agent.wasm"
     build:
-      - command: "../../tooling/build.sh canary_release"
+      - command: "./tooling/build.sh canary_release"
+  counter:
+    componentWasm: "build/counter_agent.wasm"
+    build:
+      - command: "./tooling/build.sh counter"
+  ai-tool:
+    componentWasm: "build/ai_tool_agent.wasm"
+    build:
+      - command: "./tooling/build.sh ai_tool"
+  streaming-agent:
+    componentWasm: "build/streaming_agent.wasm"
+    build:
+      - command: "./tooling/build.sh streaming_agent"
+
+profiles:
+  local:
+    default: true
+  cloud:
+    cloud: true

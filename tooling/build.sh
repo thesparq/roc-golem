@@ -148,6 +148,9 @@ build_app() {
     # Step 3: Componentize WASM module into Golem Component Model
     echo "==> Componentizing WASM module into Golem Component Model ($OUTPUT_COMPONENT)..."
     wasm-tools component new "$CORE_WASM" -o "$OUTPUT_COMPONENT"
+    if [[ "$TARGET_APP" == *"_agent" ]]; then
+        cp -f "$OUTPUT_COMPONENT" "$BUILD_DIR/${TARGET_APP}.wasm"
+    fi
 
     # Step 4: Validate Component Model compatibility
     echo "==> Validating Component Model compatibility..."
@@ -162,7 +165,7 @@ build_app() {
 }
 
 package_platform() {
-    local TAG="${1:-v0.1.0}"
+    local TAG="${1:-v0.9.0}"
     local REPO="${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
 
     build_platform
@@ -193,7 +196,7 @@ case "$COMMAND" in
         ;;
     package)
         shift || true
-        package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        package_platform "${1:-v0.9.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     release)
         shift || true
@@ -202,7 +205,7 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "canary_release"
-        package_platform "${1:-v0.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        package_platform "${1:-v0.9.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     counter|ai_tool|streaming_agent|canary_release)
         build_app "$COMMAND"
@@ -213,7 +216,7 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "canary_release"
-        package_platform "v0.1.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
+        package_platform "v0.9.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)
         if [[ -f "$COMMAND" ]]; then
