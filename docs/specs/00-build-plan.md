@@ -77,7 +77,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* Real durable timer, real promise and webhook for approval, the dashboard actually served, unused code removed.
 *Dependencies:* 05, 11.
 *Fixes:* KI-14.
-*Status:* Not started.
+*Status:* Spec written.
 
 ## Phase 3 — Release
 
