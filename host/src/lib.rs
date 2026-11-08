@@ -1340,20 +1340,55 @@ pub unsafe extern "C" fn rocFxGetSecretHandle(
         return;
     }
 
-    let secret_val = SECRET_ENV
-        .with(|env| env.borrow().get(n).cloned())
-        .or_else(|| std::env::var(n).ok());
-
-    match secret_val {
-        Some(val) => {
-            let h = store_secret(n.to_string(), val);
-            ptr::write(out, RocResult::ok(h));
+    #[cfg(target_arch = "wasm32")]
+    {
+        let secret_val = SECRET_ENV.with(|env| env.borrow().get(n).cloned());
+        match secret_val {
+            Some(val) => {
+                let h = store_secret(n.to_string(), val);
+                ptr::write(out, RocResult::ok(h));
+            }
+            None => match wasi::config::store::get(n) {
+                Ok(Some(val)) => {
+                    let h = store_secret(n.to_string(), val);
+                    ptr::write(out, RocResult::ok(h));
+                }
+                Ok(None) => {
+                    ptr::write(
+                        out,
+                        RocResult::err(RocStr::from_str(&format!("secret '{}' not found", n))),
+                    );
+                }
+                Err(e) => {
+                    ptr::write(
+                        out,
+                        RocResult::err(RocStr::from_str(&format!(
+                            "failed to fetch secret '{}': {:?}",
+                            n, e
+                        ))),
+                    );
+                }
+            },
         }
-        None => {
-            ptr::write(
-                out,
-                RocResult::err(RocStr::from_str(&format!("secret '{}' not found", n))),
-            );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let secret_val = SECRET_ENV
+            .with(|env| env.borrow().get(n).cloned())
+            .or_else(|| std::env::var(n).ok());
+
+        match secret_val {
+            Some(val) => {
+                let h = store_secret(n.to_string(), val);
+                ptr::write(out, RocResult::ok(h));
+            }
+            None => {
+                ptr::write(
+                    out,
+                    RocResult::err(RocStr::from_str(&format!("secret '{}' not found", n))),
+                );
+            }
         }
     }
 }
@@ -3239,6 +3274,136 @@ mod tests {
                 .expect("http request failed")
         };
         assert!(http_res.as_str().contains("\"injected_headers_count\":1"));
+    }
+
+    #[test]
+    fn test_secret_get_handle_found() {
+        set_mock_secret("TEST_SECRET_FOUND", "super-secret-value-abc");
+        let name = RocStr::from_str("TEST_SECRET_FOUND");
+        let mut out = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
+        let handle = unsafe {
+            rocFxGetSecretHandle(&name, out.as_mut_ptr());
+            out.assume_init()
+                .into_result()
+                .expect("failed to get secret handle")
+        };
+        assert!(handle > 0);
+    }
+
+    #[test]
+    fn test_secret_get_handle_idempotent() {
+        set_mock_secret("TEST_SECRET_IDEMPOTENT", "idempotent-value-123");
+        let name = RocStr::from_str("TEST_SECRET_IDEMPOTENT");
+
+        let mut out1 = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
+        let handle1 = unsafe {
+            rocFxGetSecretHandle(&name, out1.as_mut_ptr());
+            out1.assume_init()
+                .into_result()
+                .expect("failed to get first handle")
+        };
+
+        let mut out2 = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
+        let handle2 = unsafe {
+            rocFxGetSecretHandle(&name, out2.as_mut_ptr());
+            out2.assume_init()
+                .into_result()
+                .expect("failed to get second handle")
+        };
+
+        assert_eq!(handle1, handle2);
+
+        let count = SECRETS.with(|table| {
+            table
+                .borrow()
+                .iter()
+                .filter_map(|s| s.as_ref())
+                .filter(|e| e.name == "TEST_SECRET_IDEMPOTENT")
+                .count()
+        });
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_secret_get_handle_missing() {
+        let name = RocStr::from_str("UNKNOWN_SECRET_FOOBAR");
+        let mut out = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
+        let err = unsafe {
+            rocFxGetSecretHandle(&name, out.as_mut_ptr());
+            out.assume_init()
+                .into_result()
+                .expect_err("expected missing secret to return error")
+        };
+        assert_eq!(err.as_str(), "secret 'UNKNOWN_SECRET_FOOBAR' not found");
+    }
+
+    #[test]
+    fn test_secret_get_handle_empty() {
+        let empty_name = RocStr::from_str("");
+        let mut out = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
+        let err = unsafe {
+            rocFxGetSecretHandle(&empty_name, out.as_mut_ptr());
+            out.assume_init()
+                .into_result()
+                .expect_err("expected empty secret name to return error")
+        };
+        assert_eq!(err.as_str(), "empty secret name");
+
+        let mut out_null = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
+        let err_null = unsafe {
+            rocFxGetSecretHandle(std::ptr::null(), out_null.as_mut_ptr());
+            out_null
+                .assume_init()
+                .into_result()
+                .expect_err("expected null secret name to return error")
+        };
+        assert_eq!(err_null.as_str(), "empty secret name");
+    }
+
+    #[test]
+    fn test_secret_reveal_valid() {
+        set_mock_secret("TEST_SECRET_REVEAL", "revealed-secret-plain-text");
+        let name = RocStr::from_str("TEST_SECRET_REVEAL");
+        let mut handle_out = MaybeUninit::<RocResult<u32, RocStr>>::uninit();
+        let handle = unsafe {
+            rocFxGetSecretHandle(&name, handle_out.as_mut_ptr());
+            handle_out
+                .assume_init()
+                .into_result()
+                .expect("failed to get secret handle")
+        };
+
+        let mut reveal_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let revealed = unsafe {
+            rocFxRevealSecret(handle, reveal_out.as_mut_ptr());
+            reveal_out
+                .assume_init()
+                .into_result()
+                .expect("failed to reveal secret")
+        };
+        assert_eq!(revealed.as_str(), "revealed-secret-plain-text");
+    }
+
+    #[test]
+    fn test_secret_reveal_invalid() {
+        let mut out0 = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let err0 = unsafe {
+            rocFxRevealSecret(0, out0.as_mut_ptr());
+            out0.assume_init()
+                .into_result()
+                .expect_err("expected handle 0 to return error")
+        };
+        assert_eq!(err0.as_str(), "invalid secret handle 0");
+
+        let mut out_unallocated = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let err_unallocated = unsafe {
+            rocFxRevealSecret(999_999, out_unallocated.as_mut_ptr());
+            out_unallocated
+                .assume_init()
+                .into_result()
+                .expect_err("expected unallocated handle to return error")
+        };
+        assert_eq!(err_unallocated.as_str(), "invalid secret handle 999999");
     }
 
     #[test]

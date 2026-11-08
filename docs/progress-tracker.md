@@ -6,9 +6,20 @@ Keep this file short (about 150 lines). It is a status page, not a diary. Move f
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Phase 1 in progress. Unit 05 Complete & Verified.** Real cross-agent scheduling implemented on `wasm32-unknown-unknown` via `wasi:clocks/wall-clock@0.2.3` and Golem's `wasm-rpc::schedule-invocation`, with input validation and pure time calculation unit tests. Ready for Unit 06 (`Secrets from Golem`).
+Status: **Phase 1 in progress. Unit 06 Complete & Verified.** Real secret resolution implemented on `wasm32-unknown-unknown` via `wasi:config/store@0.2.0-draft` with fallback to `SECRET_ENV` and `std::env::var` on native. Ready for Unit 07 (`File effects`).
 
 ## Done
+
+- **Unit 06 (Secrets from Golem) Complete & Verified (2026-11-08)**:
+  - Implemented target-specific secret resolution in `rocFxGetSecretHandle` (`host/src/lib.rs`):
+    - Input validation: returns `empty secret name` if name is null or empty.
+    - Idempotency & deduplication: checks existing `SECRETS` table first and returns existing handle.
+    - On `wasm32`: checks `SECRET_ENV` test cell first, then calls `wasi::config::store::get(n)`. Returns descriptive error on missing (`secret '<name>' not found`) or upstream error (`failed to fetch secret '<name>': ...`).
+    - On native: checks `SECRET_ENV` test cell, falling back to `std::env::var(n)`. Returns `secret '<name>' not found` if absent.
+  - Verified `rocFxRevealSecret` returns `invalid secret handle <handle>` for handle 0 or unallocated handles.
+  - Added 6 comprehensive TDD unit tests in `host/src/lib.rs` under `mod tests` (`test_secret_get_handle_found`, `test_secret_get_handle_idempotent`, `test_secret_get_handle_missing`, `test_secret_get_handle_empty`, `test_secret_reveal_valid`, `test_secret_reveal_invalid`). Total 33 host unit tests passing cleanly.
+  - Verified Layer 1 static checks (`cargo fmt`, `cargo clippy`, `roc fmt`, `roc check`), Layer 2 host tests (33/33 passed), Layer 3 builds (`./tooling/build.sh all` with 4 components validated), and Layer 4 runtime test (`./tooling/test_runtime.sh`).
+  - Resolved `KI-05` and updated `docs/feature-checklist.md` tests 25 & 26 to PASSED.
 
 - **Unit 05 (Real Scheduling) Complete & Verified (2026-11-08)**:
   - Imported `wasi:clocks/wall-clock@0.2.3` in `wit/world.wit`.
@@ -75,7 +86,7 @@ Source: code review of 2026-11-07 and build verification.
 | KI-02 | Feature `stub-guest` is on by default, so fake agent is compiled into `libhost.a`. | Critical | **Resolved** in Unit 01 (`default = []`, production wasm builds with `--no-default-features`) |
 | KI-03 | `platform/main.roc` writes `{"state":"<state>",...}` without escaping the state, so any state with quotes makes the reply invalid JSON. The host then ignores the reply and never saves state. | Critical | **Resolved** in Unit 02 (escaped envelope formatting in `platform/main.roc`) |
 | KI-04 | `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` return success without scheduling anything, on every target. `wit/deps/golem-agent/host.wit` offers `schedule-invocation`. | High | **Resolved** in Unit 05 (real wall-clock scheduling via wasm-rpc) |
-| KI-05 | `rocFxGetSecretHandle` reads secrets from `std::env::var`, which does not exist on `wasm32-unknown-unknown`. Works only in tests. | High | Open (Unit 06) |
+| KI-05 | `rocFxGetSecretHandle` reads secrets from `std::env::var`, which does not exist on `wasm32-unknown-unknown`. Works only in tests. | High | **Resolved** in Unit 06 (`wasi:config/store` on `wasm32` + `SECRET_ENV`/`std::env::var` fallback) |
 | KI-06 | File effects (`readFile`, `writeFile`, bytes variants, append) use `std::fs`, unsupported on this target; `wasi:filesystem` is not in `wit/world.wit`. | High | Open (Unit 07) |
 | KI-07 | `rocFxLog` uses `println!`, which likely goes nowhere on this target. | Medium | Open (Unit 08) |
 | KI-08 | No test compiles Roc: CI never runs `roc check`, `roc build` or `roc test`. The 13 tests run against `guest_bridge.rs`. | Critical | **Resolved** in Unit 03 (full Roc checks, tests, builds, validations in CI) |
@@ -94,9 +105,8 @@ Source: code review of 2026-11-07 and build verification.
 ## Open questions
 
 - Should file effects be supported through `wasi:filesystem`, or removed from the SDK? (unit 07)
-- Where should secrets come from on Golem: `wasi:config/store`, an agent config value, or another import? (unit 06)
 - Should HTTP mounts be declared in agent metadata (replacing the `canary-release` special case)? (unit 10)
 
 ## Next steps
 
-1. Unit 06: Secrets from Golem (`wasi:config/store` or agent config values).
+1. Unit 07: File effects.

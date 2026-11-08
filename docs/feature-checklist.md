@@ -61,25 +61,25 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 ## Platform effects
 
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| 19 | HTTP request | `http` GET to a public URL | status code and body |
-| 20 | HTTP streaming | `httpStreamOpen`, read chunks, close | chunks arrive in order; close succeeds |
-| 21 | Key-value | `kvSetBytes` then `kvGetBytes` with non-UTF-8 bytes | identical bytes |
-| 22 | Blobstore | `blobPutBytes` then `blobGetBytes` | identical bytes |
-| 23 | WebSocket | connect, send, receive, close against an echo server | the sent text comes back; close succeeds |
-| 24 | Sleep | `sleep` for 2 seconds | execution resumes after about 2 seconds |
-| 25 | Secret present | provide a secret, take a handle, make an HTTP call with the secret header | the header is injected; the value never appears in agent state (KI-05) |
-| 26 | Secret missing | take a handle for a name that does not exist | a clear error that names the secret |
-| 27 | Promise and webhook | create a promise and a webhook, call the webhook URL with a payload, then `getPromise` | the payload comes back |
-| 28 | Database | `dbExecuteParams` then `dbQueryParams` on Postgres | the inserted row comes back |
-| 29 | Config | `configGet` for a key that exists and one that does not | the value; a clear error |
-| 30 | Tracing | `traceId`, `spanId`, `traceHeaders` | non-empty ids; a valid W3C `traceparent` |
-| 31 | Idempotency key | `generateIdempotencyKey` twice | two different valid ids |
-| 32 | Oplog and revert | note `getOplogIndex`, change state, `revertAgent` to that index | state is back to what it was |
-| 33 | Files | `writeFile` then `readFile` | the same text, or a clear "unsupported" error (KI-06) |
-| 34 | Logging | log at each level | the lines appear in the worker's log (KI-07) |
-| 35 | Database statement caching | execute parameterized SQL queries repeatedly | statement cache hits succeed without re-preparing |
+| # | Test | How | Expected | Status |
+|---|------|-----|----------|:---:|
+| 19 | HTTP request | `http` GET to a public URL | status code and body | |
+| 20 | HTTP streaming | `httpStreamOpen`, read chunks, close | chunks arrive in order; close succeeds | |
+| 21 | Key-value | `kvSetBytes` then `kvGetBytes` with non-UTF-8 bytes | identical bytes | |
+| 22 | Blobstore | `blobPutBytes` then `blobGetBytes` | identical bytes | |
+| 23 | WebSocket | connect, send, receive, close against an echo server | the sent text comes back; close succeeds | |
+| 24 | Sleep | `sleep` for 2 seconds | execution resumes after about 2 seconds | |
+| 25 | Secret present | provide a secret, take a handle, make an HTTP call with the secret header | the header is injected; the value never appears in agent state (KI-05) | **PASSED** (2026-11-08) |
+| 26 | Secret missing | take a handle for a name that does not exist | a clear error that names the secret | **PASSED** (2026-11-08) |
+| 27 | Promise and webhook | create a promise and a webhook, call the webhook URL with a payload, then `getPromise` | the payload comes back | |
+| 28 | Database | `dbExecuteParams` then `dbQueryParams` on Postgres | the inserted row comes back | |
+| 29 | Config | `configGet` for a key that exists and one that does not | the value; a clear error | |
+| 30 | Tracing | `traceId`, `spanId`, `traceHeaders` | non-empty ids; a valid W3C `traceparent` | |
+| 31 | Idempotency key | `generateIdempotencyKey` twice | two different valid ids | |
+| 32 | Oplog and revert | note `getOplogIndex`, change state, `revertAgent` to that index | state is back to what it was | |
+| 33 | Files | `writeFile` then `readFile` | the same text, or a clear "unsupported" error (KI-06) | |
+| 34 | Logging | log at each level | the lines appear in the worker's log (KI-07) | |
+| 35 | Database statement caching | execute parameterized SQL queries repeatedly | statement cache hits succeed without re-preparing | |
 
 ---
 
