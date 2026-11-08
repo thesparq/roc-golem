@@ -1,5 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
+import pf.Json
 import pf.Golem exposing [Agent, defineAgent]
 
 # Agent State
@@ -58,7 +59,7 @@ agent = defineAgent({
 					result: {
 						id: toolCall.id,
 						success: True,
-						output: "{\"status\": \"stream_active\", \"sent_count\": ${Str.inspect(state.sent)}}",
+						output: Json.encode({ status: "stream_active", sent_count: state.sent }),
 					},
 				})
 
@@ -68,7 +69,7 @@ agent = defineAgent({
 					result: {
 						id: toolCall.id,
 						success: False,
-						output: "{\"error\": \"Unknown tool ${toolCall.name}\"}",
+						output: Json.encode({ error: "Unknown tool ${toolCall.name}" }),
 					},
 				})
 		},
@@ -93,57 +94,19 @@ agent = defineAgent({
 		],
 	},
 
-	serializeState: |state| {
-		connStr = if state.connected "true" else "false"
-		"{\"connected\":${connStr},\"handle\":${Str.inspect(state.handle)},\"sent\":${Str.inspect(state.sent)},\"received\":${Str.inspect(state.received)}}"
-	},
+	serializeState: |state|
+		Json.encode(state),
 
 	deserializeState: |stateJson| {
-		connected =
-			match Str.split_first(stateJson, "\"connected\":true") {
-				Ok(_) => True
-				Err(_) => False
-			}
-		handle : U32
-		handle =
-			match Str.split_first(stateJson, "\"handle\":") {
-				Ok({ after, .. }) =>
-					match Str.split_first(after, ",") {
-						Ok({ before, .. }) => U32.from_str(Str.trim(before)) ?? 0.U32
-						Err(_) => 0.U32
-					}
-
-				Err(_) => 0.U32
-			}
-		sent : U64
-		sent =
-			match Str.split_first(stateJson, "\"sent\":") {
-				Ok({ after, .. }) =>
-					match Str.split_first(after, ",") {
-						Ok({ before, .. }) => U64.from_str(Str.trim(before)) ?? 0.U64
-						Err(_) => 0.U64
-					}
-
-				Err(_) => 0.U64
-			}
-		received : U64
-		received =
-			match Str.split_first(stateJson, "\"received\":") {
-				Ok({ after, .. }) => {
-					cleaned = Str.trim(after)
-					match Str.split_first(cleaned, "}") {
-						Ok({ before, .. }) => U64.from_str(Str.trim(before)) ?? 0.U64
-						Err(_) => 0.U64
-					}
-				}
-
-				Err(_) => 0.U64
-			}
-		Ok({
-			connected: connected,
-			handle: handle,
-			sent: sent,
-			received: received,
-		})
+		defaultState : State
+		defaultState = {
+			connected: False,
+			handle: 0.U32,
+			sent: 0.U64,
+			received: 0.U64,
+		}
+		res : State
+		res = Json.decode_or(stateJson, defaultState)
+		Ok(res)
 	},
 })

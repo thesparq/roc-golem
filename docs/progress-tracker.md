@@ -2,13 +2,23 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 1 — Make every effect honest (COMPLETE) (2026-11-08)
+### Current Phase: Phase 2 — Make the SDK and examples trustworthy (IN PROGRESS) (2026-11-08)
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Phase 1 COMPLETE! Unit 09 Complete & Verified.** Fails cleanly on handler errors with `AgentError::InvalidInput(err)` without falling back to tools; routes genuine tools directly to tool handlers; returns clear `AgentError::InvalidMethod("Method '<name>' not found")` for unknown methods (`KI-10`). All Phase 1 units (05, 06, 07, 08, 09) complete and verified across all 4 testing layers. Ready for Phase 2.
+Status: **Unit 10 Complete & Verified.** Shared `platform/Json.roc` codec module implemented with `encode`, `decode`, `decode_or`, `escape`. All 4 example agents (`counter`, `ai_tool`, `streaming_agent`, `canary_release`) and `README.md` refactored to use standard JSON codecs. All fragile ad-hoc string extractors removed (`KI-09`). 23 comprehensive roundtrip tests passing in `tests/json_roundtrip.roc`. All 4 layers verified.
 
 ## Done
+
+- **Unit 10 (Shared JSON Helpers and Honest Examples) Complete & Verified (2026-11-08)**:
+  - Created `platform/Json.roc` exposing `encode`, `decode`, `decode_or`, `escape` leveraging Roc's built-in `Json` runtime primitives (`Json.to_str` and `Json.parse`).
+  - Exposed `Json` module in `platform/main.roc` (`exposes [Golem, Types, Json]`) and updated `parse_tool_call` to decode `{ id : Str, name : Str, arguments : Str }` using `decode_or` for whitespace resilience.
+  - Refactored all 4 example agents (`counter`, `ai_tool`, `streaming_agent`, `canary_release`) and `README.md` to use standard `Json.encode` and `Json.decode_or`/`Json.decode`.
+  - Removed fragile ad-hoc extractors (`extractStr`, `extractU64`, `extractStringList`, `escapeJson`) from `examples/canary_release/Types.roc` and `ReleaseCoordinator.roc`.
+  - Created automated test suite `tests/json_roundtrip.roc` covering primitives, negative numbers, zero, booleans, quotes, escapes, emojis, whitespace tolerance, agent state roundtrips, and tool envelopes (23/23 tests passed).
+  - Integrated `roc test tests/json_roundtrip.roc` into `.github/workflows/ci.yaml` Layer 2 step.
+  - Verified across all 4 layers (Layer 1 static checks, Layer 2 unit tests, Layer 3 builds with all components validated, Layer 4 `./tooling/test_runtime.sh`).
+  - Resolved `KI-09` and verified `docs/feature-checklist.md` test 8 (Awkward state text).
 
 - **Unit 09 (Surface Handler Errors) Complete & Verified (2026-11-08)**:
   - Implemented `AgentCapabilities` struct and `get_agent_capabilities(agent_name: &str)` helper in `host/src/lib.rs` querying agent metadata for declared methods and tools (normalizing snake_case and kebab-case variants).
@@ -112,12 +122,12 @@ Source: code review of 2026-11-07 and build verification.
 | KI-06 | File effects (`readFile`, `writeFile`, bytes variants, append) use `std::fs`, unsupported on this target; `wasi:filesystem` is not in `wit/world.wit`. | High | **Resolved** in Unit 07 (real WASI 0.2 `wasi:filesystem` with preopens on `wasm32`, `std::fs` native fallback) |
 | KI-07 | `rocFxLog` uses `println!`, which likely goes nowhere on this target. | Medium | **Resolved** in Unit 08 (real WASI logging via `wasi:logging/logging` on `wasm32`, test buffer on native) |
 | KI-08 | No test compiles Roc: CI never runs `roc check`, `roc build` or `roc test`. The 13 tests run against `guest_bridge.rs`. | Critical | **Resolved** in Unit 03 (full Roc checks, tests, builds, validations in CI) |
-| KI-09 | Examples parse JSON with ad-hoc text search. The README counter has `deserializeState: \|_json\| Ok({ count: 0 })`, which resets state on every load. `ai_tool` does not escape `lastTool`. | High | Open (Unit 02) |
+| KI-09 | Examples parse JSON with ad-hoc text search. The README counter has `deserializeState: \|_json\| Ok({ count: 0 })`, which resets state on every load. `ai_tool` does not escape `lastTool`. | High | **Resolved** in Unit 10 (shared `platform/Json.roc` codec module, honest examples, 23/23 roundtrip tests) |
 | KI-10 | On any message-handler error the host retries as a tool call and reports `InvalidMethod` with the first error, hiding the real failure. | Medium | **Resolved** in Unit 09 (capability-based routing, direct tool invocation, immediate handler error surface) |
-| KI-11 | The host hard-codes `name == "canary-release"` to add an HTTP mount at `/canary/{id}`. | Medium | Open (Unit 10) |
+| KI-11 | The host hard-codes `name == "canary-release"` to add an HTTP mount at `/canary/{id}`. | Medium | Open (Unit 11) |
 | KI-12 | Two CI files named "CI" (`ci.yaml`, `ci.yml`) with different jobs; `wasm-tools` pinned at 1.220.0 and 1.222.0; one job packages as `v0.7.0`; neither CI nor `build.sh` installs or checks the pinned Roc nightly. | Medium | **Resolved** in Unit 03 (consolidated to `ci.yaml`, removed `ci.yml`, pinned `wasm-tools 1.222.0` and Roc nightly) |
-| KI-13 | RPC always constructs the target with an empty constructor (`"{}"`), so agents with constructor arguments cannot be addressed. | Medium | Open (Unit 05) |
-| KI-14 | Canary example fakes its timer (`timerHandle = 42`) and webhook URL, defines `renderDashboard` but never serves it, and has an unused variable. | Medium | Open (Unit 11) |
+| KI-13 | RPC always constructs the target with an empty constructor (`"{}"`), so agents with constructor arguments cannot be addressed. | Medium | Open (Unit 11) |
+| KI-14 | Canary example fakes its timer (`timerHandle = 42`) and webhook URL, defines `renderDashboard` but never serves it, and has an unused variable. | Medium | Open (Unit 12) |
 | KI-15 | README is stale: deploy command uses `golem:agent-platform/agent-api.{handle-message}`; hash points to v0.8.0; host comment still says "Golem 1.5.0". | Medium | Open |
 | KI-16 | `golem.yaml` has a top-level `tools:` key that does not appear in the 1.6.0 manifest schema as far as known. | Low | Open |
 | KI-17 | `.agents/skills/roc-golem.md` and `.gemini/skills/roc-golem.md` are identical copies. | Low | Open |
@@ -126,8 +136,8 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Open questions
 
-- Should HTTP mounts be declared in agent metadata (replacing the `canary-release` special case)? (unit 10)
+- Should HTTP mounts be declared in agent metadata (replacing the `canary-release` special case)? (unit 11)
 
 ## Next steps
 
-1. Phase 2 — Unit 10: Shared JSON helpers and honest examples.
+1. Phase 2 — Unit 11: Platform neutrality.

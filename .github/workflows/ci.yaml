@@ -64,7 +64,7 @@ jobs:
           echo "==> Running Clippy..."
           cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings
           echo "==> Checking Roc formatting..."
-          roc fmt --check platform/main.roc examples/counter/main.roc examples/ai_tool/main.roc examples/streaming_agent/main.roc examples/canary_release/main.roc tests/envelope.roc
+          roc fmt --check platform/main.roc platform/Json.roc examples/counter/main.roc examples/ai_tool/main.roc examples/streaming_agent/main.roc examples/canary_release/main.roc tests/envelope.roc tests/json_roundtrip.roc
           echo "==> Running Roc checks..."
           roc check platform/main.roc || [ $? -eq 2 ]
           roc check examples/counter/main.roc || [ $? -eq 2 ]
@@ -78,6 +78,7 @@ jobs:
           cargo test --manifest-path host/Cargo.toml --features stub-guest --lib
           echo "==> Running Roc platform tests..."
           roc test tests/envelope.roc || [ $? -eq 2 ]
+          roc test tests/json_roundtrip.roc || [ $? -eq 2 ]
 
       - name: "Layer 3: App Builds & Packaging"
         run: |

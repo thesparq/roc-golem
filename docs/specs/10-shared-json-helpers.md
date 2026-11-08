@@ -2,7 +2,7 @@
 
 - **Unit:** 10
 - **File:** `docs/specs/10-shared-json-helpers.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Phase:** Phase 2 — Make the SDK and examples trustworthy
 - **Fixes:** `KI-09`, `docs/feature-checklist.md` test 8 (Awkward state text)
 
@@ -177,19 +177,19 @@ Add `roc test tests/json_roundtrip.roc` to Layer 2 unit testing stage in `.githu
 
 To mark Unit 10 as complete, the following checks from `docs/testing.md` must be executed and reported:
 
-1. [ ] **Unit Tests (Layer 2):**
+1. [x] **Unit Tests (Layer 2):**
    - `roc test tests/json_roundtrip.roc` passes all round-trip and edge-case tests.
    - `roc test tests/envelope.roc` continues to pass cleanly.
-   - `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` passes all 27 host unit tests.
-2. [ ] **Code Hygiene & Static Checks (Layer 1):**
+   - `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` passes all 46 host unit tests.
+2. [x] **Code Hygiene & Static Checks (Layer 1):**
    - `roc fmt --check` passes cleanly across platform, tests, and all examples.
    - `roc check platform/main.roc` and `roc check examples/*/main.roc` report zero errors.
    - `cargo fmt --check` and `cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings` report zero warnings or errors.
-3. [ ] **Component Build & Validation (Layer 3):**
+3. [x] **Component Build & Validation (Layer 3):**
    - `./tooling/build.sh all` successfully builds all four agent components.
    - `wasm-tools validate` validates all four `build/*_agent.wasm` binaries.
-4. [ ] **Layer 4 Runtime Verification:**
+4. [x] **Layer 4 Runtime Verification:**
    - `./tooling/test_runtime.sh` passes completely against a running local Golem server.
-5. [ ] **Feature Checklist & Progress Tracker:**
+5. [x] **Feature Checklist & Progress Tracker:**
    - `docs/feature-checklist.md` test 8 (Awkward state text) verified and marked PASSED.
    - `docs/progress-tracker.md` updated with `KI-09` marked resolved.

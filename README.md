@@ -30,22 +30,23 @@ app [agent] {
     pf: platform "https://github.com/thesparq/roc-golem/releases/download/v0.8.0/Nx4rJNk_kHTlxYCixZ-v5z0yY3mllisQFKI1mc1Vpp0.tar.zst",
 }
 
+import pf.Json
 import pf.Golem exposing [Agent, defineAgent]
 
 State : { count : I64 }
 
 agent : Agent(State)
 agent = defineAgent({
-    init: |_config| Ok({ count: 0 }),
+    init: |_config| Ok({ count: 0.I64 }),
     handleMessage: |state, msg|
         match msg {
-            "increment" => Ok({ state: { count: state.count + 1 }, response: "Incremented" }),
+            "increment" => Ok({ state: { count: state.count + 1.I64 }, response: "Incremented" }),
             _ => Ok({ state, response: "Count is ${Num.to_str(state.count)}" }),
         },
     handleToolCall: |state, call|
         Ok({
             state,
-            result: { id: call.id, success: Bool.true, output: "{\"count\":${Num.to_str(state.count)}}" },
+            result: { id: call.id, success: True, output: Json.encode({ count: state.count }) },
         }),
     metadata: {
         name: "counter-agent",
@@ -53,27 +54,8 @@ agent = defineAgent({
         description: "Durable Roc Counter Agent on Golem Cloud",
         tools: [],
     },
-    serializeState: |state| "{\"count\":${Str.inspect(state.count)}}",
-    deserializeState: |stateJson| {
-        count =
-            match Str.split_first(stateJson, "\"count\"") {
-                Ok({ after, .. }) =>
-                    match Str.split_first(after, ":") {
-                        Ok({ after: afterColon, .. }) => {
-                            cleaned = Str.trim(afterColon)
-                            numStr =
-                                match Str.split_first(cleaned, "}") {
-                                    Ok({ before, .. }) => before,
-                                    Err(_) => cleaned,
-                                }
-                            I64.from_str(Str.trim(numStr)) ?? 0.I64
-                        }
-                        Err(_) => 0.I64,
-                    }
-                Err(_) => 0.I64,
-            }
-        Ok({ count: count })
-    },
+    serializeState: |state| Json.encode(state),
+    deserializeState: |stateJson| Ok(Json.decode_or(stateJson, { count: 0.I64 })),
 })
 ```
 

@@ -18,6 +18,7 @@ import pf.Golem exposing [
 	build,
 ]
 import pf.Types as PfTypes exposing [ToolCall, ToolResult]
+import pf.Json
 import Types exposing [
 	Result,
 	State,
@@ -128,18 +129,25 @@ agent =
 		)
 		|> build
 
+Config : {
+	service : Str,
+}
+
 initCoordinator : Str -> Result(State, Str)
-initCoordinator = |configJson|
+initCoordinator = |configJson| {
+	cfg : Config
+	cfg = Json.decode_or(configJson, { service: "default-service" })
 	Ok({
-		service: extractStr(configJson, "service") ?? "default-service",
-		activeVersion: extractStr(configJson, "activeVersion") ?? "v1.0.0",
+		service: cfg.service,
+		activeVersion: "v1.0.0",
 		canaryVersion: "",
 		weight: 0.U64,
-		region: extractStr(configJson, "region") ?? "us-east-1",
+		region: "us-east-1",
 		pendingTimerHandle: 0.U32,
 		approvalWebhookUrl: "",
 		events: ["coordinator_initialized"],
 	})
+}
 
 handleStart : State, StartInput -> Result({ state : State, out : StartOutput }, Str)
 handleStart = |state, input| {
@@ -263,13 +271,13 @@ handleTool = |call| {
 		Ok({
 			id: call.id,
 			success: True,
-			output: "{\"faults\": ${Str.inspect(faults)}}",
+			output: Json.encode({ faults: faults }),
 		})
 	} else {
 		Ok({
 			id: call.id,
 			success: False,
-			output: "{\"error\": \"Unknown tool ${call.name}\"}",
+			output: Json.encode({ error: "Unknown tool ${call.name}" }),
 		})
 	}
 }
@@ -318,18 +326,5 @@ deserializeState = |json| {
 				events: status.events,
 			})
 		Err(err) => Err(err)
-	}
-}
-
-extractStr : Str, Str -> Result(Str, [NotFound])
-extractStr = |json, field_name| {
-	target = "\"${field_name}\":\""
-	match Str.split_first(json, target) {
-		Ok({ after, .. }) =>
-			match Str.split_first(after, "\"") {
-				Ok({ before, .. }) => Ok(before)
-				Err(_) => Err(NotFound)
-			}
-		Err(_) => Err(NotFound)
 	}
 }

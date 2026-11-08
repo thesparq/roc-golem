@@ -1,5 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
+import pf.Json
 import pf.Golem exposing [Agent, defineAgent]
 
 # Agent State
@@ -51,7 +52,7 @@ agent = defineAgent({
 					result: {
 						id: toolCall.id,
 						success: True,
-						output: "{\"count\": ${Str.inspect(state.count)}}",
+						output: Json.encode({ count: state.count }),
 					},
 				})
 
@@ -80,33 +81,8 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"count\":${Str.inspect(state.count)}}",
+		Json.encode(state),
 
-	deserializeState: |stateJson| {
-		count : I64
-		count =
-			match Str.split_first(stateJson, "\"count\"") {
-				Ok({ after, .. }) =>
-					match Str.split_first(after, ":") {
-						Ok({ after: afterColon, .. }) => {
-							cleaned = Str.trim(afterColon)
-							numStr =
-								match Str.split_first(cleaned, ",") {
-									Ok({ before, .. }) => before
-									Err(_) =>
-										match Str.split_first(cleaned, "}") {
-											Ok({ before, .. }) => before
-											Err(_) => cleaned
-										}
-								}
-							I64.from_str(Str.trim(numStr)) ?? 0.I64
-						}
-
-						Err(_) => 0.I64
-					}
-
-				Err(_) => 0.I64
-			}
-		Ok({ count: count })
-	},
+	deserializeState: |stateJson|
+		Ok(Json.decode_or(stateJson, { count: 0.I64 })),
 })

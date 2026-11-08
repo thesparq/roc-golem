@@ -1,5 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
+import pf.Json
 import pf.Golem exposing [Agent, defineAgent]
 
 # Agent State
@@ -28,24 +29,19 @@ agent = defineAgent({
 					result: {
 						id: toolCall.id,
 						success: True,
-						output: "{\"result\": 42}",
+						output: Json.encode({ result: 42.I64 }),
 					},
 				})
 
-			"echo" => {
-				escapedArgs =
-					toolCall.arguments
-						|> Str.replace_each("\\", "\\\\")
-						|> Str.replace_each("\"", "\\\"")
+			"echo" =>
 				Ok({
 					state: { invocations: nextInvocations, lastTool: "echo" },
 					result: {
 						id: toolCall.id,
 						success: True,
-						output: "{\"echo\": \"${escapedArgs}\"}",
+						output: Json.encode({ echo: toolCall.arguments }),
 					},
 				})
-			}
 
 			_ =>
 				Ok({
@@ -53,7 +49,7 @@ agent = defineAgent({
 					result: {
 						id: toolCall.id,
 						success: False,
-						output: "{\"error\": \"Tool not found\"}",
+						output: Json.encode({ error: "Tool not found" }),
 					},
 				})
 		}
@@ -92,30 +88,8 @@ agent = defineAgent({
 	},
 
 	serializeState: |state|
-		"{\"invocations\":${Str.inspect(state.invocations)},\"lastTool\":\"${state.lastTool}\"}",
+		Json.encode(state),
 
-	deserializeState: |stateJson| {
-		invocations : I64
-		invocations =
-			match Str.split_first(stateJson, "\"invocations\":") {
-				Ok({ after, .. }) =>
-					match Str.split_first(after, ",") {
-						Ok({ before, .. }) => I64.from_str(Str.trim(before)) ?? 0.I64
-						Err(_) => 0.I64
-					}
-
-				Err(_) => 0.I64
-			}
-		lastTool =
-			match Str.split_first(stateJson, "\"lastTool\":\"") {
-				Ok({ after, .. }) =>
-					match Str.split_first(after, "\"") {
-						Ok({ before, .. }) => before
-						Err(_) => "none"
-					}
-
-				Err(_) => "none"
-			}
-		Ok({ invocations: invocations, lastTool: lastTool })
-	},
+	deserializeState: |stateJson|
+		Ok(Json.decode_or(stateJson, { invocations: 0.I64, lastTool: "none" })),
 })

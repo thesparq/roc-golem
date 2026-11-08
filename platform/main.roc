@@ -5,6 +5,7 @@ platform "golem"
 	exposes [
 		Golem,
 		Types,
+		Json,
 	]
 	packages {}
 	provides {
@@ -87,6 +88,7 @@ import Types exposing [
 ]
 import Golem
 import Effect
+import Json exposing [encode, decode, decode_or, escape]
 
 ## Entry point for agent initialization called by Rust Host
 main_init_for_host : Str -> Result(Str, Str)
@@ -201,12 +203,7 @@ format_tool_parameter = |param| {
 
 escape_json_str : Str -> Str
 escape_json_str = |input|
-	input
-		|> Str.replace_each("\\", "\\\\")
-		|> Str.replace_each("\"", "\\\"")
-		|> Str.replace_each("\n", "\\n")
-		|> Str.replace_each("\r", "\\r")
-		|> Str.replace_each("\t", "\\t")
+	escape(input)
 
 format_reply_envelope : Str, Str -> Str
 format_reply_envelope = |next_state_json, response| {
@@ -224,11 +221,15 @@ format_tool_envelope = |next_state_json, success, output| {
 }
 
 parse_tool_call : Str -> ToolCall
-parse_tool_call = |raw_json| {
-	id: extract_json_field(raw_json, "id") ?? "call-1",
-	name: extract_json_field(raw_json, "name") ?? "default",
-	arguments: extract_json_field(raw_json, "arguments") ?? "{}",
-}
+parse_tool_call = |raw_json|
+	decode_or(
+		raw_json,
+		{
+			id: "call-1",
+			name: "default",
+			arguments: "{}",
+		},
+	)
 
 extract_json_field : Str, Str -> Result(Str, [NotFound])
 extract_json_field = |json, field_name| {

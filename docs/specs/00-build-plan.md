@@ -65,7 +65,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* One shared set of encode/decode helpers used by every example, replacing ad-hoc text search (`Str.split_first`) that breaks on spaces and escapes. The README counter and `ai_tool` are fixed. Round-trip tests for every example.
 *Dependencies:* 02.
 *Fixes:* KI-09.
-*Status:* Spec written.
+*Status:* Complete.
 
 **11. Platform neutrality**
 *What it builds:* HTTP mounts are declared in agent metadata; the `canary-release` special case in `host/src/lib.rs` is removed. RPC accepts constructor arguments so a specific agent instance can be addressed.
