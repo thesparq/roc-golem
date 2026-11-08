@@ -1,6 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 
-#[cfg(feature = "stub-guest")]
+#[cfg(any(feature = "stub-guest", test))]
 pub mod guest_bridge;
 pub mod roc_std;
 
@@ -10,10 +10,10 @@ use core::ptr;
 use roc_std::{RocList, RocResult, RocStr};
 use std::collections::{HashMap, HashSet};
 
-#[cfg(feature = "stub-guest")]
+#[cfg(any(feature = "stub-guest", test))]
 use guest_bridge::*;
 
-#[cfg(not(feature = "stub-guest"))]
+#[cfg(not(any(feature = "stub-guest", test)))]
 extern "C" {
     pub fn main_init_for_host(out: *mut RocResult<RocStr, RocStr>, config: *mut RocStr);
     pub fn main_handle_message_for_host(

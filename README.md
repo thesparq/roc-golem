@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.0.0/ik13T_ErjdlY0BtbrZ4WwiDVZWl1S6iDi2vExIkrlIw.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.0.0/L3B2UI-CU-8bc5XFXdXfB_KMYRZ3ZWWmXZETgCKvEjM.tar.zst",
 }
 
 import pf.Json
