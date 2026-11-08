@@ -71,7 +71,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* HTTP mounts are declared in agent metadata; the `canary-release` special case in `host/src/lib.rs` is removed. RPC accepts constructor arguments so a specific agent instance can be addressed.
 *Dependencies:* 04. Touches the metadata contract in `docs/architecture.md`.
 *Fixes:* KI-11, KI-13.
-*Status:* Spec written.
+*Status:* Complete.
 
 **12. Canary example made real**
 *What it builds:* Real durable timer, real promise and webhook for approval, the dashboard actually served, unused code removed.

@@ -12,6 +12,7 @@ module [
 	withStatelessToolHandler,
 	withEffectfulToolHandler,
 	withEffectfulStatelessToolHandler,
+	withHttpMount,
 	register,
 	registerReadOnly,
 	registerEphemeral,
@@ -32,11 +33,17 @@ module [
 	logError,
 	workerId,
 	rpc,
+	rpcInstance,
 	rpcSchedule,
+	rpcScheduleInstance,
 	rpcFireAndForget,
+	rpcFireAndForgetInstance,
 	rpcTyped,
+	rpcTypedInstance,
 	rpcScheduleTyped,
+	rpcScheduleTypedInstance,
 	rpcFireAndForgetTyped,
+	rpcFireAndForgetTypedInstance,
 	setPersistence,
 	http,
 	httpRequestBytes,
@@ -78,8 +85,11 @@ module [
 	dbExecute,
 	dbQuery,
 	rpcBytes,
+	rpcBytesInstance,
 	rpcScheduleBytes,
+	rpcScheduleBytesInstance,
 	rpcFireAndForgetBytes,
+	rpcFireAndForgetBytesInstance,
 	httpStreamOpen,
 	httpStreamReadChunk,
 	httpStreamClose,
@@ -98,9 +108,9 @@ import Types exposing [
 	PersistenceMode,
 	SecretHandle,
 	SecretHeader,
+	HttpMount,
 ]
 import Effect
-
 
 ## Phantom-typed Method declaration
 Method(input, output) : {
@@ -129,6 +139,7 @@ Spec(state) : {
 	version : Str,
 	description : Str,
 	mode : AgentMode,
+	httpMount : [None, Some(HttpMount)],
 	init : Str -> Result(state, Str),
 	handlers : List(Handler(state)),
 	tools : List(ToolDefinition),
@@ -153,16 +164,13 @@ Agent(state) : {
 
 ## Define a stateful (Durable) agent
 define :
-	{ name : Str, version : Str, description : Str },
-	(Str -> Result(state, Str)),
-	(state -> Str),
-	(Str -> Result(state, Str))
-	-> Spec(state)
+	{ name : Str, version : Str, description : Str }, (Str -> Result(state, Str)), (state -> Str), (Str -> Result(state, Str)) -> Spec(state)
 define = |meta, initFn, serializeFn, deserializeFn| {
 	name: meta.name,
 	version: meta.version,
 	description: meta.description,
 	mode: Durable,
+	httpMount: None,
 	init: initFn,
 	handlers: [],
 	tools: [],
@@ -178,13 +186,13 @@ define = |meta, initFn, serializeFn, deserializeFn| {
 
 ## Define an ephemeral (stateless) agent
 defineEphemeral :
-	{ name : Str, version : Str, description : Str }
-	-> Spec({})
+	{ name : Str, version : Str, description : Str } -> Spec({})
 defineEphemeral = |meta| {
 	name: meta.name,
 	version: meta.version,
 	description: meta.description,
 	mode: Ephemeral,
+	httpMount: None,
 	init: |_| Ok({}),
 	handlers: [],
 	tools: [],
@@ -198,6 +206,10 @@ defineEphemeral = |meta| {
 	deserializeState: |_| Ok({}),
 }
 
+## Attach HTTP mount configuration to agent spec
+withHttpMount : Spec(state), HttpMount -> Spec(state)
+withHttpMount = |spec, mount| { ..spec, httpMount: Some(mount) }
+
 ## Attach tool definitions to agent spec
 withTools : Spec(state), List(ToolDefinition) -> Spec(state)
 withTools = |spec, tools| { ..spec, tools }
@@ -209,8 +221,8 @@ withToolHandler = |spec, handler| {
 	toolHandler: |st, call|
 		match handler(st, call) {
 			Ok({ state: nextSt, result }) =>
-				Ok({ state: nextSt, stateChanged: True, result }),
-			Err(e) => Err(e),
+				Ok({ state: nextSt, stateChanged: True, result })
+			Err(e) => Err(e)
 		},
 }
 
@@ -221,8 +233,8 @@ withStatelessToolHandler = |spec, handler| {
 	toolHandler: |st, call|
 		match handler(call) {
 			Ok(result) =>
-				Ok({ state: st, stateChanged: False, result }),
-			Err(e) => Err(e),
+				Ok({ state: st, stateChanged: False, result })
+			Err(e) => Err(e)
 		},
 }
 
@@ -234,8 +246,8 @@ withEffectfulToolHandler = |spec, handler| {
 		eff = handler(st, call)
 		match Effect.run!(eff) {
 			Ok({ state: nextSt, result }) =>
-				Ok({ state: nextSt, stateChanged: True, result }),
-			Err(e) => Err(e),
+				Ok({ state: nextSt, stateChanged: True, result })
+			Err(e) => Err(e)
 		}
 	},
 }
@@ -248,8 +260,8 @@ withEffectfulStatelessToolHandler = |spec, handler| {
 		eff = handler(call)
 		match Effect.run!(eff) {
 			Ok(result) =>
-				Ok({ state: st, stateChanged: False, result }),
-			Err(e) => Err(e),
+				Ok({ state: st, stateChanged: False, result })
+			Err(e) => Err(e)
 		}
 	},
 }
@@ -269,8 +281,8 @@ register = |spec, m, fn| {
 		invoke: |st, inp|
 			match fn(st, inp) {
 				Ok({ state: nextSt, out }) =>
-					Ok({ state: nextSt, stateChanged: True, out }),
-				Err(e) => Err(e),
+					Ok({ state: nextSt, stateChanged: True, out })
+				Err(e) => Err(e)
 			},
 	}
 	{ ..spec, handlers: List.append(spec.handlers, handler) }
@@ -291,8 +303,8 @@ registerReadOnly = |spec, m, fn| {
 		invoke: |st, inp|
 			match fn(st, inp) {
 				Ok(out) =>
-					Ok({ state: st, stateChanged: False, out }),
-				Err(e) => Err(e),
+					Ok({ state: st, stateChanged: False, out })
+				Err(e) => Err(e)
 			},
 	}
 	{ ..spec, handlers: List.append(spec.handlers, handler) }
@@ -313,8 +325,8 @@ registerEphemeral = |spec, m, fn| {
 		invoke: |st, inp|
 			match fn(inp) {
 				Ok(out) =>
-					Ok({ state: st, stateChanged: False, out }),
-				Err(e) => Err(e),
+					Ok({ state: st, stateChanged: False, out })
+				Err(e) => Err(e)
 			},
 	}
 	{ ..spec, handlers: List.append(spec.handlers, handler) }
@@ -322,12 +334,7 @@ registerEphemeral = |spec, m, fn| {
 
 ## Register a typed mutating method with custom codec
 registerTyped :
-	Spec(state),
-	Method(inp, out),
-	(state, inp -> Result({ state : state, out : out }, Str)),
-	(Str -> Result(inp, Str)),
-	(out -> Str)
-	-> Spec(state)
+	Spec(state), Method(inp, out), (state, inp -> Result({ state : state, out : out }, Str)), (Str -> Result(inp, Str)), (out -> Str) -> Spec(state)
 registerTyped = |spec, m, fn, decodeInput, encodeOutput| {
 	decl = {
 		name: m.name,
@@ -340,13 +347,13 @@ registerTyped = |spec, m, fn, decodeInput, encodeOutput| {
 		declaration: decl,
 		invoke: |st, rawInp|
 			match decodeInput(rawInp) {
-				Err(e) => Err("invalid input for ${m.name}: ${e}"),
+				Err(e) => Err("invalid input for ${m.name}: ${e}")
 				Ok(parsedInp) =>
 					match fn(st, parsedInp) {
 						Ok({ state: nextSt, out }) =>
-							Ok({ state: nextSt, stateChanged: True, out: encodeOutput(out) }),
-						Err(e) => Err(e),
-					},
+							Ok({ state: nextSt, stateChanged: True, out: encodeOutput(out) })
+						Err(e) => Err(e)
+					}
 			},
 	}
 	{ ..spec, handlers: List.append(spec.handlers, handler) }
@@ -354,12 +361,7 @@ registerTyped = |spec, m, fn, decodeInput, encodeOutput| {
 
 ## Register a typed read-only method with custom codec
 registerReadOnlyTyped :
-	Spec(state),
-	Method(inp, out),
-	(state, inp -> Result(out, Str)),
-	(Str -> Result(inp, Str)),
-	(out -> Str)
-	-> Spec(state)
+	Spec(state), Method(inp, out), (state, inp -> Result(out, Str)), (Str -> Result(inp, Str)), (out -> Str) -> Spec(state)
 registerReadOnlyTyped = |spec, m, fn, decodeInput, encodeOutput| {
 	decl = {
 		name: m.name,
@@ -372,13 +374,13 @@ registerReadOnlyTyped = |spec, m, fn, decodeInput, encodeOutput| {
 		declaration: decl,
 		invoke: |st, rawInp|
 			match decodeInput(rawInp) {
-				Err(e) => Err("invalid input for ${m.name}: ${e}"),
+				Err(e) => Err("invalid input for ${m.name}: ${e}")
 				Ok(parsedInp) =>
 					match fn(st, parsedInp) {
 						Ok(out) =>
-							Ok({ state: st, stateChanged: False, out: encodeOutput(out) }),
-						Err(e) => Err(e),
-					},
+							Ok({ state: st, stateChanged: False, out: encodeOutput(out) })
+						Err(e) => Err(e)
+					}
 			},
 	}
 	{ ..spec, handlers: List.append(spec.handlers, handler) }
@@ -386,12 +388,7 @@ registerReadOnlyTyped = |spec, m, fn, decodeInput, encodeOutput| {
 
 ## Register a typed ephemeral method with custom codec
 registerEphemeralTyped :
-	Spec({}),
-	Method(inp, out),
-	(inp -> Result(out, Str)),
-	(Str -> Result(inp, Str)),
-	(out -> Str)
-	-> Spec({})
+	Spec({}), Method(inp, out), (inp -> Result(out, Str)), (Str -> Result(inp, Str)), (out -> Str) -> Spec({})
 registerEphemeralTyped = |spec, m, fn, decodeInput, encodeOutput| {
 	decl = {
 		name: m.name,
@@ -404,13 +401,13 @@ registerEphemeralTyped = |spec, m, fn, decodeInput, encodeOutput| {
 		declaration: decl,
 		invoke: |st, rawInp|
 			match decodeInput(rawInp) {
-				Err(e) => Err("invalid input for ${m.name}: ${e}"),
+				Err(e) => Err("invalid input for ${m.name}: ${e}")
 				Ok(parsedInp) =>
 					match fn(parsedInp) {
 						Ok(out) =>
-							Ok({ state: st, stateChanged: False, out: encodeOutput(out) }),
-						Err(e) => Err(e),
-					},
+							Ok({ state: st, stateChanged: False, out: encodeOutput(out) })
+						Err(e) => Err(e)
+					}
 			},
 	}
 	{ ..spec, handlers: List.append(spec.handlers, handler) }
@@ -418,10 +415,7 @@ registerEphemeralTyped = |spec, m, fn, decodeInput, encodeOutput| {
 
 ## Register a mutating method with an effectful handler
 registerEffectful :
-	Spec(state),
-	Method(_in, _out),
-	(state, Str -> Effect.Effect(Result({ state : state, out : Str }, Str)))
-	-> Spec(state)
+	Spec(state), Method(_in, _out), (state, Str -> Effect.Effect(Result({ state : state, out : Str }, Str))) -> Spec(state)
 registerEffectful = |spec, m, fn| {
 	decl = {
 		name: m.name,
@@ -436,8 +430,8 @@ registerEffectful = |spec, m, fn| {
 			eff = fn(st, rawInp)
 			match Effect.run!(eff) {
 				Ok({ state: nextSt, out }) =>
-					Ok({ state: nextSt, stateChanged: True, out }),
-				Err(e) => Err(e),
+					Ok({ state: nextSt, stateChanged: True, out })
+				Err(e) => Err(e)
 			}
 		},
 	}
@@ -446,12 +440,7 @@ registerEffectful = |spec, m, fn| {
 
 ## Register a typed mutating method with an effectful handler and custom codec
 registerEffectfulTyped :
-	Spec(state),
-	Method(inp, out),
-	(state, inp -> Effect.Effect(Result({ state : state, out : out }, Str))),
-	(Str -> Result(inp, Str)),
-	(out -> Str)
-	-> Spec(state)
+	Spec(state), Method(inp, out), (state, inp -> Effect.Effect(Result({ state : state, out : out }, Str))), (Str -> Result(inp, Str)), (out -> Str) -> Spec(state)
 registerEffectfulTyped = |spec, m, fn, decodeInput, encodeOutput| {
 	decl = {
 		name: m.name,
@@ -464,15 +453,15 @@ registerEffectfulTyped = |spec, m, fn, decodeInput, encodeOutput| {
 		declaration: decl,
 		invoke: |st, rawInp|
 			match decodeInput(rawInp) {
-				Err(e) => Err("invalid input for ${m.name}: ${e}"),
+				Err(e) => Err("invalid input for ${m.name}: ${e}")
 				Ok(parsedInp) => {
 					eff = fn(st, parsedInp)
 					match Effect.run!(eff) {
 						Ok({ state: nextSt, out }) =>
-							Ok({ state: nextSt, stateChanged: True, out: encodeOutput(out) }),
-						Err(e) => Err(e),
+							Ok({ state: nextSt, stateChanged: True, out: encodeOutput(out) })
+						Err(e) => Err(e)
 					}
-				},
+				}
 			},
 	}
 	{ ..spec, handlers: List.append(spec.handlers, handler) }
@@ -490,6 +479,7 @@ build = |spec| {
 			tools: spec.tools,
 			methods: List.map(spec.handlers, |h| h.declaration),
 			mode: spec.mode,
+			httpMount: spec.httpMount,
 		},
 		init: |configStr|
 			match (spec.init)(configStr) {
@@ -499,11 +489,11 @@ build = |spec| {
 					} else {
 						Ok((spec.serializeState)(initState))
 					}
-				Err(err) => Err(err),
+				Err(err) => Err(err)
 			},
 		invokeMethod: |methodName, stateJson, inputJson| {
 			match findHandler(spec.handlers, methodName) {
-				Err(err) => Err(err),
+				Err(err) => Err(err)
 				Ok(handler) => {
 					stateRes =
 						if spec.mode == Ephemeral {
@@ -512,10 +502,10 @@ build = |spec| {
 							(spec.deserializeState)(stateJson)
 						}
 					match stateRes {
-						Err(err) => Err("Failed to deserialize state: ${err}"),
+						Err(err) => Err("Failed to deserialize state: ${err}")
 						Ok(currentState) =>
 							match (handler.invoke)(currentState, inputJson) {
-								Err(err) => Err(err),
+								Err(err) => Err(err)
 								Ok(res) => {
 									nextStateJson =
 										if res.stateChanged and spec.mode == Durable {
@@ -542,10 +532,10 @@ build = |spec| {
 					(spec.deserializeState)(stateJson)
 				}
 			match stateRes {
-				Err(err) => Err("Failed to deserialize state: ${err}"),
+				Err(err) => Err("Failed to deserialize state: ${err}")
 				Ok(currentState) =>
 					match (spec.toolHandler)(currentState, call) {
-						Err(err) => Err(err),
+						Err(err) => Err(err)
 						Ok(res) => {
 							nextStateJson =
 								if res.stateChanged and spec.mode == Durable {
@@ -572,10 +562,10 @@ build = |spec| {
 							(spec.deserializeState)(stateJson)
 						}
 					match stateRes {
-						Err(err) => Err("Failed to deserialize state: ${err}"),
+						Err(err) => Err("Failed to deserialize state: ${err}")
 						Ok(currentState) =>
 							match (handler.invoke)(currentState, msgStr) {
-								Err(err) => Err(err),
+								Err(err) => Err(err)
 								Ok(res) => {
 									nextStateJson =
 										if res.stateChanged and spec.mode == Durable {
@@ -597,7 +587,7 @@ build = |spec| {
 						nextStateJson: "",
 						stateChanged: False,
 						response: "Agent received: ${msgStr}",
-					}),
+					})
 			}
 		},
 	}
@@ -644,15 +634,16 @@ defineAgent = |config| {
 			tools: config.metadata.tools,
 			methods: [],
 			mode: Durable,
+			httpMount: None,
 		},
 		init: |configStr|
 			match (config.init)(configStr) {
-				Ok(st) => Ok((config.serializeState)(st)),
-				Err(e) => Err(e),
+				Ok(st) => Ok((config.serializeState)(st))
+				Err(e) => Err(e)
 			},
 		invokeMethod: |_methodName, stateJson, inputJson|
 			match (config.deserializeState)(stateJson) {
-				Err(e) => Err("Failed to deserialize state: ${e}"),
+				Err(e) => Err("Failed to deserialize state: ${e}")
 				Ok(st) =>
 					match (config.handleMessage)(st, inputJson) {
 						Ok({ state: nextSt, response }) =>
@@ -660,13 +651,13 @@ defineAgent = |config| {
 								nextStateJson: (config.serializeState)(nextSt),
 								stateChanged: True,
 								out: response,
-							}),
-						Err(e) => Err(e),
-					},
+							})
+						Err(e) => Err(e)
+					}
 			},
 		handleToolCall: |stateJson, call|
 			match (config.deserializeState)(stateJson) {
-				Err(e) => Err("Failed to deserialize state: ${e}"),
+				Err(e) => Err("Failed to deserialize state: ${e}")
 				Ok(st) =>
 					match (config.handleToolCall)(st, call) {
 						Ok({ state: nextSt, result }) =>
@@ -674,13 +665,13 @@ defineAgent = |config| {
 								nextStateJson: (config.serializeState)(nextSt),
 								stateChanged: True,
 								result,
-							}),
-						Err(e) => Err(e),
-					},
+							})
+						Err(e) => Err(e)
+					}
 			},
 		handleMessage: |stateJson, msgStr|
 			match (config.deserializeState)(stateJson) {
-				Err(e) => Err("Failed to deserialize state: ${e}"),
+				Err(e) => Err("Failed to deserialize state: ${e}")
 				Ok(st) =>
 					match (config.handleMessage)(st, msgStr) {
 						Ok({ state: nextSt, response }) =>
@@ -688,9 +679,9 @@ defineAgent = |config| {
 								nextStateJson: (config.serializeState)(nextSt),
 								stateChanged: True,
 								response,
-							}),
-						Err(e) => Err(e),
-					},
+							})
+						Err(e) => Err(e)
+					}
 			},
 	}
 	{ agents: [erased] }
@@ -699,13 +690,13 @@ defineAgent = |config| {
 findHandler : List(Handler(state)), Str -> Result(Handler(state), Str)
 findHandler = |handlers, targetName| {
 	match handlers {
-		[] => Err("Method '${targetName}' not found"),
+		[] => Err("Method '${targetName}' not found")
 		[first, .. as rest] =>
 			if first.declaration.name == targetName {
 				Ok(first)
 			} else {
 				findHandler(rest, targetName)
-			},
+			}
 	}
 }
 
@@ -729,76 +720,101 @@ logError = |msg| Effect.log(Error, msg)
 workerId : Effect.Effect(Str)
 workerId = Effect.getWorkerId
 
-## Typed Remote Procedure Call
+## Typed Remote Procedure Call with explicit target instance constructor
+rpcInstance : Str, Str, Method(_in, _out), Str -> Effect.Effect(Result(Str, Str))
+rpcInstance = |targetWorker, constructor, m, payload|
+	Effect.rpcInvoke(targetWorker, constructor, m.name, payload)
+
 rpc : Str, Method(_in, _out), Str -> Effect.Effect(Result(Str, Str))
 rpc = |targetWorker, m, payload|
-	Effect.rpcInvoke(targetWorker, m.name, payload)
+	rpcInstance(targetWorker, "{}", m, payload)
+
+rpcScheduleInstance : Str, Str, Method(_in, _out), Str, U64 -> Effect.Effect(Result(Str, Str))
+rpcScheduleInstance = |targetWorker, constructor, m, payload, delayMillis|
+	Effect.rpcSchedule(targetWorker, constructor, m.name, payload, delayMillis)
 
 rpcSchedule : Str, Method(_in, _out), Str, U64 -> Effect.Effect(Result(Str, Str))
 rpcSchedule = |targetWorker, m, payload, delayMillis|
-	Effect.rpcSchedule(targetWorker, m.name, payload, delayMillis)
+	rpcScheduleInstance(targetWorker, "{}", m, payload, delayMillis)
+
+rpcFireAndForgetInstance : Str, Str, Method(_in, _out), Str -> Effect.Effect(Result(Str, Str))
+rpcFireAndForgetInstance = |targetWorker, constructor, m, payload|
+	Effect.rpcFireAndForget(targetWorker, constructor, m.name, payload)
 
 rpcFireAndForget : Str, Method(_in, _out), Str -> Effect.Effect(Result(Str, Str))
 rpcFireAndForget = |targetWorker, m, payload|
-	Effect.rpcFireAndForget(targetWorker, m.name, payload)
+	rpcFireAndForgetInstance(targetWorker, "{}", m, payload)
 
-## Binary Remote Procedure Call (Direct bytes over WasmRpc)
+## Binary Remote Procedure Call with explicit constructor
+rpcBytesInstance : Str, Str, Method(_in, _out), List(U8) -> Effect.Effect(Result(List(U8), Str))
+rpcBytesInstance = |targetWorker, constructor, m, payload|
+	Effect.rpcInvokeBytes(targetWorker, constructor, m.name, payload)
+
 rpcBytes : Str, Method(_in, _out), List(U8) -> Effect.Effect(Result(List(U8), Str))
 rpcBytes = |targetWorker, m, payload|
-	Effect.rpcInvokeBytes(targetWorker, m.name, payload)
+	rpcBytesInstance(targetWorker, "{}", m, payload)
+
+rpcScheduleBytesInstance : Str, Str, Method(_in, _out), List(U8), U64 -> Effect.Effect(Result(List(U8), Str))
+rpcScheduleBytesInstance = |targetWorker, constructor, m, payload, delayMillis|
+	Effect.rpcScheduleBytes(targetWorker, constructor, m.name, payload, delayMillis)
 
 rpcScheduleBytes : Str, Method(_in, _out), List(U8), U64 -> Effect.Effect(Result(List(U8), Str))
 rpcScheduleBytes = |targetWorker, m, payload, delayMillis|
-	Effect.rpcScheduleBytes(targetWorker, m.name, payload, delayMillis)
+	rpcScheduleBytesInstance(targetWorker, "{}", m, payload, delayMillis)
+
+rpcFireAndForgetBytesInstance : Str, Str, Method(_in, _out), List(U8) -> Effect.Effect(Result({}, Str))
+rpcFireAndForgetBytesInstance = |targetWorker, constructor, m, payload|
+	Effect.rpcFireAndForgetBytes(targetWorker, constructor, m.name, payload)
 
 rpcFireAndForgetBytes : Str, Method(_in, _out), List(U8) -> Effect.Effect(Result({}, Str))
 rpcFireAndForgetBytes = |targetWorker, m, payload|
-	Effect.rpcFireAndForgetBytes(targetWorker, m.name, payload)
+	rpcFireAndForgetBytesInstance(targetWorker, "{}", m, payload)
 
-## Typed Remote Procedure Call with input and output codecs
-rpcTyped :
-	Str,
-	Method(inp, out),
-	inp,
-	(inp -> Str),
-	(Str -> Result(out, Str))
-	-> Effect.Effect(Result(out, Str))
-rpcTyped = |targetWorker, m, inputVal, encodeInput, decodeOutput| {
+## Typed Remote Procedure Call with input and output codecs and explicit constructor
+rpcTypedInstance :
+	Str, Str, Method(inp, out), inp, (inp -> Str), (Str -> Result(out, Str)) -> Effect.Effect(Result(out, Str))
+rpcTypedInstance = |targetWorker, constructor, m, inputVal, encodeInput, decodeOutput| {
 	payload = encodeInput(inputVal)
 	Effect.map(
-		Effect.rpcInvoke(targetWorker, m.name, payload),
+		Effect.rpcInvoke(targetWorker, constructor, m.name, payload),
 		|res|
 			match res {
-				Ok(reply) => decodeOutput(reply),
-				Err(err) => Err(err),
+				Ok(reply) => decodeOutput(reply)
+				Err(err) => Err(err)
 			},
 	)
 }
 
-## Scheduled Typed RPC with input codec
-rpcScheduleTyped :
-	Str,
-	Method(inp, _out),
-	inp,
-	(inp -> Str),
-	U64
-	-> Effect.Effect(Result(Str, Str))
-rpcScheduleTyped = |targetWorker, m, inputVal, encodeInput, delayMillis| {
+rpcTyped :
+	Str, Method(inp, out), inp, (inp -> Str), (Str -> Result(out, Str)) -> Effect.Effect(Result(out, Str))
+rpcTyped = |targetWorker, m, inputVal, encodeInput, decodeOutput|
+	rpcTypedInstance(targetWorker, "{}", m, inputVal, encodeInput, decodeOutput)
+
+## Scheduled Typed RPC with input codec and explicit constructor
+rpcScheduleTypedInstance :
+	Str, Str, Method(inp, _out), inp, (inp -> Str), U64 -> Effect.Effect(Result(Str, Str))
+rpcScheduleTypedInstance = |targetWorker, constructor, m, inputVal, encodeInput, delayMillis| {
 	payload = encodeInput(inputVal)
-	Effect.rpcSchedule(targetWorker, m.name, payload, delayMillis)
+	Effect.rpcSchedule(targetWorker, constructor, m.name, payload, delayMillis)
 }
 
-## Fire-and-forget Typed RPC with input codec
-rpcFireAndForgetTyped :
-	Str,
-	Method(inp, _out),
-	inp,
-	(inp -> Str)
-	-> Effect.Effect(Result(Str, Str))
-rpcFireAndForgetTyped = |targetWorker, m, inputVal, encodeInput| {
+rpcScheduleTyped :
+	Str, Method(inp, _out), inp, (inp -> Str), U64 -> Effect.Effect(Result(Str, Str))
+rpcScheduleTyped = |targetWorker, m, inputVal, encodeInput, delayMillis|
+	rpcScheduleTypedInstance(targetWorker, "{}", m, inputVal, encodeInput, delayMillis)
+
+## Fire-and-forget Typed RPC with input codec and explicit constructor
+rpcFireAndForgetTypedInstance :
+	Str, Str, Method(inp, _out), inp, (inp -> Str) -> Effect.Effect(Result(Str, Str))
+rpcFireAndForgetTypedInstance = |targetWorker, constructor, m, inputVal, encodeInput| {
 	payload = encodeInput(inputVal)
-	Effect.rpcFireAndForget(targetWorker, m.name, payload)
+	Effect.rpcFireAndForget(targetWorker, constructor, m.name, payload)
 }
+
+rpcFireAndForgetTyped :
+	Str, Method(inp, _out), inp, (inp -> Str) -> Effect.Effect(Result(Str, Str))
+rpcFireAndForgetTyped = |targetWorker, m, inputVal, encodeInput|
+	rpcFireAndForgetTypedInstance(targetWorker, "{}", m, inputVal, encodeInput)
 
 ## Set Golem Persistence Mode
 setPersistence : PersistenceMode -> Effect.Effect({})
@@ -1023,4 +1039,3 @@ httpStreamReadChunk = |handle, maxBytes|
 httpStreamClose : U32 -> Effect.Effect(Result({}, Str))
 httpStreamClose = |handle|
 	Effect.httpStreamClose(handle)
-

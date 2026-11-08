@@ -151,6 +151,24 @@ For AI agent tool integrations:
   handleToolStateless : ToolCall -> Result(ToolResult, Str)
   ```
 
+### 5. Metadata-Driven Dynamic HTTP Mounts (`withHttpMount`)
+
+Any agent can declare dynamic HTTP mount routes in its metadata:
+```roc
+import pf.Golem exposing [withHttpMount]
+
+agent : Agent(State)
+agent =
+    define(...)
+        |> withHttpMount({
+            pathPrefix: "/canary/{id}",
+            corsOrigins: ["*"],
+            webhookSuffix: "webhooks",
+        })
+        |> build
+```
+The host parses `path_prefix` into literal segments and `{var}` path variables (e.g. `/api/{tenant_id}/orders/{order_id}`), configures CORS allowed patterns, and sets the webhook endpoint suffix, eliminating all example-specific host routing logic.
+
 ---
 
 ## Zero-Bottleneck Serialization Bypass Protocol
@@ -163,24 +181,38 @@ For AI agent tool integrations:
 
 ## Typed Cross-Agent RPC & Codec Combinators
 
-Use phantom-typed `Method(in, out)` handles with `rpc`, `rpcSchedule`, and `rpcFireAndForget`, or with typed codecs `rpcTyped`, `rpcScheduleTyped`, and `rpcFireAndForgetTyped`:
+Use phantom-typed `Method(in, out)` handles with `rpc`, `rpcSchedule`, and `rpcFireAndForget`, or with typed codecs `rpcTyped`, `rpcScheduleTyped`, and `rpcFireAndForgetTyped`.
+
+To address a specific worker instance initialized with custom constructor parameters, use the `*Instance` variants (`rpcInstance`, `rpcScheduleInstance`, `rpcFireAndForgetInstance`, `rpcTypedInstance`, `rpcBytesInstance`, etc.):
 
 ```roc
 import pf.Golem exposing [
     rpc,
+    rpcInstance,
     rpcSchedule,
+    rpcScheduleInstance,
     rpcFireAndForget,
+    rpcFireAndForgetInstance,
     rpcTyped,
+    rpcTypedInstance,
     rpcScheduleTyped,
+    rpcScheduleTypedInstance,
     rpcFireAndForgetTyped,
+    rpcFireAndForgetTypedInstance,
+    rpcBytes,
+    rpcBytesInstance,
 ]
 
-# Basic RPC with string payloads
+# Basic RPC with default constructor "{}"
 res = rpc("other-worker-id", OtherAgent.someMethod, "payload")
 
-# Typed RPC with custom encoder and decoder
-resTyped = rpcTyped(
-    "other-worker-id",
+# Target an instance initialized with specific constructor arguments
+resInstance = rpcInstance("canary-release", "{\"service\":\"payments\"}", OtherAgent.someMethod, "payload")
+
+# Typed RPC with constructor and custom codecs
+resTyped = rpcTypedInstance(
+    "canary-release",
+    "{\"service\":\"payments\"}",
     RollbackCoordinator.emergencyRollback,
     { reason: "latency spike" },
     encodeRollbackInput,
@@ -188,10 +220,10 @@ resTyped = rpcTyped(
 )
 
 # Scheduled invocation with delay in milliseconds
-_ = rpcSchedule("other-worker-id", OtherAgent.someMethod, "payload", 5000)
+_ = rpcScheduleInstance("worker-id", "{\"service\":\"payments\"}", OtherAgent.someMethod, "payload", 5000)
 
 # Fire-and-forget
-_ = rpcFireAndForget("other-worker-id", OtherAgent.someMethod, "payload")
+_ = rpcFireAndForgetInstance("worker-id", "{\"service\":\"payments\"}", OtherAgent.someMethod, "payload")
 ```
 
 ---

@@ -914,27 +914,7 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
         });
     }
 
-    let http_mount = if name == "canary-release"
-        || val.get("httpMount").is_some()
-        || val.get("http_mount").is_some()
-    {
-        Some(HttpMountDetails {
-            path_prefix: vec![
-                PathSegment::Literal("canary".to_string()),
-                PathSegment::PathVariable(PathVariable {
-                    variable_name: "id".to_string(),
-                }),
-            ],
-            auth_details: None,
-            phantom_agent: false,
-            cors_options: CorsOptions {
-                allowed_patterns: vec!["*".to_string()],
-            },
-            webhook_suffix: vec![PathSegment::Literal("webhooks".to_string())],
-        })
-    } else {
-        None
-    };
+    let http_mount = parse_http_mount(val);
 
     AgentType {
         type_name: name,
@@ -1026,9 +1006,93 @@ pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
     }
 }
 
+pub fn parse_http_mount(val: &serde_json::Value) -> Option<HttpMountDetails> {
+    let mount_obj = val
+        .get("http_mount")
+        .or_else(|| val.get("httpMount"))
+        .and_then(|v| v.as_object())?;
+
+    let prefix_str = mount_obj
+        .get("path_prefix")
+        .or_else(|| mount_obj.get("pathPrefix"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let path_prefix: Vec<PathSegment> = prefix_str
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            if s.starts_with('{') && s.ends_with('}') && s.len() >= 2 {
+                PathSegment::PathVariable(PathVariable {
+                    variable_name: s[1..s.len() - 1].to_string(),
+                })
+            } else {
+                PathSegment::Literal(s.to_string())
+            }
+        })
+        .collect();
+
+    let cors_patterns: Vec<String> = if let Some(arr) = mount_obj
+        .get("cors_origins")
+        .or_else(|| mount_obj.get("corsOrigins"))
+        .or_else(|| mount_obj.get("cors_options"))
+        .and_then(|v| v.as_array())
+    {
+        let list: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        if list.is_empty() {
+            vec!["*".to_string()]
+        } else {
+            list
+        }
+    } else {
+        vec!["*".to_string()]
+    };
+
+    let webhook_suffix: Vec<PathSegment> = if let Some(suffix_str) = mount_obj
+        .get("webhook_suffix")
+        .or_else(|| mount_obj.get("webhookSuffix"))
+        .and_then(|s| s.as_str())
+    {
+        let segments: Vec<PathSegment> = suffix_str
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                if s.starts_with('{') && s.ends_with('}') && s.len() >= 2 {
+                    PathSegment::PathVariable(PathVariable {
+                        variable_name: s[1..s.len() - 1].to_string(),
+                    })
+                } else {
+                    PathSegment::Literal(s.to_string())
+                }
+            })
+            .collect();
+        if segments.is_empty() {
+            vec![PathSegment::Literal("webhooks".to_string())]
+        } else {
+            segments
+        }
+    } else {
+        vec![PathSegment::Literal("webhooks".to_string())]
+    };
+
+    Some(HttpMountDetails {
+        path_prefix,
+        auth_details: None,
+        phantom_agent: false,
+        cors_options: CorsOptions {
+            allowed_patterns: cors_patterns,
+        },
+        webhook_suffix,
+    })
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcInvoke(
     target: *const RocStr,
+    constructor: *const RocStr,
     function_name: *const RocStr,
     payload: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
@@ -1037,6 +1101,11 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
         ""
     } else {
         (*target).as_str()
+    };
+    let c = if constructor.is_null() {
+        "{}"
+    } else {
+        (*constructor).as_str()
     };
     let f = if function_name.is_null() {
         ""
@@ -1051,7 +1120,7 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let constructor_val = wrap_string_data_value("{}".to_string());
+        let constructor_val = wrap_string_data_value(c.to_string());
         let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
         let input_val = wrap_string_data_value(p.to_string());
         match rpc_client.invoke_and_await(f, &input_val) {
@@ -1069,6 +1138,7 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
         let resp = serde_json::json!({
             "status": "rpc_invoked",
             "target": t,
+            "constructor": c,
             "method": f,
             "payload": p,
         })
@@ -1092,6 +1162,7 @@ pub fn compute_scheduled_time(now_seconds: u64, now_nanos: u32, delay_millis: u6
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcSchedule(
     target: *const RocStr,
+    constructor: *const RocStr,
     function_name: *const RocStr,
     payload: *const RocStr,
     delay_millis: u64,
@@ -1101,6 +1172,11 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
         ""
     } else {
         (*target).as_str()
+    };
+    let c = if constructor.is_null() {
+        "{}"
+    } else {
+        (*constructor).as_str()
     };
     let f = if function_name.is_null() {
         ""
@@ -1132,7 +1208,7 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
             seconds: sched_secs,
             nanoseconds: sched_nanos,
         };
-        let constructor_val = wrap_string_data_value("{}".to_string());
+        let constructor_val = wrap_string_data_value(c.to_string());
         let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
         let input_val = wrap_string_data_value(p.to_string());
         rpc_client.schedule_invocation(target_datetime, f, &input_val);
@@ -1140,6 +1216,7 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
         let resp = serde_json::json!({
             "status": "scheduled",
             "target": t,
+            "constructor": c,
             "method": f,
             "payload": p,
             "delayMillis": delay_millis,
@@ -1158,6 +1235,7 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
         let resp = serde_json::json!({
             "status": "scheduled",
             "target": t,
+            "constructor": c,
             "method": f,
             "payload": p,
             "delayMillis": delay_millis,
@@ -1171,6 +1249,7 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcFireAndForget(
     target: *const RocStr,
+    constructor: *const RocStr,
     function_name: *const RocStr,
     payload: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
@@ -1179,6 +1258,11 @@ pub unsafe extern "C" fn rocFxRpcFireAndForget(
         ""
     } else {
         (*target).as_str()
+    };
+    let c = if constructor.is_null() {
+        "{}"
+    } else {
+        (*constructor).as_str()
     };
     let f = if function_name.is_null() {
         ""
@@ -1193,7 +1277,7 @@ pub unsafe extern "C" fn rocFxRpcFireAndForget(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let constructor_val = wrap_string_data_value("{}".to_string());
+        let constructor_val = wrap_string_data_value(c.to_string());
         let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
         let input_val = wrap_string_data_value(p.to_string());
         match rpc_client.invoke(f, &input_val) {
@@ -1210,6 +1294,7 @@ pub unsafe extern "C" fn rocFxRpcFireAndForget(
         let resp = serde_json::json!({
             "status": "rpc_fired",
             "target": t,
+            "constructor": c,
             "method": f,
             "payload": p,
         })
@@ -1221,6 +1306,7 @@ pub unsafe extern "C" fn rocFxRpcFireAndForget(
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcInvokeBytes(
     target: *const RocStr,
+    constructor: *const RocStr,
     function_name: *const RocStr,
     payload: *const RocList<u8>,
     out: *mut RocResult<RocList<u8>, RocStr>,
@@ -1229,6 +1315,11 @@ pub unsafe extern "C" fn rocFxRpcInvokeBytes(
         ""
     } else {
         (*target).as_str()
+    };
+    let c = if constructor.is_null() {
+        "{}"
+    } else {
+        (*constructor).as_str()
     };
     let f = if function_name.is_null() {
         ""
@@ -1243,7 +1334,7 @@ pub unsafe extern "C" fn rocFxRpcInvokeBytes(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let constructor_val = wrap_bytes_data_value(Vec::new());
+        let constructor_val = wrap_string_data_value(c.to_string());
         let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
         let input_val = wrap_bytes_data_value(p_slice.to_vec());
         match rpc_client.invoke_and_await(f, &input_val) {
@@ -1258,7 +1349,7 @@ pub unsafe extern "C" fn rocFxRpcInvokeBytes(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (t, f);
+        let _ = (t, c, f);
         ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
     }
 }
@@ -1266,6 +1357,7 @@ pub unsafe extern "C" fn rocFxRpcInvokeBytes(
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcScheduleBytes(
     target: *const RocStr,
+    constructor: *const RocStr,
     function_name: *const RocStr,
     payload: *const RocList<u8>,
     delay_millis: u64,
@@ -1275,6 +1367,11 @@ pub unsafe extern "C" fn rocFxRpcScheduleBytes(
         ""
     } else {
         (*target).as_str()
+    };
+    let c = if constructor.is_null() {
+        "{}"
+    } else {
+        (*constructor).as_str()
     };
     let f = if function_name.is_null() {
         ""
@@ -1306,7 +1403,7 @@ pub unsafe extern "C" fn rocFxRpcScheduleBytes(
             seconds: sched_secs,
             nanoseconds: sched_nanos,
         };
-        let constructor_val = wrap_bytes_data_value(Vec::new());
+        let constructor_val = wrap_string_data_value(c.to_string());
         let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
         let input_val = wrap_bytes_data_value(p_slice.to_vec());
         rpc_client.schedule_invocation(target_datetime, f, &input_val);
@@ -1314,7 +1411,7 @@ pub unsafe extern "C" fn rocFxRpcScheduleBytes(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = delay_millis;
+        let _ = (c, delay_millis);
         ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
     }
 }
@@ -1322,6 +1419,7 @@ pub unsafe extern "C" fn rocFxRpcScheduleBytes(
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcFireAndForgetBytes(
     target: *const RocStr,
+    constructor: *const RocStr,
     function_name: *const RocStr,
     payload: *const RocList<u8>,
     out: *mut RocResult<(), RocStr>,
@@ -1330,6 +1428,11 @@ pub unsafe extern "C" fn rocFxRpcFireAndForgetBytes(
         ""
     } else {
         (*target).as_str()
+    };
+    let c = if constructor.is_null() {
+        "{}"
+    } else {
+        (*constructor).as_str()
     };
     let f = if function_name.is_null() {
         ""
@@ -1344,7 +1447,7 @@ pub unsafe extern "C" fn rocFxRpcFireAndForgetBytes(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let constructor_val = wrap_bytes_data_value(Vec::new());
+        let constructor_val = wrap_string_data_value(c.to_string());
         let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
         let input_val = wrap_bytes_data_value(p_slice.to_vec());
         match rpc_client.invoke(f, &input_val) {
@@ -1358,7 +1461,7 @@ pub unsafe extern "C" fn rocFxRpcFireAndForgetBytes(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (t, f, p_slice);
+        let _ = (t, c, f, p_slice);
         ptr::write(out, RocResult::ok(()));
     }
 }
@@ -4064,13 +4167,20 @@ mod tests {
     #[test]
     fn test_rpc_and_timer_effects() {
         let target = RocStr::from_str("worker-auth-01");
+        let default_constructor = RocStr::from_str("{}");
         let method = RocStr::from_str("validate_token");
         let payload = RocStr::from_str("{\"token\":\"xyz\"}");
 
         // RPC Invoke
         let mut invoke_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let inv_res = unsafe {
-            rocFxRpcInvoke(&target, &method, &payload, invoke_out.as_mut_ptr());
+            rocFxRpcInvoke(
+                &target,
+                &default_constructor,
+                &method,
+                &payload,
+                invoke_out.as_mut_ptr(),
+            );
             invoke_out
                 .assume_init()
                 .into_result()
@@ -4081,7 +4191,14 @@ mod tests {
         // RPC Schedule
         let mut sched_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let sched_res = unsafe {
-            rocFxRpcSchedule(&target, &method, &payload, 5000, sched_out.as_mut_ptr());
+            rocFxRpcSchedule(
+                &target,
+                &default_constructor,
+                &method,
+                &payload,
+                5000,
+                sched_out.as_mut_ptr(),
+            );
             sched_out
                 .assume_init()
                 .into_result()
@@ -4093,7 +4210,13 @@ mod tests {
         // RPC Fire and Forget
         let mut fnf_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let fnf_res = unsafe {
-            rocFxRpcFireAndForget(&target, &method, &payload, fnf_out.as_mut_ptr());
+            rocFxRpcFireAndForget(
+                &target,
+                &default_constructor,
+                &method,
+                &payload,
+                fnf_out.as_mut_ptr(),
+            );
             fnf_out
                 .assume_init()
                 .into_result()
@@ -4222,10 +4345,17 @@ mod tests {
         let raw_bytes = vec![1u8, 2, 3, 4, 5];
         let roc_raw_bytes = RocList::from_slice(&raw_bytes);
         let target = RocStr::from_str("worker-peer-99");
+        let default_constructor = RocStr::from_str("{}");
         let method = RocStr::from_str("process_bytes");
         let mut bin_rpc_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         let returned_bytes = unsafe {
-            rocFxRpcInvokeBytes(&target, &method, &roc_raw_bytes, bin_rpc_out.as_mut_ptr());
+            rocFxRpcInvokeBytes(
+                &target,
+                &default_constructor,
+                &method,
+                &roc_raw_bytes,
+                bin_rpc_out.as_mut_ptr(),
+            );
             bin_rpc_out
                 .assume_init()
                 .into_result()
@@ -4475,11 +4605,19 @@ mod tests {
     #[test]
     fn test_roc_fx_rpc_schedule_mock_valid() {
         let target = RocStr::from_str("worker-auth-01");
+        let default_constructor = RocStr::from_str("{}");
         let method = RocStr::from_str("validate_token");
         let payload = RocStr::from_str("{\"token\":\"xyz\"}");
         let mut sched_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let sched_res = unsafe {
-            rocFxRpcSchedule(&target, &method, &payload, 5000, sched_out.as_mut_ptr());
+            rocFxRpcSchedule(
+                &target,
+                &default_constructor,
+                &method,
+                &payload,
+                5000,
+                sched_out.as_mut_ptr(),
+            );
             sched_out
                 .assume_init()
                 .into_result()
@@ -4512,6 +4650,7 @@ mod tests {
     #[test]
     fn test_roc_fx_rpc_schedule_mock_validation_error() {
         let empty = RocStr::from_str("");
+        let default_constructor = RocStr::from_str("{}");
         let target = RocStr::from_str("worker-auth-01");
         let method = RocStr::from_str("validate_token");
         let payload = RocStr::from_str("{}");
@@ -4519,7 +4658,14 @@ mod tests {
         // Empty target error
         let mut out1 = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         unsafe {
-            rocFxRpcSchedule(&empty, &method, &payload, 1000, out1.as_mut_ptr());
+            rocFxRpcSchedule(
+                &empty,
+                &default_constructor,
+                &method,
+                &payload,
+                1000,
+                out1.as_mut_ptr(),
+            );
             let res = out1.assume_init().into_result();
             assert!(res.is_err(), "empty target must fail validation");
         }
@@ -4527,7 +4673,14 @@ mod tests {
         // Empty method error
         let mut out2 = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         unsafe {
-            rocFxRpcSchedule(&target, &empty, &payload, 1000, out2.as_mut_ptr());
+            rocFxRpcSchedule(
+                &target,
+                &default_constructor,
+                &empty,
+                &payload,
+                1000,
+                out2.as_mut_ptr(),
+            );
             let res = out2.assume_init().into_result();
             assert!(res.is_err(), "empty function_name must fail validation");
         }
@@ -4536,6 +4689,7 @@ mod tests {
     #[test]
     fn test_roc_fx_rpc_schedule_bytes_mock_valid() {
         let target = RocStr::from_str("worker-auth-01");
+        let default_constructor = RocStr::from_str("{}");
         let method = RocStr::from_str("validate_token");
         let empty = RocStr::from_str("");
         let raw_bytes = vec![1u8, 2, 3, 4];
@@ -4546,6 +4700,7 @@ mod tests {
         let res_bytes = unsafe {
             rocFxRpcScheduleBytes(
                 &target,
+                &default_constructor,
                 &method,
                 &payload_list,
                 2000,
@@ -4561,7 +4716,14 @@ mod tests {
         // Empty target error
         let mut out_err1 = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         unsafe {
-            rocFxRpcScheduleBytes(&empty, &method, &payload_list, 2000, out_err1.as_mut_ptr());
+            rocFxRpcScheduleBytes(
+                &empty,
+                &default_constructor,
+                &method,
+                &payload_list,
+                2000,
+                out_err1.as_mut_ptr(),
+            );
             assert!(
                 out_err1.assume_init().into_result().is_err(),
                 "empty target must fail"
@@ -4571,7 +4733,14 @@ mod tests {
         // Empty method error
         let mut out_err2 = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         unsafe {
-            rocFxRpcScheduleBytes(&target, &empty, &payload_list, 2000, out_err2.as_mut_ptr());
+            rocFxRpcScheduleBytes(
+                &target,
+                &default_constructor,
+                &empty,
+                &payload_list,
+                2000,
+                out_err2.as_mut_ptr(),
+            );
             assert!(
                 out_err2.assume_init().into_result().is_err(),
                 "empty method must fail"
@@ -4981,5 +5150,165 @@ mod tests {
         assert!(res_kebab.is_ok(), "analyze-logs should succeed");
         let out_kebab = extract_data_value_string(&res_kebab.unwrap());
         assert!(out_kebab.contains("\"faults\": 1") || out_kebab.contains("\"faults\":1"));
+    }
+
+    fn assert_literal(seg: &PathSegment, expected: &str) {
+        match seg {
+            PathSegment::Literal(s) => assert_eq!(s, expected),
+            other => panic!("expected Literal(\"{}\"), got {:?}", expected, other),
+        }
+    }
+
+    fn assert_var(seg: &PathSegment, expected_var: &str) {
+        match seg {
+            PathSegment::PathVariable(pv) => assert_eq!(pv.variable_name, expected_var),
+            other => panic!(
+                "expected PathVariable(\"{}\"), got {:?}",
+                expected_var, other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_dynamic_http_mount_parsing() {
+        let val = serde_json::json!({
+            "name": "canary-release",
+            "http_mount": {
+                "path_prefix": "/canary/{id}",
+                "cors_origins": ["*"],
+                "webhook_suffix": "webhooks"
+            }
+        });
+        let mount = parse_http_mount(&val).expect("http_mount should be parsed");
+        assert_eq!(mount.path_prefix.len(), 2);
+        assert_literal(&mount.path_prefix[0], "canary");
+        assert_var(&mount.path_prefix[1], "id");
+        assert_eq!(mount.cors_options.allowed_patterns, vec!["*".to_string()]);
+        assert_eq!(mount.webhook_suffix.len(), 1);
+        assert_literal(&mount.webhook_suffix[0], "webhooks");
+    }
+
+    #[test]
+    fn test_agent_without_http_mount() {
+        let val = serde_json::json!({
+            "name": "canary-release",
+            "description": "Agent without http_mount field"
+        });
+        let agent = parse_single_agent_type(&val);
+        assert!(agent.http_mount.is_none());
+        assert!(parse_http_mount(&val).is_none());
+    }
+
+    #[test]
+    fn test_custom_path_prefix_parsing() {
+        let val = serde_json::json!({
+            "http_mount": {
+                "path_prefix": "/api/{tenant_id}/orders/{order_id}",
+                "cors_origins": ["https://app.example.com"],
+                "webhook_suffix": "events/hook"
+            }
+        });
+        let mount = parse_http_mount(&val).expect("custom http_mount should be parsed");
+        assert_eq!(mount.path_prefix.len(), 4);
+        assert_literal(&mount.path_prefix[0], "api");
+        assert_var(&mount.path_prefix[1], "tenant_id");
+        assert_literal(&mount.path_prefix[2], "orders");
+        assert_var(&mount.path_prefix[3], "order_id");
+        assert_eq!(
+            mount.cors_options.allowed_patterns,
+            vec!["https://app.example.com".to_string()]
+        );
+        assert_eq!(mount.webhook_suffix.len(), 2);
+        assert_literal(&mount.webhook_suffix[0], "events");
+        assert_literal(&mount.webhook_suffix[1], "hook");
+    }
+
+    #[test]
+    fn test_rpc_invoke_with_constructor() {
+        let target = RocStr::from_str("worker-payment-01");
+        let constructor = RocStr::from_str("{\"service\":\"payments\"}");
+        let method = RocStr::from_str("process_charge");
+        let payload = RocStr::from_str("{\"amount\":100}");
+        let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let res = unsafe {
+            rocFxRpcInvoke(&target, &constructor, &method, &payload, out.as_mut_ptr());
+            out.assume_init().into_result().expect("rpc invoke failed")
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(res.as_str()).expect("valid JSON confirmation");
+        assert_eq!(
+            parsed.get("constructor").and_then(|v| v.as_str()),
+            Some("{\"service\":\"payments\"}")
+        );
+    }
+
+    #[test]
+    fn test_rpc_schedule_with_constructor() {
+        let target = RocStr::from_str("worker-payment-01");
+        let constructor = RocStr::from_str("{\"service\":\"payments\"}");
+        let method = RocStr::from_str("process_charge");
+        let payload = RocStr::from_str("{\"amount\":100}");
+        let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let res = unsafe {
+            rocFxRpcSchedule(
+                &target,
+                &constructor,
+                &method,
+                &payload,
+                5000,
+                out.as_mut_ptr(),
+            );
+            out.assume_init()
+                .into_result()
+                .expect("rpc schedule failed")
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(res.as_str()).expect("valid JSON confirmation");
+        assert_eq!(
+            parsed.get("constructor").and_then(|v| v.as_str()),
+            Some("{\"service\":\"payments\"}")
+        );
+    }
+
+    #[test]
+    fn test_rpc_fire_and_forget_with_constructor() {
+        let target = RocStr::from_str("worker-payment-01");
+        let constructor = RocStr::from_str("{\"service\":\"payments\"}");
+        let method = RocStr::from_str("process_charge");
+        let payload = RocStr::from_str("{\"amount\":100}");
+        let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let res = unsafe {
+            rocFxRpcFireAndForget(&target, &constructor, &method, &payload, out.as_mut_ptr());
+            out.assume_init()
+                .into_result()
+                .expect("rpc fire and forget failed")
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(res.as_str()).expect("valid JSON confirmation");
+        assert_eq!(
+            parsed.get("constructor").and_then(|v| v.as_str()),
+            Some("{\"service\":\"payments\"}")
+        );
+    }
+
+    #[test]
+    fn test_binary_rpc_invoke_with_constructor() {
+        let target = RocStr::from_str("worker-binary-01");
+        let constructor = RocStr::from_str("{\"service\":\"payments\"}");
+        let method = RocStr::from_str("echo_bytes");
+        let raw_bytes = vec![10u8, 20, 30];
+        let roc_raw_bytes = RocList::from_slice(&raw_bytes);
+        let mut out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        let res = unsafe {
+            rocFxRpcInvokeBytes(
+                &target,
+                &constructor,
+                &method,
+                &roc_raw_bytes,
+                out.as_mut_ptr(),
+            );
+            out.assume_init().into_result().expect("binary rpc failed")
+        };
+        assert_eq!(res.as_slice(), raw_bytes.as_slice());
     }
 }

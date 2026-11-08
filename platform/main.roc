@@ -85,6 +85,7 @@ import Types exposing [
 	ToolCall,
 	MethodDeclaration,
 	AgentMode,
+	HttpMount,
 ]
 import Golem
 import Effect
@@ -169,7 +170,20 @@ format_agent_metadata = |erased| {
 		meta.methods
 			|> List.map(format_method_declaration)
 			|> Str.join_with(",")
-	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"mode\":\"${mode_str}\",\"methods\":[${methods_json}],\"tools\":[${tools_json}]}"
+	http_mount_field =
+		match meta.httpMount {
+			None => ""
+			Some(mount) => {
+				prefix_escaped = escape_json_str(mount.pathPrefix)
+				suffix_escaped = escape_json_str(mount.webhookSuffix)
+				cors_list =
+					mount.corsOrigins
+						|> List.map(|o| "\"${escape_json_str(o)}\"")
+						|> Str.join_with(",")
+				",\"http_mount\":{\"path_prefix\":\"${prefix_escaped}\",\"cors_origins\":[${cors_list}],\"webhook_suffix\":\"${suffix_escaped}\"}"
+			}
+		}
+	"{\"name\":\"${name_escaped}\",\"version\":\"${version_escaped}\",\"description\":\"${desc_escaped}\",\"mode\":\"${mode_str}\",\"methods\":[${methods_json}],\"tools\":[${tools_json}]${http_mount_field}}"
 }
 
 format_method_declaration : MethodDeclaration -> Str

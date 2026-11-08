@@ -14,6 +14,7 @@ import pf.Golem exposing [
 	registerReadOnlyTyped,
 	withTools,
 	withStatelessToolHandler,
+	withHttpMount,
 	method,
 	build,
 ]
@@ -127,6 +128,7 @@ agent =
 			|_| Ok({}),
 			encodeStatus,
 		)
+		|> withHttpMount({ pathPrefix: "/canary/{id}", corsOrigins: ["*"], webhookSuffix: "webhooks" })
 		|> build
 
 Config : {

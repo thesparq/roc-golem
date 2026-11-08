@@ -11,6 +11,7 @@ module [
 	LogLevel,
 	SecretHandle,
 	SecretHeader,
+	HttpMount,
 ]
 
 ## Compatibility alias for Try in modern Roc
@@ -30,6 +31,12 @@ AgentMode : [
 	Durable,
 	Ephemeral,
 ]
+
+HttpMount : {
+	pathPrefix : Str,
+	corsOrigins : List(Str),
+	webhookSuffix : Str,
+}
 
 MethodDeclaration : {
 	name : Str,
@@ -58,6 +65,7 @@ Metadata : {
 	tools : List(ToolDefinition),
 	methods : List(MethodDeclaration),
 	mode : AgentMode,
+	httpMount : [None, Some(HttpMount)],
 }
 
 ToolCall : {

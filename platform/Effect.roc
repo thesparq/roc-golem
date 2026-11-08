@@ -3,9 +3,9 @@ import Types exposing [LogLevel, PersistenceMode, Result]
 Effect(a) := [Effect({} => a)].{
 	rocFxLog! : U8, Str => {}
 	rocFxGetWorkerId! : {} => Str
-	rocFxRpcInvoke! : Str, Str, Str => Result(Str, Str)
-	rocFxRpcSchedule! : Str, Str, Str, U64 => Result(Str, Str)
-	rocFxRpcFireAndForget! : Str, Str, Str => Result(Str, Str)
+	rocFxRpcInvoke! : Str, Str, Str, Str => Result(Str, Str)
+	rocFxRpcSchedule! : Str, Str, Str, Str, U64 => Result(Str, Str)
+	rocFxRpcFireAndForget! : Str, Str, Str, Str => Result(Str, Str)
 	rocFxSetPersistence! : U8 => {}
 	rocFxHttpRequest! : Str => Result(Str, Str)
 	rocFxWsConnect! : Str => Result(U32, Str)
@@ -48,19 +48,15 @@ Effect(a) := [Effect({} => a)].{
 	rocFxDbExecuteParams! : Str, Str, Str => Result(U64, Str)
 	rocFxDbQuery! : Str, Str => Result(Str, Str)
 	rocFxDbQueryParams! : Str, Str, Str => Result(Str, Str)
-	rocFxRpcInvokeBytes! : Str, Str, List(U8) => Result(List(U8), Str)
-	rocFxRpcScheduleBytes! : Str, Str, List(U8), U64 => Result(List(U8), Str)
-	rocFxRpcFireAndForgetBytes! : Str, Str, List(U8) => Result({}, Str)
+	rocFxRpcInvokeBytes! : Str, Str, Str, List(U8) => Result(List(U8), Str)
+	rocFxRpcScheduleBytes! : Str, Str, Str, List(U8), U64 => Result(List(U8), Str)
+	rocFxRpcFireAndForgetBytes! : Str, Str, Str, List(U8) => Result({}, Str)
 	rocFxHttpStreamOpen! : Str, List(U8) => Result(U32, Str)
 	rocFxHttpStreamRead! : U32, U64 => Result(List(U8), Str)
 	rocFxHttpStreamClose! : U32 => Result({}, Str)
 
 	run! : Effect(a) => a
 	run! = |Effect(thunk)| thunk({})
-
-
-
-
 
 	map : Effect(a), (a -> b) -> Effect(b)
 	map = |Effect(thunk), fn|
@@ -87,29 +83,29 @@ Effect(a) := [Effect({} => a)].{
 	getWorkerId =
 		Effect(|_| Effect.rocFxGetWorkerId!({}))
 
-	rpcInvoke : Str, Str, Str -> Effect(Result(Str, Str))
-	rpcInvoke = |targetWorker, fnName, payload|
-		Effect(|_| Effect.rocFxRpcInvoke!(targetWorker, fnName, payload))
+	rpcInvoke : Str, Str, Str, Str -> Effect(Result(Str, Str))
+	rpcInvoke = |targetWorker, constructor, fnName, payload|
+		Effect(|_| Effect.rocFxRpcInvoke!(targetWorker, constructor, fnName, payload))
 
-	rpcSchedule : Str, Str, Str, U64 -> Effect(Result(Str, Str))
-	rpcSchedule = |targetWorker, fnName, payload, delayMillis|
-		Effect(|_| Effect.rocFxRpcSchedule!(targetWorker, fnName, payload, delayMillis))
+	rpcSchedule : Str, Str, Str, Str, U64 -> Effect(Result(Str, Str))
+	rpcSchedule = |targetWorker, constructor, fnName, payload, delayMillis|
+		Effect(|_| Effect.rocFxRpcSchedule!(targetWorker, constructor, fnName, payload, delayMillis))
 
-	rpcFireAndForget : Str, Str, Str -> Effect(Result(Str, Str))
-	rpcFireAndForget = |targetWorker, fnName, payload|
-		Effect(|_| Effect.rocFxRpcFireAndForget!(targetWorker, fnName, payload))
+	rpcFireAndForget : Str, Str, Str, Str -> Effect(Result(Str, Str))
+	rpcFireAndForget = |targetWorker, constructor, fnName, payload|
+		Effect(|_| Effect.rocFxRpcFireAndForget!(targetWorker, constructor, fnName, payload))
 
-	rpcInvokeBytes : Str, Str, List(U8) -> Effect(Result(List(U8), Str))
-	rpcInvokeBytes = |targetWorker, fnName, payload|
-		Effect(|_| Effect.rocFxRpcInvokeBytes!(targetWorker, fnName, payload))
+	rpcInvokeBytes : Str, Str, Str, List(U8) -> Effect(Result(List(U8), Str))
+	rpcInvokeBytes = |targetWorker, constructor, fnName, payload|
+		Effect(|_| Effect.rocFxRpcInvokeBytes!(targetWorker, constructor, fnName, payload))
 
-	rpcScheduleBytes : Str, Str, List(U8), U64 -> Effect(Result(List(U8), Str))
-	rpcScheduleBytes = |targetWorker, fnName, payload, delayMillis|
-		Effect(|_| Effect.rocFxRpcScheduleBytes!(targetWorker, fnName, payload, delayMillis))
+	rpcScheduleBytes : Str, Str, Str, List(U8), U64 -> Effect(Result(List(U8), Str))
+	rpcScheduleBytes = |targetWorker, constructor, fnName, payload, delayMillis|
+		Effect(|_| Effect.rocFxRpcScheduleBytes!(targetWorker, constructor, fnName, payload, delayMillis))
 
-	rpcFireAndForgetBytes : Str, Str, List(U8) -> Effect(Result({}, Str))
-	rpcFireAndForgetBytes = |targetWorker, fnName, payload|
-		Effect(|_| Effect.rocFxRpcFireAndForgetBytes!(targetWorker, fnName, payload))
+	rpcFireAndForgetBytes : Str, Str, Str, List(U8) -> Effect(Result({}, Str))
+	rpcFireAndForgetBytes = |targetWorker, constructor, fnName, payload|
+		Effect(|_| Effect.rocFxRpcFireAndForgetBytes!(targetWorker, constructor, fnName, payload))
 
 	setPersistenceMode : PersistenceMode -> Effect({})
 	setPersistenceMode = |mode|
@@ -190,19 +186,6 @@ Effect(a) := [Effect({} => a)].{
 	createWebhook = |handle|
 		Effect(|_| Effect.rocFxCreateWebhook!(handle))
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 	httpRequestBytes : Str, List(U8) -> Effect(Result(List(U8), Str))
 	httpRequestBytes = |reqJson, bodyBytes|
 		Effect(|_| Effect.rocFxHttpRequestBytes!(reqJson, bodyBytes))
@@ -259,29 +242,6 @@ Effect(a) := [Effect({} => a)].{
 	blobPut = |container, object, val|
 		Effect(|_| Effect.rocFxBlobPut!(container, object, val))
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 	configGet : Str -> Effect(Result(Str, Str))
 	configGet = |key|
 		Effect(|_| Effect.rocFxConfigGet!(key))
@@ -337,20 +297,5 @@ Effect(a) := [Effect({} => a)].{
 	httpStreamClose : U32 -> Effect(Result({}, Str))
 	httpStreamClose = |handle|
 		Effect(|_| Effect.rocFxHttpStreamClose!(handle))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 }

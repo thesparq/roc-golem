@@ -6,9 +6,22 @@ Keep this file short (about 150 lines). It is a status page, not a diary. Move f
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Unit 10 Complete & Verified.** Shared `platform/Json.roc` codec module implemented with `encode`, `decode`, `decode_or`, `escape`. All 4 example agents (`counter`, `ai_tool`, `streaming_agent`, `canary_release`) and `README.md` refactored to use standard JSON codecs. All fragile ad-hoc string extractors removed (`KI-09`). 23 comprehensive roundtrip tests passing in `tests/json_roundtrip.roc`. All 4 layers verified.
+Status: **Unit 11 Complete & Verified.** Platform neutrality implemented: eliminated hard-coded `canary-release` HTTP mount in `host/src/lib.rs` in favor of dynamic metadata-driven parsing (`withHttpMount` / `HttpMountDetails`) (`KI-11`); upgraded RPC across C ABI, platform effects, and host to accept constructor arguments (`rpcInstance` and variants) (`KI-13`, Test #18). All 4 layers verified.
 
 ## Done
+
+- **Unit 11 (Platform Neutrality) Complete & Verified (2026-11-08)**:
+  - Eliminated hard-coded `name == "canary-release"` check in `host/src/lib.rs`.
+  - Implemented dynamic `parse_http_mount` in `host/src/lib.rs` parsing arbitrary path prefixes with path variables (e.g. `/canary/{id}` or `/api/{service}/events`) into `PathSegment::Literal` and `PathSegment::PathVariable`.
+  - Added `HttpMount` type in `platform/Types.roc`, `withHttpMount` builder in `platform/Golem.roc`, and metadata serialization in `platform/main.roc`.
+  - Upgraded RPC across C ABI (`rocFxRpcInvoke`, `rocFxRpcSchedule`, `rocFxRpcFireAndForget`, and bytes variants) to pass explicit `constructor : Str` to target workers.
+  - Added `rpcInstance`, `rpcScheduleInstance`, `rpcFireAndForgetInstance`, typed, and bytes variants in `platform/Golem.roc`, maintaining backward-compatible default-constructor wrappers.
+  - Updated mock runtime and guest bridge to support metadata HTTP mounts and verify constructor transmission in RPC responses.
+  - Added 7 unit tests in `host/src/lib.rs` (53/53 tests passing).
+  - Refactored `ReleaseCoordinator.roc` to declare its HTTP mount via `withHttpMount`.
+  - Updated skills (`.agents/skills/roc-golem.md` and `.gemini/skills/roc-golem.md`).
+  - Verified across all 4 layers (Layer 1 static checks, Layer 2 unit tests, Layer 3 builds with all components validated, Layer 4 `./tooling/test_runtime.sh`).
+  - Resolved `KI-11`, `KI-13`, and verified `docs/feature-checklist.md` test 18.
 
 - **Unit 10 (Shared JSON Helpers and Honest Examples) Complete & Verified (2026-11-08)**:
   - Created `platform/Json.roc` exposing `encode`, `decode`, `decode_or`, `escape` leveraging Roc's built-in `Json` runtime primitives (`Json.to_str` and `Json.parse`).
@@ -124,9 +137,9 @@ Source: code review of 2026-11-07 and build verification.
 | KI-08 | No test compiles Roc: CI never runs `roc check`, `roc build` or `roc test`. The 13 tests run against `guest_bridge.rs`. | Critical | **Resolved** in Unit 03 (full Roc checks, tests, builds, validations in CI) |
 | KI-09 | Examples parse JSON with ad-hoc text search. The README counter has `deserializeState: \|_json\| Ok({ count: 0 })`, which resets state on every load. `ai_tool` does not escape `lastTool`. | High | **Resolved** in Unit 10 (shared `platform/Json.roc` codec module, honest examples, 23/23 roundtrip tests) |
 | KI-10 | On any message-handler error the host retries as a tool call and reports `InvalidMethod` with the first error, hiding the real failure. | Medium | **Resolved** in Unit 09 (capability-based routing, direct tool invocation, immediate handler error surface) |
-| KI-11 | The host hard-codes `name == "canary-release"` to add an HTTP mount at `/canary/{id}`. | Medium | Open (Unit 11) |
+| KI-11 | The host hard-codes `name == "canary-release"` to add an HTTP mount at `/canary/{id}`. | Medium | **Resolved** in Unit 11 (dynamic metadata-driven HTTP mount parsing via `withHttpMount`) |
 | KI-12 | Two CI files named "CI" (`ci.yaml`, `ci.yml`) with different jobs; `wasm-tools` pinned at 1.220.0 and 1.222.0; one job packages as `v0.7.0`; neither CI nor `build.sh` installs or checks the pinned Roc nightly. | Medium | **Resolved** in Unit 03 (consolidated to `ci.yaml`, removed `ci.yml`, pinned `wasm-tools 1.222.0` and Roc nightly) |
-| KI-13 | RPC always constructs the target with an empty constructor (`"{}"`), so agents with constructor arguments cannot be addressed. | Medium | Open (Unit 11) |
+| KI-13 | RPC always constructs the target with an empty constructor (`"{}"`), so agents with constructor arguments cannot be addressed. | Medium | **Resolved** in Unit 11 (addressable agent worker instances via constructor argument in RPC) |
 | KI-14 | Canary example fakes its timer (`timerHandle = 42`) and webhook URL, defines `renderDashboard` but never serves it, and has an unused variable. | Medium | Open (Unit 12) |
 | KI-15 | README is stale: deploy command uses `golem:agent-platform/agent-api.{handle-message}`; hash points to v0.8.0; host comment still says "Golem 1.5.0". | Medium | Open |
 | KI-16 | `golem.yaml` has a top-level `tools:` key that does not appear in the 1.6.0 manifest schema as far as known. | Low | Open |
@@ -136,8 +149,8 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Open questions
 
-- Should HTTP mounts be declared in agent metadata (replacing the `canary-release` special case)? (unit 11)
+- *(None currently open; Unit 11 resolved HTTP mounts in metadata)*
 
 ## Next steps
 
-1. Phase 2 — Unit 11: Platform neutrality.
+1. Phase 2 — Unit 12: Canary example made real.

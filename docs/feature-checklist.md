@@ -55,7 +55,7 @@ Run these against a **local Golem server, version 1.6**, with components built f
 | 15 | Call and wait | the coordinator calls the diagnostics worker with `rpc` | the worker's reply comes back | Pending Unit 09 |
 | 16 | Fire and forget | call another agent with `rpcFireAndForget` | the call is delivered and no reply is awaited | Pending Unit 09 |
 | 17 | Scheduled call | `rpcSchedule` with a 5 second delay | nothing happens at once; the call happens once, about 5 seconds later (KI-04) | **PASSED** (2026-11-08) |
-| 18 | Address one instance | call an agent that has a constructor argument | the right instance answers (KI-13) | Pending Unit 09 |
+| 18 | Address one instance | call an agent that has a constructor argument | the right instance answers (KI-13) | **PASSED** (2026-11-08) |
 
 ---
 

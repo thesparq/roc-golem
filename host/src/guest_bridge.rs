@@ -479,7 +479,12 @@ pub unsafe extern "C" fn main_metadata_for_host(out: *mut RocStr) {
                             }
                         ]
                     }
-                ]
+                ],
+                "http_mount": {
+                    "path_prefix": "/canary/{id}",
+                    "cors_origins": ["*"],
+                    "webhook_suffix": "webhooks"
+                }
             },
             {
                 "name": "diagnostics-worker",
