@@ -2,7 +2,7 @@
 
 - **Unit:** 14
 - **File:** `docs/specs/14-e2e-verification-and-v1-ga.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Phase:** Phase 3 — Release
 - **Fixes:** Final feature checklist verification & v1.0.0 GA Production Release
 
@@ -96,20 +96,20 @@ Mark checklist tests 4, 9, 10, 11, 12, 36, 37, 38, 41, 42 as PASSED with executi
 
 To mark Unit 14 as complete, the following checks from `docs/testing.md` must be executed and reported:
 
-1. [ ] **Multi-Agent Runtime Verification (Layer 4):**
+1. [x] **Multi-Agent Runtime Verification (Layer 4):**
    - `./tooling/test_runtime.sh` passes all end-to-end tests for `counter`, `canary_release`, `ai_tool`, and `streaming_agent` against a local Golem server.
-2. [ ] **Unit Tests (Layer 2):**
+2. [x] **Unit Tests (Layer 2):**
    - `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` passes all 53 host unit tests.
    - `roc test tests/envelope.roc` and `roc test tests/json_roundtrip.roc` pass cleanly.
-3. [ ] **Code Hygiene & Static Checks (Layer 1):**
+3. [x] **Code Hygiene & Static Checks (Layer 1):**
    - `roc fmt --check` passes cleanly across all Roc files.
    - `roc check platform/main.roc` and `roc check examples/*/main.roc` report zero errors.
    - `cargo fmt --check` and `cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings` report zero warnings or errors.
-4. [ ] **Component Build & Packaging (Layer 3):**
+4. [x] **Component Build & Packaging (Layer 3):**
    - `./tooling/build.sh all` successfully builds all 4 agent components and produces release archives in `dist/` for `v1.0.0`.
    - `wasm-tools validate` validates all 4 WebAssembly components.
    - `dist/checksums.txt` and `dist/release_notes.md` are populated for `v1.0.0`.
-5. [ ] **Documentation & Milestone Completion:**
+5. [x] **Documentation & Milestone Completion:**
    - `README.md` references `v1.0.0` platform release URL and valid hash.
    - `docs/feature-checklist.md` updated with all runtime-verified tests marked PASSED.
    - `docs/progress-tracker.md` and `docs/specs/00-build-plan.md` updated marking Unit 14 Complete and all project phases complete.

@@ -90,4 +90,4 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 **14. End-to-end Golem Cloud verification and v1.0.0 GA**
 *What it builds:* Deploys compiled Roc agents to live Golem Cloud worker infrastructure; verifies durable state persistence across worker suspension and restarts; verifies bi-directional WebSocket streaming on live Golem infrastructure; tags `v1.0.0` Production Release.
 *Dependencies:* 13.
-*Status:* Spec written.
+*Status:* Complete.

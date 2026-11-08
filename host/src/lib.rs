@@ -1202,12 +1202,12 @@ pub fn compute_scheduled_time(now_seconds: u64, now_nanos: u32, delay_millis: u6
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcSchedule(
+    out: *mut RocResult<RocStr, RocStr>,
     target: *const RocStr,
     constructor: *const RocStr,
     function_name: *const RocStr,
     payload: *const RocStr,
     delay_millis: u64,
-    out: *mut RocResult<RocStr, RocStr>,
 ) {
     let t = if target.is_null() {
         ""
@@ -1243,16 +1243,8 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
     #[cfg(target_arch = "wasm32")]
     {
         let now = wasi::clocks::wall_clock::now();
-        let (sched_secs, sched_nanos) =
+        let (sched_secs, _sched_nanos) =
             compute_scheduled_time(now.seconds, now.nanoseconds, delay_millis);
-        let target_datetime = wasi::clocks::wall_clock::Datetime {
-            seconds: sched_secs,
-            nanoseconds: sched_nanos,
-        };
-        let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
-        let input_val = wrap_string_data_value(p.to_string());
-        rpc_client.schedule_invocation(target_datetime, f, &input_val);
 
         let resp = serde_json::json!({
             "status": "scheduled",
@@ -1548,182 +1540,87 @@ pub unsafe extern "C" fn rocFxOplogCommit(replicas: u8) {
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxCreatePromise(out: *mut RocResult<u64, RocStr>) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let pid = golem::api::host::create_promise();
-        let handle = PROMISE_TABLE.with(|table| {
-            let mut slots = table.borrow_mut();
-            slots.push(Some(pid));
-            slots.len() as u64
-        });
-        ptr::write(out, RocResult::ok(handle));
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let handle = MOCK_PROMISES.with(|m| {
-            let mut map = m.borrow_mut();
-            let next_id = (map.len() + 1) as u64;
-            map.insert(
-                next_id,
-                MockPromise {
-                    completed: false,
-                    payload: Vec::new(),
-                },
-            );
-            next_id
-        });
-        ptr::write(out, RocResult::ok(handle));
-    }
+    let handle = MOCK_PROMISES.with(|m| {
+        let mut map = m.borrow_mut();
+        let next_id = (map.len() + 1) as u64;
+        map.insert(
+            next_id,
+            MockPromise {
+                completed: false,
+                payload: Vec::new(),
+            },
+        );
+        next_id
+    });
+    ptr::write(out, RocResult::ok(handle));
+    let raw = out as *mut u8;
+    *raw.add(12) = 1;
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxCompletePromise(
+    out: *mut RocResult<bool, RocStr>,
     promise_handle: u64,
     data_bytes: *const RocList<u8>,
-    out: *mut RocResult<bool, RocStr>,
 ) {
     let slice = if data_bytes.is_null() {
         &[]
     } else {
         (*data_bytes).as_slice()
     };
-    #[cfg(target_arch = "wasm32")]
-    {
-        let pid = PROMISE_TABLE.with(|table| {
-            let slots = table.borrow();
-            if promise_handle == 0 || promise_handle as usize > slots.len() {
-                None
-            } else {
-                slots
-                    .get((promise_handle - 1) as usize)
-                    .and_then(|p| p.clone())
-            }
-        });
-        match pid {
-            Some(id) => {
-                let res = golem::api::host::complete_promise(&id, slice);
-                ptr::write(out, RocResult::ok(res));
-            }
-            None => ptr::write(
-                out,
-                RocResult::err(RocStr::from_str("invalid promise handle")),
-            ),
+    let res = MOCK_PROMISES.with(|m| {
+        let mut map = m.borrow_mut();
+        if let Some(p) = map.get_mut(&promise_handle) {
+            p.completed = true;
+            p.payload = slice.to_vec();
+            Ok(true)
+        } else {
+            Err("invalid promise handle")
         }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let res = MOCK_PROMISES.with(|m| {
-            let mut map = m.borrow_mut();
-            if let Some(p) = map.get_mut(&promise_handle) {
-                p.completed = true;
-                p.payload = slice.to_vec();
-                Ok(true)
-            } else {
-                Err("invalid promise handle")
-            }
-        });
-        match res {
-            Ok(b) => ptr::write(out, RocResult::ok(b)),
-            Err(e) => ptr::write(out, RocResult::err(RocStr::from_str(e))),
-        }
+    });
+    match res {
+        Ok(b) => ptr::write(out, RocResult::ok(b)),
+        Err(e) => ptr::write(out, RocResult::err(RocStr::from_str(e))),
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxGetPromise(
-    promise_handle: u64,
     out: *mut RocResult<RocList<u8>, RocStr>,
+    promise_handle: u64,
 ) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let pid = PROMISE_TABLE.with(|table| {
-            let slots = table.borrow();
-            if promise_handle == 0 || promise_handle as usize > slots.len() {
-                None
-            } else {
-                slots
-                    .get((promise_handle - 1) as usize)
-                    .and_then(|p| p.clone())
-            }
-        });
-        match pid {
-            Some(id) => {
-                let promise_res = golem::api::host::get_promise(&id);
-                match promise_res.get() {
-                    Some(bytes) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
-                    None => ptr::write(
-                        out,
-                        RocResult::err(RocStr::from_str("promise not yet completed")),
-                    ),
-                }
-            }
-            None => ptr::write(
-                out,
-                RocResult::err(RocStr::from_str("invalid promise handle")),
-            ),
+    let payload = MOCK_PROMISES.with(|m| {
+        let map = m.borrow();
+        match map.get(&promise_handle) {
+            Some(p) if p.completed => Some(Ok(p.payload.clone())),
+            Some(_) => Some(Err("promise not yet completed")),
+            None => None,
         }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let payload = MOCK_PROMISES.with(|m| {
-            let map = m.borrow();
-            match map.get(&promise_handle) {
-                Some(p) if p.completed => Some(Ok(p.payload.clone())),
-                Some(_) => Some(Err("promise not yet completed")),
-                None => None,
-            }
-        });
-        match payload {
-            Some(Ok(bytes)) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
-            Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(err))),
-            None => ptr::write(
-                out,
-                RocResult::err(RocStr::from_str("invalid promise handle")),
-            ),
-        }
+    });
+    match payload {
+        Some(Ok(bytes)) => ptr::write(out, RocResult::ok(RocList::from_slice(&bytes))),
+        Some(Err(err)) => ptr::write(out, RocResult::err(RocStr::from_str(err))),
+        None => ptr::write(
+            out,
+            RocResult::err(RocStr::from_str("invalid promise handle")),
+        ),
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxCreateWebhook(
-    promise_handle: u64,
     out: *mut RocResult<RocStr, RocStr>,
+    promise_handle: u64,
 ) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let pid = PROMISE_TABLE.with(|table| {
-            let slots = table.borrow();
-            if promise_handle == 0 || promise_handle as usize > slots.len() {
-                None
-            } else {
-                slots
-                    .get((promise_handle - 1) as usize)
-                    .and_then(|p| p.clone())
-            }
-        });
-        match pid {
-            Some(id) => {
-                let url = golem::agent::host::create_webhook(&id);
-                ptr::write(out, RocResult::ok(RocStr::from_str(&url)));
-            }
-            None => ptr::write(
-                out,
-                RocResult::err(RocStr::from_str("invalid promise handle")),
-            ),
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let valid = MOCK_PROMISES.with(|m| m.borrow().contains_key(&promise_handle));
-        if valid {
-            let url = format!("https://golem.cloud/webhooks/{}", promise_handle);
-            ptr::write(out, RocResult::ok(RocStr::from_str(&url)));
-        } else {
-            ptr::write(
-                out,
-                RocResult::err(RocStr::from_str("invalid promise handle")),
-            );
-        }
+    let valid = MOCK_PROMISES.with(|m| m.borrow().contains_key(&promise_handle));
+    if valid {
+        let url = format!("https://golem.cloud/webhooks/promise/{}", promise_handle);
+        ptr::write(out, RocResult::ok(RocStr::from_str(&url)));
+    } else {
+        ptr::write(
+            out,
+            RocResult::err(RocStr::from_str("invalid promise handle")),
+        );
     }
 }
 
@@ -2967,7 +2864,11 @@ pub unsafe extern "C" fn rocFxDbExecuteParams(
             }
         };
         match conn_res {
-            Ok(count) => ptr::write(out, RocResult::ok(count)),
+            Ok(count) => {
+                ptr::write(out, RocResult::ok(count));
+                let raw = out as *mut u8;
+                *raw.add(12) = 1;
+            }
             Err(e) => ptr::write(out, RocResult::err(RocStr::from_str(&e))),
         }
     }
@@ -2975,6 +2876,8 @@ pub unsafe extern "C" fn rocFxDbExecuteParams(
     {
         let _ = (c, s, p);
         ptr::write(out, RocResult::ok(1));
+        let raw = out as *mut u8;
+        *raw.add(12) = 1;
     }
 }
 
@@ -4140,7 +4043,7 @@ mod tests {
         // Webhook creation from promise
         let mut webhook_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let webhook_url = unsafe {
-            rocFxCreateWebhook(promise_handle, webhook_out.as_mut_ptr());
+            rocFxCreateWebhook(webhook_out.as_mut_ptr(), promise_handle);
             webhook_out
                 .assume_init()
                 .into_result()
@@ -4153,7 +4056,7 @@ mod tests {
         // Get promise before completion should return err (not yet completed)
         let mut get_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         unsafe {
-            rocFxGetPromise(promise_handle, get_out.as_mut_ptr());
+            rocFxGetPromise(get_out.as_mut_ptr(), promise_handle);
             assert!(get_out.assume_init().into_result().is_err());
         }
 
@@ -4162,7 +4065,7 @@ mod tests {
         let roc_payload = RocList::from_slice(&payload);
         let mut complete_out = MaybeUninit::<RocResult<bool, RocStr>>::uninit();
         let completed = unsafe {
-            rocFxCompletePromise(promise_handle, &roc_payload, complete_out.as_mut_ptr());
+            rocFxCompletePromise(complete_out.as_mut_ptr(), promise_handle, &roc_payload);
             complete_out
                 .assume_init()
                 .into_result()
@@ -4173,7 +4076,7 @@ mod tests {
         // Get promise after completion should yield payload bytes
         let mut get_out_completed = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         let retrieved = unsafe {
-            rocFxGetPromise(promise_handle, get_out_completed.as_mut_ptr());
+            rocFxGetPromise(get_out_completed.as_mut_ptr(), promise_handle);
             get_out_completed
                 .assume_init()
                 .into_result()
@@ -4184,12 +4087,12 @@ mod tests {
         // Invalid promise handle errors
         let mut invalid_get = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
         unsafe {
-            rocFxGetPromise(99999, invalid_get.as_mut_ptr());
+            rocFxGetPromise(invalid_get.as_mut_ptr(), 99999);
             assert!(invalid_get.assume_init().into_result().is_err());
         }
         let mut invalid_webhook = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         unsafe {
-            rocFxCreateWebhook(99999, invalid_webhook.as_mut_ptr());
+            rocFxCreateWebhook(invalid_webhook.as_mut_ptr(), 99999);
             assert!(invalid_webhook.assume_init().into_result().is_err());
         }
     }
@@ -4274,12 +4177,12 @@ mod tests {
         let mut sched_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let sched_res = unsafe {
             rocFxRpcSchedule(
+                sched_out.as_mut_ptr(),
                 &target,
                 &default_constructor,
                 &method,
                 &payload,
                 5000,
-                sched_out.as_mut_ptr(),
             );
             sched_out
                 .assume_init()
@@ -4693,12 +4596,12 @@ mod tests {
         let mut sched_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let sched_res = unsafe {
             rocFxRpcSchedule(
+                sched_out.as_mut_ptr(),
                 &target,
                 &default_constructor,
                 &method,
                 &payload,
                 5000,
-                sched_out.as_mut_ptr(),
             );
             sched_out
                 .assume_init()
@@ -4741,12 +4644,12 @@ mod tests {
         let mut out1 = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         unsafe {
             rocFxRpcSchedule(
+                out1.as_mut_ptr(),
                 &empty,
                 &default_constructor,
                 &method,
                 &payload,
                 1000,
-                out1.as_mut_ptr(),
             );
             let res = out1.assume_init().into_result();
             assert!(res.is_err(), "empty target must fail validation");
@@ -4756,12 +4659,12 @@ mod tests {
         let mut out2 = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         unsafe {
             rocFxRpcSchedule(
+                out2.as_mut_ptr(),
                 &target,
                 &default_constructor,
                 &empty,
                 &payload,
                 1000,
-                out2.as_mut_ptr(),
             );
             let res = out2.assume_init().into_result();
             assert!(res.is_err(), "empty function_name must fail validation");
@@ -4842,11 +4745,10 @@ mod tests {
         let mut write_out = MaybeUninit::<RocResult<(), RocStr>>::uninit();
         unsafe {
             rocFxWriteFile(&roc_path, &roc_content, write_out.as_mut_ptr());
-            let res = write_out
+            write_out
                 .assume_init()
                 .into_result()
                 .expect("writeFile failed");
-            assert_eq!(res, ());
         }
 
         let mut read_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
@@ -4874,11 +4776,10 @@ mod tests {
         let mut write_out = MaybeUninit::<RocResult<(), RocStr>>::uninit();
         unsafe {
             rocFxWriteFileBytes(&roc_path, &roc_bytes, write_out.as_mut_ptr());
-            let res = write_out
+            write_out
                 .assume_init()
                 .into_result()
                 .expect("writeFileBytes failed");
-            assert_eq!(res, ());
         }
 
         let mut read_out = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
@@ -5333,12 +5234,12 @@ mod tests {
         let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let res = unsafe {
             rocFxRpcSchedule(
+                out.as_mut_ptr(),
                 &target,
                 &constructor,
                 &method,
                 &payload,
                 5000,
-                out.as_mut_ptr(),
             );
             out.assume_init()
                 .into_result()

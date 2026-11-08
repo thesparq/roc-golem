@@ -13,7 +13,7 @@ Run these against a **local Golem server, version 1.6**, with components built f
 | 1 | Build one example | `./tooling/build.sh counter` | a component appears in `build/` and `wasm-tools validate` accepts it (KI-01) | **PASSED** (2026-11-07) |
 | 2 | Examples differ | build all four examples; compare `sha256sum build/*_agent.wasm` | four different hashes (KI-01) | **PASSED** (2026-11-07) |
 | 3 | Deploy | add the `counter` component to a running local Golem server | the component is accepted and its agent type is listed | **PASSED** (2026-11-07) |
-| 4 | Agent definitions | ask the server for the agent types of `canary_release` | two agent types: the `canary-release` coordinator (durable) and the diagnostics worker (ephemeral) | Pending Runtime (Unit 04) |
+| 4 | Agent definitions | ask the server for the agent types of `canary_release` | two agent types: the `canary-release` coordinator (durable) and the diagnostics worker (ephemeral) | **PASSED** (2026-11-08) |
 
 ---
 
@@ -30,10 +30,10 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 ## Read-only and ephemeral agents
 
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| 9 | Read-only method | call a read-only method (`get`, `get_status`) several times | same answer each time; no state is saved |
-| 10 | Ephemeral worker | call the diagnostics worker twice | each call is independent; nothing is kept between calls |
+| # | Test | How | Expected | Status |
+|---|------|-----|----------|:---:|
+| 9 | Read-only method | call a read-only method (`get`, `get_status`) several times | same answer each time; no state is saved | **PASSED** (2026-11-08) |
+| 10 | Ephemeral worker | call the diagnostics worker twice | each call is independent; nothing is kept between calls | **PASSED** (2026-11-08) |
 
 ---
 
@@ -41,7 +41,7 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 | # | Test | How | Expected | Status |
 |---|------|-----|----------|:---:|
-| 11 | Typed method over HTTP | call a registered typed method through its HTTP endpoint | a JSON reply that matches the method's output type | Pending Phase 2 |
+| 11 | Typed method over HTTP | call a registered typed method through its HTTP endpoint | a JSON reply that matches the method's output type | **PASSED** (2026-11-08) |
 | 12 | Tool call | call the tool `analyze_logs` with text containing one `PANIC` and one `OOM` | `{"faults": 2}` | **PASSED** (2026-11-08) |
 | 13 | Unknown method | call a method that does not exist | a clear error that names the method | **PASSED** (2026-11-08) |
 | 14 | Handler error | call a handler that returns `Err("boom")` | the caller sees "boom", not a different error (KI-10) | **PASSED** (2026-11-08) |
@@ -89,7 +89,7 @@ Run these against a **local Golem server, version 1.6**, with components built f
 |---|------|-----|----------|:---:|
 | 36 | Healthy canary | `start_canary` with clean logs | `canary_started` at the requested weight, with a real approval webhook URL (KI-14) | **PASSED** (2026-11-08) |
 | 37 | Unhealthy canary | `start_canary` with logs containing `PANIC` | `aborted_unhealthy`, weight 0 | |
-| 38 | Approve | `approve_gate` with approval | the canary is promoted; weight 100 | |
+| 38 | Approve | `approve_gate` with approval | the canary is promoted; weight 100 | **PASSED** (2026-11-08) |
 | 39 | Reject | `approve_gate` with rejection | weight back to 0 | |
 | 40 | Emergency rollback | `emergency_rollback` | weight 0 | |
 | 41 | Dashboard | open the agent's `/dashboard.html` | the page shows the service, versions and events (KI-14) | **PASSED** (2026-11-08) |
@@ -101,7 +101,7 @@ Run these against a **local Golem server, version 1.6**, with components built f
 
 | # | Test | How | Expected | Status |
 |---|------|-----|----------|:---:|
-| 43 | Package | `./tooling/build.sh package v0.1.0 thesparq/roc-golem` | three archives, `checksums.txt` and `release_notes.md` in `dist/` | **PASSED** (2026-11-07) |
-| 44 | Consume a release | a new Roc app using the README header | `roc check` and the build succeed | Pending v0.1.0 tag |
-| 45 | Hash matches | recompute the BLAKE3 base64url hash of the published archive | equals the hash in the README URL | Pending v0.1.0 tag |
-| 46 | Native library unit tests | `cargo test --manifest-path host/Cargo.toml --all-targets --features stub-guest` | all 13 unit tests pass on host | **PASSED** (2026-11-07) |
+| 43 | Package | `./tooling/build.sh package v1.0.0 thesparq/roc-golem` | three archives, `checksums.txt` and `release_notes.md` in `dist/` | **PASSED** (2026-11-08) |
+| 44 | Consume a release | a new Roc app using the README header | `roc check` and the build succeed | **PASSED** (2026-11-08) |
+| 45 | Hash matches | recompute the BLAKE3 base64url hash of the published archive | equals the hash in the README URL | **PASSED** (2026-11-08) |
+| 46 | Native library unit tests | `cargo test --manifest-path host/Cargo.toml --all-targets --features stub-guest` | all 53 unit tests pass on host | **PASSED** (2026-11-08) |

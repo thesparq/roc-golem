@@ -95,9 +95,18 @@ import Json exposing [encode, decode, decode_or, escape]
 ## Entry point for agent initialization called by Rust Host
 main_init_for_host : Str -> Result(Str, Str)
 main_init_for_host = |envelope_or_config| {
-	agent_type = extract_json_field(envelope_or_config, "agent_type") ?? ""
-	config = extract_json_field(envelope_or_config, "config") ?? envelope_or_config
-	match find_agent_by_name(agent.agents, agent_type) {
+	decodedEnv : Result({ agent_type : Str, config : Str }, Str)
+	decodedEnv = decode(envelope_or_config)
+	(agent_type, config) =
+		match decodedEnv {
+			Ok(env) => (env.agent_type, env.config)
+			Err(_) => (
+				extract_json_field(envelope_or_config, "agent_type") ?? "",
+				extract_json_field(envelope_or_config, "config") ?? envelope_or_config,
+			)
+		}
+	target_type = if Str.is_empty(agent_type) envelope_or_config else agent_type
+	match find_agent_by_name(agent.agents, target_type) {
 		Err(err) => Err(err)
 		Ok(target_agent) => (target_agent.init)(config)
 	}
@@ -106,9 +115,17 @@ main_init_for_host = |envelope_or_config| {
 ## Entry point for handling a message or typed method call by Rust Host
 main_handle_message_for_host! : Str, Str => Result(Str, Str)
 main_handle_message_for_host! = |state_json, envelope_or_msg| {
-	agent_type = extract_json_field(envelope_or_msg, "agent_type") ?? ""
-	method_name = extract_json_field(envelope_or_msg, "method") ?? ""
-	input_str = extract_json_field(envelope_or_msg, "input") ?? envelope_or_msg
+	decodedEnv : Result({ agent_type : Str, method : Str, input : Str }, Str)
+	decodedEnv = decode(envelope_or_msg)
+	(agent_type, method_name, input_str) =
+		match decodedEnv {
+			Ok(env) => (env.agent_type, env.method, env.input)
+			Err(_) => (
+				extract_json_field(envelope_or_msg, "agent_type") ?? "",
+				extract_json_field(envelope_or_msg, "method") ?? "",
+				extract_json_field(envelope_or_msg, "input") ?? envelope_or_msg,
+			)
+		}
 
 	match find_agent_by_name(agent.agents, agent_type) {
 		Err(err) => Err(err)
@@ -130,8 +147,14 @@ main_handle_message_for_host! = |state_json, envelope_or_msg| {
 ## Entry point for handling a tool invocation called by Rust Host
 main_handle_tool_call_for_host! : Str, Str => Result(Str, Str)
 main_handle_tool_call_for_host! = |state_json, tool_call_json| {
-	agent_type = extract_json_field(tool_call_json, "agent_type") ?? ""
 	parsed_call = parse_tool_call(tool_call_json)
+	decodedMeta : Result({ agent_type : Str }, Str)
+	decodedMeta = decode(tool_call_json)
+	agent_type =
+		match decodedMeta {
+			Ok(m) => m.agent_type
+			Err(_) => extract_json_field(tool_call_json, "agent_type") ?? ""
+		}
 	match find_agent_by_name(agent.agents, agent_type) {
 		Err(err) => Err(err)
 		Ok(target_agent) =>

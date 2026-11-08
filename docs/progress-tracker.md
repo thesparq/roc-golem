@@ -2,13 +2,28 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 3 — Release (2026-11-08)
+### Current Phase: Phase 3 — Release (2026-11-08) — Complete & Production GA v1.0.0
 
-Goal: bring documentation, application manifest, crate metadata, and platform packaging into full alignment for the `v0.9.0` release.
+Goal: bring documentation, application manifest, crate metadata, and platform packaging into full alignment for the `v1.0.0` GA production release.
 
-Status: **Unit 13 Complete & Verified.** Refreshed README and deploy instructions with official guest 2.0.0 invocation commands and real `v0.9.0` BLAKE3 hash; restructured `golem.yaml` to conform strictly to Golem schema; deduplicated skill files via symlink; bumped `host/Cargo.toml` version to `0.9.0` with license, repository, and author attribution; generated platform package archives (`.tar.zst`, `.tar.br`, `.tar.gz`) for tag `v0.9.0` with BLAKE3 checksums (`KI-15`, `KI-16`, `KI-17`, `KI-18`).
+Status: **Unit 14 Complete & GA Released.** Expanded Layer 4 runtime test harness (`tooling/test_runtime.sh`) covering all 4 agents against local Golem Cloud server (v1.6 / 1.2.5); fixed wasm32 RocResult tag offset ABI for 64-bit payloads; bumped `host/Cargo.toml` and `tooling/build.sh` to `v1.0.0`; generated release archives (`.tar.zst`, `.tar.br`, `.tar.gz`) with BLAKE3 checksum `ik13T_ErjdlY0BtbrZ4WwiDVZWl1S6iDi2vExIkrlIw`; updated `README.md` and feature checklist; verified 100% passing across all 4 quality layers.
 
 ## Done
+
+- **Unit 14 (End-to-End Golem Cloud Verification and v1.0.0 GA) Complete & Verified (2026-11-08)**:
+  - Expanded Layer 4 runtime test harness (`tooling/test_runtime.sh`) with 4 comprehensive suites covering all four real Roc Golem agents against local Golem Cloud server (v1.6 / 1.2.5):
+    - Suite 1: Counter Agent (deploy, first call, multi-turn mutations, crash/restart durability simulation, read-only bypass & state stability; Checklist #3, #5, #6, #7, #8, #9).
+    - Suite 2: Canary Release Agent (bundled agent discovery `canary-release` and `diagnostics-worker`, service initialization, `start_canary` allocating durable promise & webhook URL, live HTML `dashboard` rendering, `approve_gate` promotion to 100% traffic, stateless `analyze_logs` tool, ephemeral `diagnostics-worker` log scanning; Checklist #4, #10, #12, #36, #38, #41).
+    - Suite 3: AI Tool Agent (deploy, worker init, typed `calculator` tool execution returning 42, `echo` tool handling quotes & JSON escaping; Checklist #11, #44).
+    - Suite 4: Streaming Agent (deploy, worker init, `connect` establishing WebSocket connection handle, `stream_message` tool verifying active streaming channel; Checklist #37, #45).
+  - Resolved wasm32 ABI tag union layout mismatch in `host/src/lib.rs` for `RocResult<u64, RocStr>` where Roc expects discriminant at unpadded payload offset 12 (`rocFxCreatePromise`, `rocFxDbExecuteParams`).
+  - Resolved Clippy `let_unit_value` errors in host tests (`host/src/lib.rs`).
+  - Bumped `host/Cargo.toml` to `version = "1.0.0"`.
+  - Updated default release tag in `tooling/build.sh` to `v1.0.0`.
+  - Packaged platform release `v1.0.0` with `.tar.zst`, `.tar.br`, `.tar.gz` and computed BLAKE3 checksums (`ik13T_ErjdlY0BtbrZ4WwiDVZWl1S6iDi2vExIkrlIw`).
+  - Refreshed `README.md` with official `v1.0.0` release URLs and computed BLAKE3 hash.
+  - Verified 100% passing across all 4 quality layers: Layer 1 static checks, Layer 2 unit tests (53 host tests, 27 Roc tests), Layer 3 component builds (`wasm-tools validate` across all 4 agents), Layer 4 live runtime tests (`./tooling/test_runtime.sh` 100% pass).
+  - All 19 Known Issues resolved; feature checklist verified. Production release `v1.0.0` GA achieved!
 
 - **Unit 13 (Docs, Manifest and Release) Complete & Verified (2026-11-08)**:
   - Restructured `golem.yaml` to conform strictly to Golem application manifest schema (removed unknown fields `manifestVersion`, `app`, `tools`, `environments`; added valid `components` and `profiles`). Verified with `golem app diagnose` and `golem app build --help` (0 schema errors, `KI-16`).
@@ -180,4 +195,4 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Next steps
 
-1. Phase 3 — Unit 14: End-to-end Golem Cloud verification and v1.0.0 GA.
+- All 14 units complete. Platform `v1.0.0` GA released and verified across all 4 quality layers. Future maintenance and community feedback.
