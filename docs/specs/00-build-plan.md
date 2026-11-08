@@ -51,7 +51,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* `rocFxLog` writes to a place that Golem captures on `wasm32` (`wasi:logging/logging` interface instead of unrouted `println!`).
 *Dependencies:* 04. Needs approval for any change in `wit/world.wit` (Approved).
 *Fixes:* KI-07.
-*Status:* Spec written.
+*Status:* Complete.
 
 **09. Surface handler errors**
 *What it builds:* A failing message handler returns its own error; the fallback-to-tool-call path only runs when the method is genuinely a tool.

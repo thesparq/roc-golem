@@ -611,6 +611,25 @@ thread_local! {
         RefCell::new(HashMap::new());
     static STMT_CACHE: RefCell<HashMap<(String, String), u64>> =
         RefCell::new(HashMap::new());
+    static LOG_CAPTURE_BUFFER: RefCell<Vec<(u8, String, String)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn capture_test_log(level: u8, context: String, message: String) {
+    LOG_CAPTURE_BUFFER.with(|buf| {
+        buf.borrow_mut().push((level, context, message));
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_captured_logs() -> Vec<(u8, String, String)> {
+    LOG_CAPTURE_BUFFER.with(|buf| buf.borrow().clone())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn clear_captured_logs() {
+    LOG_CAPTURE_BUFFER.with(|buf| buf.borrow_mut().clear());
 }
 
 pub fn store_secret(name: String, value: String) -> u32 {
@@ -955,18 +974,42 @@ fn query_agent_types() -> Vec<AgentType> {
 
 // Host effect functions exposed to the Roc guest runtime via C-ABI
 
+#[cfg(any(test, target_arch = "wasm32"))]
+fn map_wasi_log_level(level: u8) -> wasi::logging::logging::Level {
+    match level {
+        0 => wasi::logging::logging::Level::Trace,
+        1 => wasi::logging::logging::Level::Debug,
+        2 => wasi::logging::logging::Level::Info,
+        3 => wasi::logging::logging::Level::Warn,
+        4 => wasi::logging::logging::Level::Error,
+        _ => wasi::logging::logging::Level::Critical,
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
     let m = if msg.is_null() { "" } else { (*msg).as_str() };
-    let tag = match level {
-        0 => "[TRACE]",
-        1 => "[DEBUG]",
-        2 => "[INFO]",
-        3 => "[WARN]",
-        4 => "[ERROR]",
-        _ => "[LOG]",
-    };
-    println!("{} {}", tag, m);
+    let context = "roc-agent";
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let wasi_level = map_wasi_log_level(level);
+        wasi::logging::logging::log(wasi_level, context, m);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        capture_test_log(level, context.to_string(), m.to_string());
+        let tag = match level {
+            0 => "[TRACE]",
+            1 => "[DEBUG]",
+            2 => "[INFO]",
+            3 => "[WARN]",
+            4 => "[ERROR]",
+            _ => "[CRITICAL]",
+        };
+        println!("{} {}: {}", tag, context, m);
+    }
 }
 
 #[no_mangle]
@@ -4597,5 +4640,94 @@ mod tests {
         assert_eq!(normalize_path("."), ".");
         assert_eq!(normalize_path("/"), ".");
         assert_eq!(normalize_path("./"), ".");
+    }
+
+    #[test]
+    fn test_logging_all_levels() {
+        clear_captured_logs();
+        for level in 0..=5 {
+            let msg_str = format!("Message for level {}", level);
+            let roc_msg = RocStr::from_str(&msg_str);
+            unsafe {
+                rocFxLog(level, &roc_msg);
+            }
+        }
+        let logs = get_captured_logs();
+        assert_eq!(logs.len(), 6);
+        for (i, (lvl, ctx, msg)) in logs.iter().enumerate() {
+            assert_eq!(*lvl, i as u8);
+            assert_eq!(ctx, "roc-agent");
+            assert_eq!(msg, &format!("Message for level {}", i));
+        }
+    }
+
+    #[test]
+    fn test_logging_empty_and_null_message() {
+        clear_captured_logs();
+        let empty_str = RocStr::from_str("");
+        unsafe {
+            rocFxLog(2, &empty_str);
+            rocFxLog(4, ptr::null());
+        }
+        let logs = get_captured_logs();
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[0], (2, "roc-agent".to_string(), "".to_string()));
+        assert_eq!(logs[1], (4, "roc-agent".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn test_logging_special_characters() {
+        clear_captured_logs();
+        let complex_strings = [
+            "Line 1\nLine 2\r\nLine 3\tTabbed",
+            "\"Quoted\" and 'Single-quoted' and `backticks`",
+            "Unicode: 🚀 Roc + Golem = 🦀 | こんにちは | 🌟",
+            r#"{"json":{"key":"value","array":[1,2,true,null]}}"#,
+        ];
+        for (idx, s) in complex_strings.iter().enumerate() {
+            let roc_str = RocStr::from_str(s);
+            unsafe {
+                rocFxLog((idx % 5) as u8, &roc_str);
+            }
+        }
+        let logs = get_captured_logs();
+        assert_eq!(logs.len(), complex_strings.len());
+        for (idx, s) in complex_strings.iter().enumerate() {
+            assert_eq!(logs[idx].0, (idx % 5) as u8);
+            assert_eq!(logs[idx].1, "roc-agent");
+            assert_eq!(logs[idx].2, *s);
+        }
+    }
+
+    #[test]
+    fn test_map_wasi_log_level() {
+        assert!(matches!(
+            map_wasi_log_level(0),
+            wasi::logging::logging::Level::Trace
+        ));
+        assert!(matches!(
+            map_wasi_log_level(1),
+            wasi::logging::logging::Level::Debug
+        ));
+        assert!(matches!(
+            map_wasi_log_level(2),
+            wasi::logging::logging::Level::Info
+        ));
+        assert!(matches!(
+            map_wasi_log_level(3),
+            wasi::logging::logging::Level::Warn
+        ));
+        assert!(matches!(
+            map_wasi_log_level(4),
+            wasi::logging::logging::Level::Error
+        ));
+        assert!(matches!(
+            map_wasi_log_level(5),
+            wasi::logging::logging::Level::Critical
+        ));
+        assert!(matches!(
+            map_wasi_log_level(99),
+            wasi::logging::logging::Level::Critical
+        ));
     }
 }

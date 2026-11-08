@@ -6,9 +6,20 @@ Keep this file short (about 150 lines). It is a status page, not a diary. Move f
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Phase 1 in progress. Unit 06 Complete & Verified.** Real secret resolution implemented on `wasm32-unknown-unknown` via `wasi:config/store@0.2.0-draft` with fallback to `SECRET_ENV` and `std::env::var` on native. Ready for Unit 07 (`File effects`).
+Status: **Phase 1 in progress. Unit 08 Complete & Verified.** Real logging via WASI logging (`wasi:logging/logging`) implemented on `wasm32-unknown-unknown` with level mapping (Trace, Debug, Info, Warn, Error, Critical) and context `"roc-agent"`, retaining in-memory test capture buffer and formatted stdout logging on native (`KI-07`). Ready for Unit 09 (`Surface handler errors`).
 
 ## Done
+
+- **Unit 08 (Real Logging via WASI Logging) Complete & Verified (2026-11-08)**:
+  - Added `import wasi:logging/logging;` to `wit/world.wit`.
+  - Implemented `map_wasi_log_level(level: u8) -> wasi::logging::logging::Level` mapping 0->Trace, 1->Debug, 2->Info, 3->Warn, 4->Error, 5+->Critical.
+  - Implemented target-specific `rocFxLog` in `host/src/lib.rs`:
+    - On `wasm32`: invokes `wasi::logging::logging::log(wasi_level, "roc-agent", m)`.
+    - On native: records to in-memory `LOG_CAPTURE_BUFFER` and prints formatted level, context, and message to stdout.
+    - Added test capture helpers `capture_test_log`, `get_captured_logs()`, and `clear_captured_logs()`.
+  - Added 4 comprehensive unit tests in `host/src/lib.rs` under `mod tests` (`test_logging_all_levels`, `test_logging_empty_and_null_message`, `test_logging_special_characters`, `test_map_wasi_log_level`). Total 43 host unit tests passing cleanly.
+  - Verified Layer 1 static checks (`cargo fmt`, `cargo clippy`, `roc fmt`, `roc check`), Layer 2 host tests (43/43 passed), Layer 3 builds (`./tooling/build.sh all` with 5 components validated), and Layer 4 runtime test (`./tooling/test_runtime.sh`).
+  - Resolved `KI-07` and marked `docs/feature-checklist.md` test 34 as PASSED.
 
 - **Unit 06 (Secrets from Golem) Complete & Verified (2026-11-08)**:
   - Implemented target-specific secret resolution in `rocFxGetSecretHandle` (`host/src/lib.rs`):
@@ -88,7 +99,7 @@ Source: code review of 2026-11-07 and build verification.
 | KI-04 | `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` return success without scheduling anything, on every target. `wit/deps/golem-agent/host.wit` offers `schedule-invocation`. | High | **Resolved** in Unit 05 (real wall-clock scheduling via wasm-rpc) |
 | KI-05 | `rocFxGetSecretHandle` reads secrets from `std::env::var`, which does not exist on `wasm32-unknown-unknown`. Works only in tests. | High | **Resolved** in Unit 06 (`wasi:config/store` on `wasm32` + `SECRET_ENV`/`std::env::var` fallback) |
 | KI-06 | File effects (`readFile`, `writeFile`, bytes variants, append) use `std::fs`, unsupported on this target; `wasi:filesystem` is not in `wit/world.wit`. | High | **Resolved** in Unit 07 (real WASI 0.2 `wasi:filesystem` with preopens on `wasm32`, `std::fs` native fallback) |
-| KI-07 | `rocFxLog` uses `println!`, which likely goes nowhere on this target. | Medium | Open (Unit 08) |
+| KI-07 | `rocFxLog` uses `println!`, which likely goes nowhere on this target. | Medium | **Resolved** in Unit 08 (real WASI logging via `wasi:logging/logging` on `wasm32`, test buffer on native) |
 | KI-08 | No test compiles Roc: CI never runs `roc check`, `roc build` or `roc test`. The 13 tests run against `guest_bridge.rs`. | Critical | **Resolved** in Unit 03 (full Roc checks, tests, builds, validations in CI) |
 | KI-09 | Examples parse JSON with ad-hoc text search. The README counter has `deserializeState: \|_json\| Ok({ count: 0 })`, which resets state on every load. `ai_tool` does not escape `lastTool`. | High | Open (Unit 02) |
 | KI-10 | On any message-handler error the host retries as a tool call and reports `InvalidMethod` with the first error, hiding the real failure. | Medium | Open (Unit 09) |
@@ -108,4 +119,4 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Next steps
 
-1. Unit 08: Logging.
+1. Unit 09: Surface handler errors.

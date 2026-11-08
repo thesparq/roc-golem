@@ -9,6 +9,7 @@ world golem-agent {
     import wasi:clocks/wall-clock@0.2.3;
     import wasi:filesystem/types@0.2.3;
     import wasi:filesystem/preopens@0.2.3;
+    import wasi:logging/logging;
     import wasi:io/poll@0.2.3;
     import wasi:io/streams@0.2.3;
     import wasi:http/outgoing-handler@0.2.3;

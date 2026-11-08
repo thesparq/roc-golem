@@ -2,7 +2,7 @@
 
 - **Unit:** 08
 - **File:** `docs/specs/08-logging.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Phase:** Phase 1 — Make every effect honest
 - **Fixes:** `KI-07`, `docs/feature-checklist.md` test 34
 
@@ -199,15 +199,15 @@ Add unit tests under `mod tests`:
 
 To mark Unit 08 as complete, the following checks from `docs/testing.md` must be executed and reported:
 
-1. [ ] **Clean Host Compilation for wasm32:**
+1. [x] **Clean Host Compilation for wasm32:**
    `cargo check --manifest-path host/Cargo.toml --target wasm32-unknown-unknown --release --no-default-features` cleanly compiles with `wasi:logging/logging`.
-2. [ ] **Unit Tests (Layer 2):**
+2. [x] **Unit Tests (Layer 2):**
    `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` passes all unit tests, including new level mapping and buffer capture tests.
-3. [ ] **Code Hygiene & Linting:**
+3. [x] **Code Hygiene & Linting:**
    `cargo fmt --check` and `cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings` report zero warnings or errors.
-4. [ ] **Roc Application Compilation & Component Validation (Layer 3):**
+4. [x] **Roc Application Compilation & Component Validation (Layer 3):**
    `./tooling/build.sh all` successfully builds all agent components and all pass `wasm-tools validate`.
-5. [ ] **Layer 4 Runtime Verification:**
+5. [x] **Layer 4 Runtime Verification:**
    `./tooling/test_runtime.sh` passes completely against a running local Golem server.
-6. [ ] **Feature Checklist & Progress Tracker:**
+6. [x] **Feature Checklist & Progress Tracker:**
    `docs/feature-checklist.md` test 34 updated to PASSED, and `docs/progress-tracker.md` updated with `KI-07` resolved.
