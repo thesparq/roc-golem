@@ -39,7 +39,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* `getSecretHandle` reads from a source that exists on the target (`wasi:config/store` or agent configuration), returns a clear error when absent. Test for found and not-found.
 *Dependencies:* 04. Needs approval for any change in `wit/world.wit`.
 *Fixes:* KI-05.
-*Status:* Not started.
+*Status:* Spec written.
 
 **07. File effects**
 *What it builds:* Either real file effects through a WASI filesystem import, or a decision to remove them from the SDK, in which case they return "unsupported" until removal.
