@@ -2,13 +2,24 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 0 — Make it real (2026-11-07) — COMPLETE!
+### Current Phase: Phase 1 — Make every effect honest (2026-11-08)
 
 Goal: prove the platform works end to end with real Roc code on a real Golem, and close the gaps where code only pretends to work. Units are in `docs/specs/00-build-plan.md`.
 
-Status: **Phase 0 Complete! Units 01, 02, 03 & 04 Complete & Verified.** Real pure functional Roc agents deploy, mutate state, recover across crashes, and handle read-only invocations on real local Golem server infrastructure! Ready for Phase 1 (`Make every effect honest`).
+Status: **Phase 1 in progress. Unit 05 Complete & Verified.** Real cross-agent scheduling implemented on `wasm32-unknown-unknown` via `wasi:clocks/wall-clock@0.2.3` and Golem's `wasm-rpc::schedule-invocation`, with input validation and pure time calculation unit tests. Ready for Unit 06 (`Secrets from Golem`).
 
 ## Done
+
+- **Unit 05 (Real Scheduling) Complete & Verified (2026-11-08)**:
+  - Imported `wasi:clocks/wall-clock@0.2.3` in `wit/world.wit`.
+  - Implemented pure deterministic time helper `compute_scheduled_time` with nanosecond carry-over and saturating arithmetic.
+  - Updated `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` in `host/src/lib.rs`:
+    - Added input validation ensuring `target` and `function_name` are not empty (returning `RocResult::err`).
+    - On `wasm32`: queries wall clock time via `wasi::clocks::wall_clock::now()`, calculates target datetime, and invokes `rpc_client.schedule_invocation`.
+    - On native: calculates simulated scheduled time and returns structured JSON acknowledgment with `scheduledSeconds`.
+  - Added 8 comprehensive unit tests in `host/src/lib.rs` (zero delay, subsecond no carry, nanosecond rollover, multi-day delay, saturating overflow, valid mock, and validation errors). Total 27 host unit tests passing cleanly.
+  - Verified Layer 1 static checks (`cargo fmt`, `cargo clippy`, `roc fmt`, `roc check`), Layer 2 host tests (27/27 passed), Layer 3 builds (`./tooling/build.sh all` with 4 components validated), and Layer 4 runtime test (`./tooling/test_runtime.sh`).
+  - Fixed `KI-04` and updated `docs/feature-checklist.md` Test #17 to PASSED.
 
 - **Unit 04 (Layer 4 Runtime Test Harness) Complete & Verified (2026-11-07)**:
   - Created automated test harness `tooling/test_runtime.sh` deploying real `build/counter_agent.wasm` to local Golem server (v1.2.5 / 1.6).
@@ -63,7 +74,7 @@ Source: code review of 2026-11-07 and build verification.
 | KI-01 | `build.sh` never compiles or links Roc. `build_app` only runs `roc fmt` and wraps the pre-built host. | Critical | **Resolved** in Unit 01 (native `roc build --target=wasm32` + `wasm-tools component new`) |
 | KI-02 | Feature `stub-guest` is on by default, so fake agent is compiled into `libhost.a`. | Critical | **Resolved** in Unit 01 (`default = []`, production wasm builds with `--no-default-features`) |
 | KI-03 | `platform/main.roc` writes `{"state":"<state>",...}` without escaping the state, so any state with quotes makes the reply invalid JSON. The host then ignores the reply and never saves state. | Critical | **Resolved** in Unit 02 (escaped envelope formatting in `platform/main.roc`) |
-| KI-04 | `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` return success without scheduling anything, on every target. `wit/deps/golem-agent/host.wit` offers `schedule-invocation`. | High | Open (Unit 05) |
+| KI-04 | `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` return success without scheduling anything, on every target. `wit/deps/golem-agent/host.wit` offers `schedule-invocation`. | High | **Resolved** in Unit 05 (real wall-clock scheduling via wasm-rpc) |
 | KI-05 | `rocFxGetSecretHandle` reads secrets from `std::env::var`, which does not exist on `wasm32-unknown-unknown`. Works only in tests. | High | Open (Unit 06) |
 | KI-06 | File effects (`readFile`, `writeFile`, bytes variants, append) use `std::fs`, unsupported on this target; `wasi:filesystem` is not in `wit/world.wit`. | High | Open (Unit 07) |
 | KI-07 | `rocFxLog` uses `println!`, which likely goes nowhere on this target. | Medium | Open (Unit 08) |
@@ -88,4 +99,4 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Next steps
 
-1. Unit 04: Layer 4 runtime test on local Golem 1.6 server.
+1. Unit 06: Secrets from Golem (`wasi:config/store` or agent config values).

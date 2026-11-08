@@ -789,6 +789,18 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
     }
 }
 
+pub fn compute_scheduled_time(now_seconds: u64, now_nanos: u32, delay_millis: u64) -> (u64, u32) {
+    let delta_secs = delay_millis / 1000;
+    let delta_nanos = (delay_millis % 1000) * 1_000_000;
+    let total_nanos = now_nanos as u64 + delta_nanos;
+    let carry_secs = total_nanos / 1_000_000_000;
+    let final_nanos = (total_nanos % 1_000_000_000) as u32;
+    let final_secs = now_seconds
+        .saturating_add(delta_secs)
+        .saturating_add(carry_secs);
+    (final_secs, final_nanos)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rocFxRpcSchedule(
     target: *const RocStr,
@@ -813,15 +825,59 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
         (*payload).as_str()
     };
 
-    let resp = serde_json::json!({
-        "status": "scheduled",
-        "target": t,
-        "method": f,
-        "payload": p,
-        "delayMillis": delay_millis,
-    })
-    .to_string();
-    ptr::write(out, RocResult::ok(RocStr::from_str(&resp)));
+    if t.is_empty() || f.is_empty() {
+        ptr::write(
+            out,
+            RocResult::err(RocStr::from_str(
+                "Target worker and method must not be empty",
+            )),
+        );
+        return;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let now = wasi::clocks::wall_clock::now();
+        let (sched_secs, sched_nanos) =
+            compute_scheduled_time(now.seconds, now.nanoseconds, delay_millis);
+        let target_datetime = wasi::clocks::wall_clock::Datetime {
+            seconds: sched_secs,
+            nanoseconds: sched_nanos,
+        };
+        let constructor_val = wrap_string_data_value("{}".to_string());
+        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let input_val = wrap_string_data_value(p.to_string());
+        rpc_client.schedule_invocation(target_datetime, f, &input_val);
+
+        let resp = serde_json::json!({
+            "status": "scheduled",
+            "target": t,
+            "method": f,
+            "payload": p,
+            "delayMillis": delay_millis,
+            "scheduledSeconds": sched_secs,
+        })
+        .to_string();
+        ptr::write(out, RocResult::ok(RocStr::from_str(&resp)));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let (sched_secs, _sched_nanos) =
+            compute_scheduled_time(now.as_secs(), now.subsec_nanos(), delay_millis);
+        let resp = serde_json::json!({
+            "status": "scheduled",
+            "target": t,
+            "method": f,
+            "payload": p,
+            "delayMillis": delay_millis,
+            "scheduledSeconds": sched_secs,
+        })
+        .to_string();
+        ptr::write(out, RocResult::ok(RocStr::from_str(&resp)));
+    }
 }
 
 #[no_mangle]
@@ -942,8 +998,37 @@ pub unsafe extern "C" fn rocFxRpcScheduleBytes(
     } else {
         (*payload).as_slice()
     };
-    let _ = (t, f, delay_millis);
-    ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
+
+    if t.is_empty() || f.is_empty() {
+        ptr::write(
+            out,
+            RocResult::err(RocStr::from_str(
+                "Target worker and method must not be empty",
+            )),
+        );
+        return;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let now = wasi::clocks::wall_clock::now();
+        let (sched_secs, sched_nanos) =
+            compute_scheduled_time(now.seconds, now.nanoseconds, delay_millis);
+        let target_datetime = wasi::clocks::wall_clock::Datetime {
+            seconds: sched_secs,
+            nanoseconds: sched_nanos,
+        };
+        let constructor_val = wrap_bytes_data_value(Vec::new());
+        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let input_val = wrap_bytes_data_value(p_slice.to_vec());
+        rpc_client.schedule_invocation(target_datetime, f, &input_val);
+        ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = delay_millis;
+        ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
+    }
 }
 
 #[no_mangle]
@@ -3667,5 +3752,148 @@ mod tests {
         assert!(dec_res.is_ok());
         let state_dec = get_current_state();
         assert!(state_dec.contains("\"count\": 1") || state_dec.contains("\"count\":1"));
+    }
+
+    #[test]
+    fn test_compute_scheduled_time_zero_delay() {
+        let (sec, nanos) = compute_scheduled_time(1_000_000, 500_000, 0);
+        assert_eq!(sec, 1_000_000);
+        assert_eq!(nanos, 500_000);
+    }
+
+    #[test]
+    fn test_compute_scheduled_time_subsecond_no_carry() {
+        let (sec, nanos) = compute_scheduled_time(1_000_000, 100_000_000, 500);
+        assert_eq!(sec, 1_000_000);
+        assert_eq!(nanos, 600_000_000);
+    }
+
+    #[test]
+    fn test_compute_scheduled_time_nanosecond_rollover() {
+        let (sec, nanos) = compute_scheduled_time(1_000_000, 800_000_000, 500);
+        assert_eq!(sec, 1_000_001);
+        assert_eq!(nanos, 300_000_000);
+    }
+
+    #[test]
+    fn test_compute_scheduled_time_large_delay() {
+        // 86,400,000 ms = 86,400 s (1 full day)
+        let (sec, nanos) = compute_scheduled_time(1_000_000, 200_000_000, 86_400_000);
+        assert_eq!(sec, 1_086_400);
+        assert_eq!(nanos, 200_000_000);
+    }
+
+    #[test]
+    fn test_compute_scheduled_time_saturating_overflow() {
+        let (sec, nanos) = compute_scheduled_time(u64::MAX - 5, 900_000_000, 10_000);
+        assert_eq!(sec, u64::MAX);
+        assert_eq!(nanos, 900_000_000);
+    }
+
+    #[test]
+    fn test_roc_fx_rpc_schedule_mock_valid() {
+        let target = RocStr::from_str("worker-auth-01");
+        let method = RocStr::from_str("validate_token");
+        let payload = RocStr::from_str("{\"token\":\"xyz\"}");
+        let mut sched_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let sched_res = unsafe {
+            rocFxRpcSchedule(&target, &method, &payload, 5000, sched_out.as_mut_ptr());
+            sched_out
+                .assume_init()
+                .into_result()
+                .expect("rocFxRpcSchedule mock failed")
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(sched_res.as_str()).expect("valid JSON confirmation");
+        assert_eq!(
+            parsed.get("status").and_then(|v| v.as_str()),
+            Some("scheduled")
+        );
+        assert_eq!(
+            parsed.get("target").and_then(|v| v.as_str()),
+            Some("worker-auth-01")
+        );
+        assert_eq!(
+            parsed.get("method").and_then(|v| v.as_str()),
+            Some("validate_token")
+        );
+        assert_eq!(
+            parsed.get("delayMillis").and_then(|v| v.as_u64()),
+            Some(5000)
+        );
+        assert!(parsed
+            .get("scheduledSeconds")
+            .and_then(|v| v.as_u64())
+            .is_some());
+    }
+
+    #[test]
+    fn test_roc_fx_rpc_schedule_mock_validation_error() {
+        let empty = RocStr::from_str("");
+        let target = RocStr::from_str("worker-auth-01");
+        let method = RocStr::from_str("validate_token");
+        let payload = RocStr::from_str("{}");
+
+        // Empty target error
+        let mut out1 = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        unsafe {
+            rocFxRpcSchedule(&empty, &method, &payload, 1000, out1.as_mut_ptr());
+            let res = out1.assume_init().into_result();
+            assert!(res.is_err(), "empty target must fail validation");
+        }
+
+        // Empty method error
+        let mut out2 = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        unsafe {
+            rocFxRpcSchedule(&target, &empty, &payload, 1000, out2.as_mut_ptr());
+            let res = out2.assume_init().into_result();
+            assert!(res.is_err(), "empty function_name must fail validation");
+        }
+    }
+
+    #[test]
+    fn test_roc_fx_rpc_schedule_bytes_mock_valid() {
+        let target = RocStr::from_str("worker-auth-01");
+        let method = RocStr::from_str("validate_token");
+        let empty = RocStr::from_str("");
+        let raw_bytes = vec![1u8, 2, 3, 4];
+        let payload_list = RocList::from_slice(&raw_bytes);
+
+        // Valid call returns ok with byte slice
+        let mut out_valid = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        let res_bytes = unsafe {
+            rocFxRpcScheduleBytes(
+                &target,
+                &method,
+                &payload_list,
+                2000,
+                out_valid.as_mut_ptr(),
+            );
+            out_valid
+                .assume_init()
+                .into_result()
+                .expect("rocFxRpcScheduleBytes mock failed")
+        };
+        assert_eq!(res_bytes.as_slice(), raw_bytes.as_slice());
+
+        // Empty target error
+        let mut out_err1 = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        unsafe {
+            rocFxRpcScheduleBytes(&empty, &method, &payload_list, 2000, out_err1.as_mut_ptr());
+            assert!(
+                out_err1.assume_init().into_result().is_err(),
+                "empty target must fail"
+            );
+        }
+
+        // Empty method error
+        let mut out_err2 = MaybeUninit::<RocResult<RocList<u8>, RocStr>>::uninit();
+        unsafe {
+            rocFxRpcScheduleBytes(&target, &empty, &payload_list, 2000, out_err2.as_mut_ptr());
+            assert!(
+                out_err2.assume_init().into_result().is_err(),
+                "empty method must fail"
+            );
+        }
     }
 }

@@ -33,7 +33,7 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* `rocFxRpcSchedule`, `rocFxRpcScheduleBytes` call the Golem scheduling operation on `wasm32`; the mock is a faithful stand-in. A test per variant.
 *Dependencies:* 04.
 *Fixes:* KI-04.
-*Status:* Spec written.
+*Status:* Complete.
 
 **06. Secrets from Golem**
 *What it builds:* `getSecretHandle` reads from a source that exists on the target (`wasi:config/store` or agent configuration), returns a clear error when absent. Test for found and not-found.

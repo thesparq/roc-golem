@@ -2,7 +2,7 @@
 
 - **Unit:** 05
 - **File:** `docs/specs/05-real-scheduling.md`
-- **Status:** Spec written
+- **Status:** Complete
 - **Phase:** Phase 1 — Make every effect honest
 - **Fixes:** `KI-04`, `docs/feature-checklist.md` test 17
 
@@ -187,15 +187,15 @@ Enhance `tooling/test_runtime.sh` to include Test #17 verification:
 
 To mark Unit 05 as complete, the following checks from `docs/testing.md` must be executed and reported:
 
-1. [ ] **WIT Binding Compilation:**
+1. [x] **WIT Binding Compilation:**
    `cargo check --manifest-path host/Cargo.toml --target wasm32-unknown-unknown --release --no-default-features` cleanly generates and compiles with `wasi:clocks/wall-clock@0.2.3`.
-2. [ ] **Unit Tests (Layer 2):**
+2. [x] **Unit Tests (Layer 2):**
    `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` passes all unit tests, including the new time calculation and scheduling mock tests.
-3. [ ] **Code Hygiene & Linting:**
+3. [x] **Code Hygiene & Linting:**
    `cargo fmt --check` and `cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings` report zero warnings or errors.
-4. [ ] **Roc Application Compilation & Component Validation (Layer 3):**
+4. [x] **Roc Application Compilation & Component Validation (Layer 3):**
    `./tooling/build.sh all` successfully builds all 4 agents (`counter`, `ai_tool`, `streaming_agent`, `canary_release`) and all pass `wasm-tools validate`.
-5. [ ] **Layer 4 Runtime Verification:**
+5. [x] **Layer 4 Runtime Verification:**
    `./tooling/test_runtime.sh` passes completely against a running local Golem server.
-6. [ ] **Feature Checklist & Progress Tracker:**
+6. [x] **Feature Checklist & Progress Tracker:**
    `docs/feature-checklist.md` test 17 updated to PASSED, and `docs/progress-tracker.md` updated with `KI-04` resolved.
