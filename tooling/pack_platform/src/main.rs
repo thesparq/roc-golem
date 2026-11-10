@@ -113,9 +113,9 @@ app [agent] {{
 ```
 
 ### Included Platform Artifacts
-- `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`
-- Precompiled `libhost.a` (static library for Wasm32 Golem Cloud host)
-- Precompiled `host.wasm` (Wasm core module)
+- `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`, `platform/Json.roc`
+- Precompiled `targets/wasm32/libroc_golem_host.a` (static library for Wasm32 Golem Cloud host)
+- Precompiled `libhost.a` (root compatibility static library)
 - Integrity Hash: BLAKE3 (base64url unpadded)
 "#
     );
@@ -137,6 +137,31 @@ fn compute_blake3_base64url(data: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(hash.as_bytes())
 }
 
+fn collect_files_recursively(
+    current_dir: &Path,
+    base_dir: &Path,
+    files: &mut Vec<(PathBuf, String)>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !current_dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(current_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        if file_name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            collect_files_recursively(&path, base_dir, files)?;
+        } else if path.is_file() {
+            let relative = path.strip_prefix(base_dir)?.to_string_lossy().replace('\\', "/");
+            files.push((path, relative));
+        }
+    }
+    Ok(())
+}
+
 fn create_reproducible_tar(
     root_dir: &Path,
     platform_dir: &Path,
@@ -146,38 +171,52 @@ fn create_reproducible_tar(
 
     let mut files_to_add: Vec<(PathBuf, String)> = Vec::new();
 
-    // 1. Platform roc files
-    for entry in fs::read_dir(platform_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() {
-            let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
-            files_to_add.push((path, file_name));
+    // 1. Platform files (recursive, preserves targets/wasm32/libroc_golem_host.a)
+    collect_files_recursively(platform_dir, platform_dir, &mut files_to_add)?;
+
+    // 2. Precompiled host files: ensure targets/wasm32/libroc_golem_host.a exists
+    let has_target_host = files_to_add
+        .iter()
+        .any(|(_, name)| name == "targets/wasm32/libroc_golem_host.a");
+    if !has_target_host {
+        let target_host = platform_dir.join("targets/wasm32/libroc_golem_host.a");
+        if target_host.exists() {
+            files_to_add.push((target_host, String::from("targets/wasm32/libroc_golem_host.a")));
+        } else {
+            let build_host = build_dir.join("libhost.a");
+            if build_host.exists() {
+                files_to_add.push((build_host, String::from("targets/wasm32/libroc_golem_host.a")));
+            }
         }
     }
 
-    // 2. Precompiled host files
-    let libhost_a = build_dir.join("libhost.a");
-    if libhost_a.exists() {
-        files_to_add.push((libhost_a, String::from("libhost.a")));
-    }
-    let host_wasm = build_dir.join("host.wasm");
-    if host_wasm.exists() {
-        files_to_add.push((host_wasm, String::from("host.wasm")));
+    // 3. Ensure root libhost.a exists for backward compatibility
+    let has_root_host = files_to_add.iter().any(|(_, name)| name == "libhost.a");
+    if !has_root_host {
+        let root_host = platform_dir.join("libhost.a");
+        if root_host.exists() {
+            files_to_add.push((root_host, String::from("libhost.a")));
+        } else {
+            let build_host = build_dir.join("libhost.a");
+            if build_host.exists() {
+                files_to_add.push((build_host, String::from("libhost.a")));
+            }
+        }
     }
 
-    // 3. License & Readme if available
+    // 4. License & Readme if available
     let license = root_dir.join("LICENSE");
-    if license.exists() {
+    if license.exists() && !files_to_add.iter().any(|(_, name)| name == "LICENSE") {
         files_to_add.push((license, String::from("LICENSE")));
     }
     let readme = root_dir.join("README.md");
-    if readme.exists() {
+    if readme.exists() && !files_to_add.iter().any(|(_, name)| name == "README.md") {
         files_to_add.push((readme, String::from("README.md")));
     }
 
     // Sort files alphabetically for deterministic archive
     files_to_add.sort_by(|a, b| a.1.cmp(&b.1));
+    files_to_add.dedup_by(|a, b| a.1 == b.1);
 
     for (file_path, archive_name) in files_to_add {
         let mut file = File::open(&file_path)?;

@@ -1,0 +1,1 @@
+package examples:counter; world counter { import golem:agent/host@2.0.0; export golem:agent/guest@2.0.0; }

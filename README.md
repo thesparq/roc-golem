@@ -11,7 +11,7 @@ A durable, agent-native WebAssembly platform for writing [Golem Cloud](https://g
 - **Zero-Bottleneck Serialization Bypass**: Read-only invocations (`registerReadOnly`) and ephemeral agents (`defineEphemeral`) bypass state re-serialization completely, achieving $O(1)$ zero-copy in-memory performance across invocations.
 - **Typed Method & Cross-Agent RPC**: Phantom-typed `Method(input, output)` handles provide end-to-end compile-time safety for method registration and cross-agent RPC (`rpc`, `rpcSchedule`, `rpcFireAndForget`).
 - **Universal Pass-Through Adapter**: The platform translation layer acts as a generic JSON/String bridge, letting your Roc application control strongly typed serialization and domain logic.
-- **Pre-Compiled Host Architecture**: The Rust host is pre-compiled into a static library (`libhost.a` / `host.wasm`), allowing app developers to build and componentize directly.
+- **Pre-Compiled Host Architecture**: The Rust host is pre-compiled into a static library (`platform/targets/wasm32/libroc_golem_host.a` and `platform/libhost.a`), allowing app developers to build and componentize directly.
 - **WebSocket & Streaming Support**: Built-in Golem WebSocket Client API (`websocketConnect`, `websocketSend`, `websocketReceive`, `websocketClose`) for bi-directional live streaming.
 - **Raw Binary I/O & Clean Boundary**: Full binary support (`List(U8)`) for filesystem, blobstore, key-value storage, and HTTP without lossy UTF-8 conversions (`readFileBytes`, `writeFileBytes`, `blobGetBytes`, `blobPutBytes`, `kvGetBytes`, `kvSetBytes`, `httpRequestBytes`).
 - **Opaque Secret Handles & Host Injection**: Keep tokens and API keys out of guest memory with `SecretHandle` (`U32`) and host-mediated header injection (`SecretHeader`), plus opt-in `revealSecret`.
@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.0.0/L3B2UI-CU-8bc5XFXdXfB_KMYRZ3ZWWmXZETgCKvEjM.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.0.0/qFTa3M6BipaGDZC1og2gfBo5N4BJaNMtrRtXeBNPM4A.tar.zst",
 }
 
 import pf.Json
@@ -156,20 +156,30 @@ roc-golem/
 │   ├── main.roc                # Roc Platform definition & host entry points
 │   ├── Golem.roc               # Idiomatic Roc Golem SDK (Agent, WebSocket, Timers, RPC, HTTP)
 │   ├── Types.roc               # Core data types (Metadata, ToolDefinition, ToolCall)
-│   └── Effect.roc              # Low-level host effect declarations
+│   ├── Effect.roc              # Low-level host effect declarations
+│   ├── Json.roc                # JSON serialization and decoding utilities
+│   └── targets/
+│       └── wasm32/
+│           └── libroc_golem_host.a # Pre-compiled host static library for wasm32
 ├── examples/
 │   ├── counter/
-│   │   └── main.roc            # Stateful counter agent example
+│   │   ├── main.roc            # Stateful counter agent example
+│   │   └── wit/world.wit       # Component-specific WIT definition
 │   ├── ai_tool/
-│   │   └── main.roc            # AI agent with tool declarations example
+│   │   ├── main.roc            # AI agent with tool declarations example
+│   │   └── wit/world.wit       # Component-specific WIT definition
 │   ├── streaming_agent/
-│   │   └── main.roc            # WebSocket streaming agent example
+│   │   ├── main.roc            # WebSocket streaming agent example
+│   │   └── wit/world.wit       # Component-specific WIT definition
 │   └── canary_release/
 │       ├── ReleaseCoordinator.roc  # Stateful canary coordinator with typed methods & read-only bypass
 │       ├── DiagnosticsWorker.roc   # Stateless (ephemeral) diagnostics worker
-│       └── main.roc                # Multi-agent component bundle (bundle([Coordinator, Worker]))
+│       ├── main.roc                # Multi-agent component bundle (bundle([Coordinator, Worker]))
+│       └── wit/world.wit       # Component-specific WIT definition
 ├── tooling/
 │   ├── build.sh                # Multi-phase build, package, & release script
+│   ├── test_consumer.sh        # Consumer package smoke test
+│   ├── test_runtime.sh         # Layer 4 live runtime test harness
 │   └── pack_platform/          # Platform tarball & BLAKE3 base64url packaging tool
 ├── LICENSE                     # Apache 2.0 License
 └── golem.yaml                  # Golem Cloud application manifest
@@ -183,11 +193,14 @@ roc-golem/
 ```bash
 ./tooling/build.sh platform
 ```
-Produces `build/libhost.a` and `build/host.wasm`.
+Produces `platform/targets/wasm32/libroc_golem_host.a` and `platform/libhost.a`.
 
 ### 2. Build Any Roc Agent
 ```bash
-# Build streaming agent
+# Build all agents
+./tooling/build.sh all
+
+# Or build single agent
 ./tooling/build.sh streaming_agent
 
 # Or build from path
@@ -196,11 +209,21 @@ Produces `build/libhost.a` and `build/host.wasm`.
 
 ### 3. Deploy to Golem Cloud
 ```bash
-golem component add --component-name streaming-agent build/streaming_agent.wasm
-golem worker add --component-name streaming-agent --worker-name stream-worker-1
-golem worker invoke-and-await --component-name streaming-agent --worker-name stream-worker-1 \
-  --function "golem:agent/guest@2.0.0.{invoke}" \
-  --args '["handle-message", "connect", "anonymous"]'
+# Using Golem CLI (v1.2.5+):
+# 1. Start local server (if testing locally)
+golem server run
+
+# 2. Build and deploy using the application manifest (golem.yaml)
+golem app build
+golem app deploy
+
+# Or deploy manually via REST API / curl:
+curl -F "name=streaming" -F "component=@build/streaming_agent_agent.wasm" http://127.0.0.1:9881/v1/components
+
+# 3. Create a worker and invoke
+golem worker invoke "streaming/stream-worker-1" \
+  'golem:agent/guest@2.0.0.{initialize}' \
+  '"streaming-agent"' 'tuple([unstructured-text(inline({data: "{}"}))])' 'anonymous'
 ```
 
 ---

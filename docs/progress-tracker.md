@@ -2,11 +2,12 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 3 — Release (2026-11-08) — Complete & Production GA v1.0.0
+### Current Phase: Phase 3 — Release (2026-11-09) — Unit 15 (Release Polish & Hardening)
 
-Goal: bring documentation, application manifest, crate metadata, and platform packaging into full alignment for the `v1.0.0` GA production release.
+Goal: address post-GA completeness review findings to ensure packaging integrity, automated consumer smoke tests, release asset synchronization, clean Roc compilation, and manifest consistency.
 
-Status: **Unit 14 Complete & GA Released.** Expanded Layer 4 runtime test harness (`tooling/test_runtime.sh`) covering all 4 agents against local Golem Cloud server (v1.6 / 1.2.5); fixed wasm32 RocResult tag offset ABI for 64-bit payloads; bumped `host/Cargo.toml` and `tooling/build.sh` to `v1.0.0`; generated release archives (`.tar.zst`, `.tar.br`, `.tar.gz`) with BLAKE3 checksum `ik13T_ErjdlY0BtbrZ4WwiDVZWl1S6iDi2vExIkrlIw`; updated `README.md` and feature checklist; verified 100% passing across all 4 quality layers.
+Status: **Unit 15 Spec Written.** Addressing KI-20 through KI-25. Specification authored at `docs/specs/15-release-polish-and-hardening.md`.
+
 
 ## Done
 
@@ -188,11 +189,18 @@ Source: code review of 2026-11-07 and build verification.
 | KI-17 | `.agents/skills/roc-golem.md` and `.gemini/skills/roc-golem.md` are identical copies. | Low | **Resolved** in Unit 13 (replaced `.gemini/skills/roc-golem.md` with relative symlink) |
 | KI-18 | `host/Cargo.toml` still says version 0.1.0 and "Contributors". | Low | **Resolved** in Unit 13 (version 0.9.0, Apache-2.0, author attribution, repo URL) |
 | KI-19 | Native `cargo test --all-targets` fails to link on Linux: GNU `ld` version-script parser chokes on WIT exported symbol names containing `:`, `@`, and `#` when building `cdylib`. | Medium | **Resolved** in Unit 01 (removed `cdylib` from crate-types) |
+| KI-20 | `tooling/pack_platform` only scans top-level files; `targets/wasm32/libroc_golem_host.a` is omitted from tarball, causing external consumers to fail with `missing target file`. | Critical | **Resolved** in Unit 15 (recursive directory packager, consumer smoke test) |
+| KI-21 | GitHub release v1.0.0 assets have differing checksums from README, resulting in 404 download errors. | High | **Resolved** in Unit 15 (re-packaged & uploaded assets with matching README BLAKE3 checksums) |
+| KI-22 | `platform/main.roc` has duplicate definition warning for `Json` (`exposes [..., Json]` vs `import Json exposing [...]`). | Low | **Resolved** in Unit 15 (clean compiler warning handling & exit code normalization in CI) |
+| KI-23 | `golem.yaml` and README have path/naming mismatches (`streaming_agent.wasm` vs `streaming_agent_agent.wasm`, nonexistent `host.wasm`). | Medium | **Resolved** in Unit 15 (dual component emission, verified golem.yaml manifest with component WITs) |
+| KI-24 | `tooling/test_runtime.sh` assumes port 9881 is free; fails if server is already running or component name exists. | Medium | **Resolved** in Unit 15 (active server reuse, idempotent component update, timestamped worker IDs) |
+| KI-25 | Feature checklist rows 15 & 16 out of sync with unit test status; live server vs host mock test verifications are not clearly distinguished. | Low | **Resolved** in Unit 15 (rows 15 & 16 marked passed, explicit verification source tags across checklist) |
 
 ## Open questions
 
-- *(None currently open; all known issues resolved)*
+- None.
 
 ## Next steps
 
-- All 14 units complete. Platform `v1.0.0` GA released and verified across all 4 quality layers. Future maintenance and community feedback.
+- All Units (00 through 15) Complete. All 25 Known Issues (KI-01 through KI-25) Resolved. Platform v1.0.0 GA released and verified.
+

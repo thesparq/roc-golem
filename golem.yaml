@@ -6,18 +6,26 @@
 components:
   canary-release:
     componentWasm: "build/canary_release_agent.wasm"
+    sourceWit: "examples/canary_release/wit"
+    generatedWit: "examples/canary_release/wit"
     build:
       - command: "./tooling/build.sh canary_release"
   counter:
     componentWasm: "build/counter_agent.wasm"
+    sourceWit: "examples/counter/wit"
+    generatedWit: "examples/counter/wit"
     build:
       - command: "./tooling/build.sh counter"
   ai-tool:
     componentWasm: "build/ai_tool_agent.wasm"
+    sourceWit: "examples/ai_tool/wit"
+    generatedWit: "examples/ai_tool/wit"
     build:
       - command: "./tooling/build.sh ai_tool"
   streaming-agent:
-    componentWasm: "build/streaming_agent.wasm"
+    componentWasm: "build/streaming_agent_agent.wasm"
+    sourceWit: "examples/streaming_agent/wit"
+    generatedWit: "examples/streaming_agent/wit"
     build:
       - command: "./tooling/build.sh streaming_agent"
 

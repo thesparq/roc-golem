@@ -74,6 +74,10 @@ jobs:
         run: |
           ./tooling/build.sh release "${{ steps.vars.outputs.tag }}" "${{ github.repository }}"
 
+      - name: Verify Packaged Consumer Build
+        run: |
+          ./tooling/test_consumer.sh "dist/roc-golem-${{ steps.vars.outputs.tag }}.tar.zst"
+
       - name: Create GitHub Release & Upload Assets
         uses: softprops/action-gh-release@v2
         with:

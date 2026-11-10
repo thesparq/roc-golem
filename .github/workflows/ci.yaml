@@ -94,4 +94,6 @@ jobs:
           echo "==> Verifying release package files..."
           test -f dist/checksums.txt
           test -f dist/release_notes.md
+          echo "==> Running Consumer Package Smoke Test..."
+          ./tooling/test_consumer.sh
           echo "CI Pipeline completed successfully!"

@@ -91,3 +91,10 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *What it builds:* Deploys compiled Roc agents to live Golem Cloud worker infrastructure; verifies durable state persistence across worker suspension and restarts; verifies bi-directional WebSocket streaming on live Golem infrastructure; tags `v1.0.0` Production Release.
 *Dependencies:* 13.
 *Status:* Complete.
+
+**15. Release polish, packaging integrity and production hardening**
+*What it builds:* Includes `targets/wasm32/libroc_golem_host.a` in platform release archives; adds automated consumer verification smoke test; re-packages and synchronizes GitHub release assets with README checksums; fixes duplicate Json scope warning in `main.roc`; aligns manifest component paths with build outputs; hardens `test_runtime.sh` for shared or running Golem servers; reconciles feature checklist and progress tracker.
+*Dependencies:* 14.
+*Fixes:* KI-20, KI-21, KI-22, KI-23, KI-24, KI-25.
+*Status:* Complete.
+

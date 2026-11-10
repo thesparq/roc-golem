@@ -133,7 +133,7 @@ build_app() {
 
     # Step 1: Format & validate Roc code
     echo "==> Formatting Roc code ($APP_FILE)..."
-    roc fmt "$APP_FILE" "$PLATFORM_DIR/main.roc" || true
+    roc fmt "$APP_FILE" "$PLATFORM_DIR/main.roc"
 
     # Step 2: Compile Roc application and host into core WebAssembly module
     echo "==> Compiling Roc application to WebAssembly core module ($CORE_WASM)..."
@@ -148,7 +148,8 @@ build_app() {
     # Step 3: Componentize WASM module into Golem Component Model
     echo "==> Componentizing WASM module into Golem Component Model ($OUTPUT_COMPONENT)..."
     wasm-tools component new "$CORE_WASM" -o "$OUTPUT_COMPONENT"
-    if [[ "$TARGET_APP" == *"_agent" ]]; then
+    # Ensure both ${TARGET_APP}.wasm and ${TARGET_APP}_agent.wasm exist for manifest compatibility
+    if [[ "$OUTPUT_COMPONENT" != "$BUILD_DIR/${TARGET_APP}.wasm" ]]; then
         cp -f "$OUTPUT_COMPONENT" "$BUILD_DIR/${TARGET_APP}.wasm"
     fi
 
@@ -168,7 +169,9 @@ package_platform() {
     local TAG="${1:-v1.0.0}"
     local REPO="${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
 
-    build_platform
+    if [[ ! -f "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a" || ! -f "$PRECOMPILED_HOST_A" ]]; then
+        build_platform
+    fi
 
     echo "============================================================"
     echo " [Phase: Platform Package] Packaging Release Artifacts"
