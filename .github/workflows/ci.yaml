@@ -79,6 +79,7 @@ jobs:
           echo "==> Running Roc platform tests..."
           roc test tests/envelope.roc || [ $? -eq 2 ]
           roc test tests/json_roundtrip.roc || [ $? -eq 2 ]
+          roc test tests/dx_primitives.roc || [ $? -eq 2 ]
 
       - name: "Layer 3: App Builds & Packaging"
         run: |

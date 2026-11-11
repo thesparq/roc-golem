@@ -9,16 +9,17 @@ use sha2::{Digest, Sha256};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    
+
     let root_dir = find_project_root()?;
-    let platform_dir = get_arg(&args, "--platform-dir").unwrap_or_else(|| root_dir.join("platform"));
+    let platform_dir =
+        get_arg(&args, "--platform-dir").unwrap_or_else(|| root_dir.join("platform"));
     let build_dir = get_arg(&args, "--build-dir").unwrap_or_else(|| root_dir.join("build"));
     let out_dir = get_arg(&args, "--out-dir").unwrap_or_else(|| root_dir.join("dist"));
-    
+
     let tag = get_arg_str(&args, "--tag")
         .or_else(|| env::var("TAG_NAME").ok())
         .unwrap_or_else(|| String::from("v0.1.0"));
-        
+
     let repo = get_arg_str(&args, "--repo")
         .or_else(|| env::var("GITHUB_REPOSITORY").ok())
         .unwrap_or_else(|| String::from("thesparq/roc-golem"));
@@ -34,7 +35,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build deterministic in-memory tarball
     let tar_bytes = create_reproducible_tar(&root_dir, &platform_dir, &build_dir)?;
-    println!("==> Created reproducible tar archive ({} bytes)", tar_bytes.len());
+    println!(
+        "==> Created reproducible tar archive ({} bytes)",
+        tar_bytes.len()
+    );
 
     // 1. Zstandard (.tar.zst)
     let zst_bytes = compress_zstd(&tar_bytes)?;
@@ -44,7 +48,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&zst_path, &zst_bytes)?;
     let named_zst = out_dir.join(format!("roc-golem-{}.tar.zst", tag));
     fs::copy(&zst_path, &named_zst)?;
-    println!("==> Packaged Zstandard: {} ({} bytes)", zst_filename, zst_bytes.len());
+    println!(
+        "==> Packaged Zstandard: {} ({} bytes)",
+        zst_filename,
+        zst_bytes.len()
+    );
 
     // 2. Brotli (.tar.br)
     let br_bytes = compress_brotli(&tar_bytes)?;
@@ -54,7 +62,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&br_path, &br_bytes)?;
     let named_br = out_dir.join(format!("roc-golem-{}.tar.br", tag));
     fs::copy(&br_path, &named_br)?;
-    println!("==> Packaged Brotli:    {} ({} bytes)", br_filename, br_bytes.len());
+    println!(
+        "==> Packaged Brotli:    {} ({} bytes)",
+        br_filename,
+        br_bytes.len()
+    );
 
     // 3. Gzip (.tar.gz)
     let gz_bytes = compress_gzip(&tar_bytes)?;
@@ -64,7 +76,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&gz_path, &gz_bytes)?;
     let named_gz = out_dir.join(format!("roc-golem-{}.tar.gz", tag));
     fs::copy(&gz_path, &named_gz)?;
-    println!("==> Packaged Gzip:      {} ({} bytes)", gz_filename, gz_bytes.len());
+    println!(
+        "==> Packaged Gzip:      {} ({} bytes)",
+        gz_filename,
+        gz_bytes.len()
+    );
 
     // Write Checksums file
     let mut checksums = String::new();
@@ -82,12 +98,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&checksums_path, checksums)?;
 
     // Generate Release URL & Markdown Snippet
-    let zst_url = format!("https://github.com/{}/releases/download/{}/{}", repo, tag, zst_filename);
-    let br_url = format!("https://github.com/{}/releases/download/{}/{}", repo, tag, br_filename);
-    let gz_url = format!("https://github.com/{}/releases/download/{}/{}", repo, tag, gz_filename);
+    let zst_url = format!(
+        "https://github.com/{}/releases/download/{}/{}",
+        repo, tag, zst_filename
+    );
+    let br_url = format!(
+        "https://github.com/{}/releases/download/{}/{}",
+        repo, tag, br_filename
+    );
+    let gz_url = format!(
+        "https://github.com/{}/releases/download/{}/{}",
+        repo, tag, gz_filename
+    );
 
     let snippet_md = format!(
-r#"## 📦 Roc Platform Release: `{tag}`
+        r#"## 📦 Roc Platform Release: `{tag}`
 
 To use this release of `roc-golem` in your Roc application, copy and paste this platform URL into your `main.roc` app header:
 
@@ -155,7 +180,10 @@ fn collect_files_recursively(
         if path.is_dir() {
             collect_files_recursively(&path, base_dir, files)?;
         } else if path.is_file() {
-            let relative = path.strip_prefix(base_dir)?.to_string_lossy().replace('\\', "/");
+            let relative = path
+                .strip_prefix(base_dir)?
+                .to_string_lossy()
+                .replace('\\', "/");
             files.push((path, relative));
         }
     }
@@ -181,11 +209,17 @@ fn create_reproducible_tar(
     if !has_target_host {
         let target_host = platform_dir.join("targets/wasm32/libroc_golem_host.a");
         if target_host.exists() {
-            files_to_add.push((target_host, String::from("targets/wasm32/libroc_golem_host.a")));
+            files_to_add.push((
+                target_host,
+                String::from("targets/wasm32/libroc_golem_host.a"),
+            ));
         } else {
             let build_host = build_dir.join("libhost.a");
             if build_host.exists() {
-                files_to_add.push((build_host, String::from("targets/wasm32/libroc_golem_host.a")));
+                files_to_add.push((
+                    build_host,
+                    String::from("targets/wasm32/libroc_golem_host.a"),
+                ));
             }
         }
     }

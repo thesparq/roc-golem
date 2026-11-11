@@ -1,1 +1,11 @@
-package examples:canary-release; world canary-release { import golem:agent/host@2.0.0; export golem:agent/guest@2.0.0; }
+package examples:canary-release;
+
+world canary-release {
+  import golem:agent/common@2.0.0;
+  import golem:agent/host@2.0.0;
+  import golem:core/types@1.5.0;
+  import wasi:clocks/monotonic-clock@0.2.3;
+  import wasi:clocks/wall-clock@0.2.3;
+  import wasi:io/poll@0.2.3;
+  export golem:agent/guest@2.0.0;
+}
