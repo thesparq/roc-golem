@@ -1,88 +1,40 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Json
-import pf.Golem exposing [Agent, defineAgent]
+import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
 
 # Agent State
 State : {
 	count : I64,
 }
 
-agent : Agent(State)
-agent = defineAgent({
-	init: |_config|
-		Ok({ count: 0.I64 }),
+getCountTool = tool({
+	name: "get_count",
+	description: "Returns current counter value",
+	params: [],
+	execute: |state, _args| Ok("{\"count\":${Str.inspect(state.count)}}"),
+})
 
-	handleMessage: |state, message|
+agent : Agent(State)
+agent = Golem.agent({
+	name: "counter-agent",
+	initial: { count: 0.I64 },
+	tools: [getCountTool],
+	onMessage: |state, message|
 		match message {
 			"increment" => {
 				nextCount = state.count + 1.I64
-				Ok({
-					state: { count: nextCount },
-					response: "Counter incremented to ${Str.inspect(nextCount)}",
-				})
+				reply({ count: nextCount }, "Counter incremented to ${Str.inspect(nextCount)}")
 			}
 
 			"decrement" => {
 				nextCount = state.count - 1.I64
-				Ok({
-					state: { count: nextCount },
-					response: "Counter decremented to ${Str.inspect(nextCount)}",
-				})
+				reply({ count: nextCount }, "Counter decremented to ${Str.inspect(nextCount)}")
 			}
 
 			"get" =>
-				Ok({
-					state,
-					response: "Current count is ${Str.inspect(state.count)}",
-				})
+				readOnly(state, "Current count is ${Str.inspect(state.count)}")
 
 			_ =>
-				Ok({
-					state,
-					response: "Unknown command '${message}'. Available: increment, decrement, get",
-				})
+				readOnly(state, "Unknown command '${message}'. Available: increment, decrement, get")
 		},
-
-	handleToolCall: |state, toolCall|
-		match toolCall.name {
-			"get_count" =>
-				Ok({
-					state,
-					result: {
-						id: toolCall.id,
-						success: True,
-						output: Json.encode({ count: state.count }),
-					},
-				})
-
-			_ =>
-				Ok({
-					state,
-					result: {
-						id: toolCall.id,
-						success: False,
-						output: "Unknown tool ${toolCall.name}",
-					},
-				})
-		},
-
-	metadata: {
-		name: "counter-agent",
-		version: "1.0.0",
-		description: "A durable Roc counter agent running on Golem Cloud",
-		tools: [
-			{
-				name: "get_count",
-				description: "Returns current counter value",
-				parameters: [],
-			},
-		],
-	},
-
-	serializeState: |state|
-		Json.encode(state),
-
-	deserializeState: |stateJson|
-		Ok(Json.decode_or(stateJson, { count: 0.I64 })),
 })

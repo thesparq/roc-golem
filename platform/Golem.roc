@@ -4,9 +4,33 @@ module [
 	Method,
 	Spec,
 	Handler,
+	Tool,
+	StatelessTool,
 	method,
 	define,
 	defineEphemeral,
+	agent,
+	agentWith,
+	simpleAgent,
+	ephemeral,
+	simpleEphemeral,
+	tool,
+	toolJson,
+	statefulTool,
+	statelessTool,
+	statelessToolJson,
+	statelessToTool,
+	param,
+	optionalParam,
+	reply,
+	readOnly,
+	stay,
+	fail,
+	replyJson,
+	readOnlyJson,
+	dispatchTool,
+	dispatchMessage,
+	dispatchStatelessTool,
 	withTools,
 	withToolHandler,
 	withStatelessToolHandler,
@@ -103,6 +127,7 @@ import Types exposing [
 	MethodDeclaration,
 	AgentMode,
 	ToolDefinition,
+	ToolParameter,
 	ToolCall,
 	ToolResult,
 	PersistenceMode,
@@ -161,6 +186,494 @@ ErasedAgent : {
 Agent(state) : {
 	agents : List(ErasedAgent),
 }
+
+## Unified tool declaration with execution logic
+Tool(state) : {
+	definition : ToolDefinition,
+	execute : state, Str -> Result({ state : state, stateChanged : Bool, output : Str }, Str),
+}
+
+## Stateless tool declaration
+StatelessTool : {
+	definition : ToolDefinition,
+	execute : Str -> Result(Str, Str),
+}
+
+## Construct a read-only tool that queries state
+tool :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : state, Str -> Result(Str, Str),
+	} -> Tool(state)
+tool = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: |st, args|
+		match (cfg.execute)(st, args) {
+			Ok(output) => Ok({ state: st, stateChanged: False, output })
+			Err(err) => Err(err)
+		},
+}
+
+## Construct a read-only tool that returns JSON
+toolJson :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : state, Str -> Result(a, Str),
+	} -> Tool(state)
+		where [a.Json.Encodable([])]
+toolJson = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: |st, args|
+		match (cfg.execute)(st, args) {
+			Ok(val) => Ok({ state: st, stateChanged: False, output: Json.to_str(val) })
+			Err(err) => Err(err)
+		},
+}
+
+## Construct a stateful tool that can mutate state
+statefulTool :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : state, Str -> Result({ state : state, stateChanged : Bool, output : Str }, Str),
+	} -> Tool(state)
+statefulTool = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: cfg.execute,
+}
+
+## Construct a stateless tool
+statelessTool :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : Str -> Result(Str, Str),
+	} -> StatelessTool
+statelessTool = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: cfg.execute,
+}
+
+## Construct a stateless tool that returns JSON
+statelessToolJson :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : Str -> Result(a, Str),
+	} -> StatelessTool
+		where [a.Json.Encodable([])]
+statelessToolJson = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: |args|
+		match (cfg.execute)(args) {
+			Ok(val) => Ok(Json.to_str(val))
+			Err(err) => Err(err)
+		},
+}
+
+## Lift a StatelessTool into a Tool(state)
+statelessToTool : StatelessTool -> Tool(state)
+statelessToTool = |st| {
+	definition: st.definition,
+	execute: |state, args|
+		match (st.execute)(args) {
+			Ok(output) => Ok({ state, stateChanged: False, output })
+			Err(err) => Err(err)
+		},
+}
+
+## Shorthand constructor for required string tool parameter
+param : Str, Str -> ToolParameter
+param = |name, description| {
+	name,
+	description,
+	paramType: "string",
+	required: True,
+}
+
+## Shorthand constructor for optional string tool parameter
+optionalParam : Str, Str -> ToolParameter
+optionalParam = |name, description| {
+	name,
+	description,
+	paramType: "string",
+	required: False,
+}
+
+## Response Primitives
+reply : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str)
+reply = |nextState, responseText|
+	Ok({ state: nextState, stateChanged: True, response: responseText })
+
+readOnly : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str)
+readOnly = |currState, responseText|
+	Ok({ state: currState, stateChanged: False, response: responseText })
+
+stay : state -> Result({ state : state, stateChanged : Bool, response : Str }, Str)
+stay = |currState|
+	Ok({ state: currState, stateChanged: False, response: "" })
+
+fail : Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str)
+fail = |errMsg|
+	Err(errMsg)
+
+replyJson : state, a -> Result({ state : state, stateChanged : Bool, response : Str }, Str) where [a.Json.Encodable([])]
+replyJson = |nextState, val|
+	Ok({ state: nextState, stateChanged: True, response: Json.to_str(val) })
+
+readOnlyJson : state, a -> Result({ state : state, stateChanged : Bool, response : Str }, Str) where [a.Json.Encodable([])]
+readOnlyJson = |currState, val|
+	Ok({ state: currState, stateChanged: False, response: Json.to_str(val) })
+
+findTool : List(Tool(state)), Str -> Result(Tool(state), [NotFound])
+findTool = |toolList, targetName|
+	match toolList {
+		[] => Err(NotFound)
+		[first, .. as rest] =>
+			if first.definition.name == targetName {
+				Ok(first)
+			} else {
+				findTool(rest, targetName)
+			}
+	}
+
+findStatelessTool : List(StatelessTool), Str -> Result(StatelessTool, [NotFound])
+findStatelessTool = |toolList, targetName|
+	match toolList {
+		[] => Err(NotFound)
+		[first, .. as rest] =>
+			if first.definition.name == targetName {
+				Ok(first)
+			} else {
+				findStatelessTool(rest, targetName)
+			}
+	}
+
+## Pure dispatcher for tool invocations
+dispatchTool :
+	List(Tool(state)), state, ToolCall, (state -> Str) -> Result({ nextStateJson : Str, stateChanged : Bool, result : ToolResult }, Str)
+dispatchTool = |tools, st, call, serializeState|
+	match findTool(tools, call.name) {
+		Err(_) =>
+			Ok({
+				nextStateJson: "",
+				stateChanged: False,
+				result: {
+					id: call.id,
+					success: False,
+					output: "Unknown tool '${call.name}'",
+				},
+			})
+		Ok(targetTool) =>
+			match (targetTool.execute)(st, call.arguments) {
+				Ok(res) => {
+					nextStateJson =
+						if res.stateChanged {
+							serializeState(res.state)
+						} else {
+							""
+						}
+					Ok({
+						nextStateJson,
+						stateChanged: res.stateChanged,
+						result: {
+							id: call.id,
+							success: True,
+							output: res.output,
+						},
+					})
+				}
+				Err(errMsg) =>
+					Ok({
+						nextStateJson: "",
+						stateChanged: False,
+						result: {
+							id: call.id,
+							success: False,
+							output: errMsg,
+						},
+					})
+			}
+	}
+
+## Pure dispatcher for message invocations
+dispatchMessage :
+	(state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str)), state, Str, (state -> Str) -> Result({ nextStateJson : Str, stateChanged : Bool, response : Str }, Str)
+dispatchMessage = |onMessage, st, msgStr, serializeState|
+	match onMessage(st, msgStr) {
+		Ok(res) => {
+			nextStateJson =
+				if res.stateChanged {
+					serializeState(res.state)
+				} else {
+					""
+				}
+			Ok({
+				nextStateJson,
+				stateChanged: res.stateChanged,
+				response: res.response,
+			})
+		}
+		Err(err) => Err(err)
+	}
+
+## Pure dispatcher for stateless tool invocations
+dispatchStatelessTool :
+	List(StatelessTool), ToolCall -> Result({ nextStateJson : Str, stateChanged : Bool, result : ToolResult }, Str)
+dispatchStatelessTool = |tools, call|
+	match findStatelessTool(tools, call.name) {
+		Err(_) =>
+			Ok({
+				nextStateJson: "",
+				stateChanged: False,
+				result: {
+					id: call.id,
+					success: False,
+					output: "Unknown tool '${call.name}'",
+				},
+			})
+		Ok(targetTool) =>
+			match (targetTool.execute)(call.arguments) {
+				Ok(output) =>
+					Ok({
+						nextStateJson: "",
+						stateChanged: False,
+						result: {
+							id: call.id,
+							success: True,
+							output,
+						},
+					})
+				Err(errMsg) =>
+					Ok({
+						nextStateJson: "",
+						stateChanged: False,
+						result: {
+							id: call.id,
+							success: False,
+							output: errMsg,
+						},
+					})
+			}
+	}
+
+## Canonical Stateful Agent constructor with custom codecs and metadata
+agentWith :
+	{
+		name : Str,
+		version : Str,
+		description : Str,
+		initial : state,
+		onMessage : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str),
+		tools : List(Tool(state)),
+		serializeState : state -> Str,
+		deserializeState : Str -> Result(state, Str),
+	} -> Agent(state)
+agentWith = |cfg| {
+	erased : ErasedAgent
+	erased = {
+		metadata: {
+			name: cfg.name,
+			version: cfg.version,
+			description: cfg.description,
+			tools: List.map(cfg.tools, |t| t.definition),
+			methods: [],
+			mode: Durable,
+			httpMount: None,
+		},
+		init: |configStr|
+			if Str.is_empty(configStr) or configStr == "{}" {
+				Ok((cfg.serializeState)(cfg.initial))
+			} else {
+				match (cfg.deserializeState)(configStr) {
+					Ok(parsed) => Ok((cfg.serializeState)(parsed))
+					Err(_) => Ok((cfg.serializeState)(cfg.initial))
+				}
+			},
+		invokeMethod: |methodName, stateJson, inputJson|
+			match findTool(cfg.tools, methodName) {
+				Ok(targetTool) =>
+					match (cfg.deserializeState)(stateJson) {
+						Err(e) => Err("Failed to deserialize state: ${e}")
+						Ok(st) =>
+							match (targetTool.execute)(st, inputJson) {
+								Ok(res) => {
+									nextStateJson =
+										if res.stateChanged {
+											(cfg.serializeState)(res.state)
+										} else {
+											""
+										}
+									Ok({
+										nextStateJson,
+										stateChanged: res.stateChanged,
+										out: res.output,
+									})
+								}
+								Err(err) => Err(err)
+							}
+					}
+				Err(_) =>
+					match (cfg.deserializeState)(stateJson) {
+						Err(e) => Err("Failed to deserialize state: ${e}")
+						Ok(st) =>
+							match (cfg.onMessage)(st, inputJson) {
+								Ok(res) => {
+									nextStateJson =
+										if res.stateChanged {
+											(cfg.serializeState)(res.state)
+										} else {
+											""
+										}
+									Ok({
+										nextStateJson,
+										stateChanged: res.stateChanged,
+										out: res.response,
+									})
+								}
+								Err(err) => Err(err)
+							}
+					}
+			},
+		handleToolCall: |stateJson, call|
+			match (cfg.deserializeState)(stateJson) {
+				Err(e) => Err("Failed to deserialize state: ${e}")
+				Ok(st) => dispatchTool(cfg.tools, st, call, cfg.serializeState)
+			},
+		handleMessage: |stateJson, msgStr|
+			match (cfg.deserializeState)(stateJson) {
+				Err(e) => Err("Failed to deserialize state: ${e}")
+				Ok(st) => dispatchMessage(cfg.onMessage, st, msgStr, cfg.serializeState)
+			},
+	}
+	{ agents: [erased] }
+}
+
+## Canonical Stateful Agent constructor with default JSON state serialization
+agent :
+	{
+		name : Str,
+		initial : state,
+		onMessage : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str),
+		tools : List(Tool(state)),
+	} -> Agent(state)
+		where [state.Json.Encodable([]), state.Json.Parseable([InvalidJson(Str), ..errs])]
+agent = |cfg|
+	agentWith({
+		name: cfg.name,
+		version: "1.0.0",
+		description: "",
+		initial: cfg.initial,
+		onMessage: cfg.onMessage,
+		tools: cfg.tools,
+		serializeState: |st| Json.to_str(st),
+		deserializeState: |str|
+			match Json.parse(str) {
+				Ok(val) => Ok(val)
+				Err(InvalidJson(msg)) => Err("Invalid JSON: ${msg}")
+				Err(_) => Ok(cfg.initial)
+			},
+	})
+
+## Canonical Stateful Agent constructor without tools
+simpleAgent :
+	{
+		name : Str,
+		initial : state,
+		onMessage : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str),
+	} -> Agent(state)
+		where [state.Json.Encodable([]), state.Json.Parseable([InvalidJson(Str), ..errs])]
+simpleAgent = |cfg|
+	agent({
+		name: cfg.name,
+		initial: cfg.initial,
+		tools: [],
+		onMessage: cfg.onMessage,
+	})
+
+## Canonical Ephemeral Agent constructor with tools
+ephemeral :
+	{
+		name : Str,
+		onMessage : Str -> Result(Str, Str),
+		tools : List(StatelessTool),
+	} -> Agent({})
+ephemeral = |cfg| {
+	erased : ErasedAgent
+	erased = {
+		metadata: {
+			name: cfg.name,
+			version: "1.0.0",
+			description: "",
+			tools: List.map(cfg.tools, |t| t.definition),
+			methods: [],
+			mode: Ephemeral,
+			httpMount: None,
+		},
+		init: |_| Ok("{}"),
+		invokeMethod: |methodName, _stateJson, inputJson|
+			match findStatelessTool(cfg.tools, methodName) {
+				Ok(targetTool) =>
+					match (targetTool.execute)(inputJson) {
+						Ok(out) => Ok({ nextStateJson: "", stateChanged: False, out })
+						Err(err) => Err(err)
+					}
+				Err(_) =>
+					match (cfg.onMessage)(inputJson) {
+						Ok(out) => Ok({ nextStateJson: "", stateChanged: False, out })
+						Err(err) => Err(err)
+					}
+			},
+		handleToolCall: |_stateJson, call|
+			dispatchStatelessTool(cfg.tools, call),
+		handleMessage: |_stateJson, msgStr|
+			match (cfg.onMessage)(msgStr) {
+				Ok(response) => Ok({ nextStateJson: "", stateChanged: False, response })
+				Err(err) => Err(err)
+			},
+	}
+	{ agents: [erased] }
+}
+
+## Canonical Ephemeral Agent constructor without tools
+simpleEphemeral :
+	{
+		name : Str,
+		onMessage : Str -> Result(Str, Str),
+	} -> Agent({})
+simpleEphemeral = |cfg|
+	ephemeral({
+		name: cfg.name,
+		onMessage: cfg.onMessage,
+		tools: [],
+	})
 
 ## Define a stateful (Durable) agent
 define :
@@ -779,7 +1292,7 @@ rpcTypedInstance = |targetWorker, constructor, m, inputVal, encodeInput, decodeO
 		Effect.rpcInvoke(targetWorker, constructor, m.name, payload),
 		|res|
 			match res {
-				Ok(reply) => decodeOutput(reply)
+				Ok(resp) => decodeOutput(resp)
 				Err(err) => Err(err)
 			},
 	)

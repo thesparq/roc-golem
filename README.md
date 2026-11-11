@@ -30,34 +30,46 @@ app [agent] {
     pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.0.0/qFTa3M6BipaGDZC1og2gfBo5N4BJaNMtrRtXeBNPM4A.tar.zst",
 }
 
-import pf.Json
-import pf.Golem exposing [Agent, defineAgent]
+import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
 
 State : { count : I64 }
 
+# Unified tool definition (schema + handler bundled together)
+getCountTool = tool({
+    name: "get_count",
+    description: "Returns current counter value",
+    params: [],
+    execute: |state, _args| Ok("{\"count\":${Str.inspect(state.count)}}"),
+})
+
 agent : Agent(State)
-agent = defineAgent({
-    init: |_config| Ok({ count: 0.I64 }),
-    handleMessage: |state, msg|
-        match msg {
-            "increment" => Ok({ state: { count: state.count + 1.I64 }, response: "Incremented" }),
-            _ => Ok({ state, response: "Count is ${Num.to_str(state.count)}" }),
+agent = Golem.agent({
+    name: "counter-agent",
+    initial: { count: 0.I64 },
+    tools: [getCountTool],
+    onMessage: |state, message|
+        match message {
+            "increment" =>
+                reply({ count: state.count + 1.I64 }, "Counter incremented to ${Str.inspect(state.count + 1.I64)}"),
+
+            "decrement" =>
+                reply({ count: state.count - 1.I64 }, "Counter decremented to ${Str.inspect(state.count - 1.I64)}"),
+
+            "get" =>
+                readOnly(state, "Current count is ${Str.inspect(state.count)}"),
+
+            _ =>
+                readOnly(state, "Unknown command '${message}'. Available: increment, decrement, get"),
         },
-    handleToolCall: |state, call|
-        Ok({
-            state,
-            result: { id: call.id, success: True, output: Json.encode({ count: state.count }) },
-        }),
-    metadata: {
-        name: "counter-agent",
-        version: "1.0.0",
-        description: "Durable Roc Counter Agent on Golem Cloud",
-        tools: [],
-    },
-    serializeState: |state| Json.encode(state),
-    deserializeState: |stateJson| Ok(Json.decode_or(stateJson, { count: 0.I64 })),
 })
 ```
+
+> **Developer Experience (DX) Features**:
+> - **Unified Tools**: Tool schema (`ToolDefinition`) and execution logic are defined together. Tool ID forwarding, JSON envelope wrapping, and dispatch are automatic.
+> - **Expressive Response Primitives**: `reply` (state mutated, oplog commit), `readOnly` ($O(1)$ in-memory response, safe oplog bypass), `stay`, and `fail`.
+> - **Default Codecs**: Automatic JSON state serialization and deserialization without repetitive codec boilerplate.
+> - **Stateless Workers**: Write stateless workers via `Golem.ephemeral({ name, onMessage, tools })` with `{}` state and zero serialization overhead.
+> - **Full Backward Compatibility**: Legacy `defineAgent`, `define`, `defineEphemeral`, and `build` pipeline methods remain fully supported.
 
 For local platform development, you can point to the local path:
 ```roc

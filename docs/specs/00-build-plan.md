@@ -98,3 +98,11 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *Fixes:* KI-20, KI-21, KI-22, KI-23, KI-24, KI-25.
 *Status:* Complete.
 
+## Phase 4 — Ergonomics & Ecosystem
+
+**16. Developer experience, ergonomics and boilerplate elimination**
+*What it builds:* Unified tool modeling (schema + execution combined), ergonomic agent constructors (`Golem.agent`, `Golem.ephemeral`), expressive response primitives (`reply`, `readOnly`, `stay`, `fail`), automated tool envelope construction, and default JSON state serialization.
+*Dependencies:* 15.
+*Status:* Complete.
+
+

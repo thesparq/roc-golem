@@ -196,11 +196,21 @@ Source: code review of 2026-11-07 and build verification.
 | KI-24 | `tooling/test_runtime.sh` assumes port 9881 is free; fails if server is already running or component name exists. | Medium | **Resolved** in Unit 15 (active server reuse, idempotent component update, timestamped worker IDs) |
 | KI-25 | Feature checklist rows 15 & 16 out of sync with unit test status; live server vs host mock test verifications are not clearly distinguished. | Low | **Resolved** in Unit 15 (rows 15 & 16 marked passed, explicit verification source tags across checklist) |
 
+- **Unit 16 (Developer Experience & Ergonomics) Complete & Verified (2026-11-11)**:
+  - Designed and implemented ergonomic response primitives directly in `platform/Golem.roc`: `reply` (state mutated, oplog commit), `readOnly` ($O(1)$ in-memory response, safe oplog bypass), `stay` (noop), `fail` (error propagation), `replyJson`, and `readOnlyJson`.
+  - Implemented first-class unified tools (`Tool(state)`, `StatelessTool`) with constructors `tool`, `toolJson`, `statefulTool`, `statelessTool`, `statelessToolJson`, and `statelessToTool`. Eliminated tool double-declaration between schema and execution, automated `toolCall.id` forwarding, and automated `{ id, success, output }` JSON envelope wrapping.
+  - Implemented canonical agent constructors `Golem.agent`, `Golem.agentWith`, `Golem.simpleAgent`, `Golem.ephemeral`, and `Golem.simpleEphemeral` with default JSON state serialization, automatic tool dispatch, and read-only oplog bypass.
+  - Authored comprehensive test suite `tests/dx_primitives.roc` with 22 pure assertions testing all response primitives, schema helpers, tool constructors, and dispatch functions (`roc test tests/dx_primitives.roc` passing 22/22).
+  - Refactored `examples/counter/main.roc` (lines reduced by 53%), `examples/ai_tool/main.roc`, and `examples/streaming_agent/main.roc` to the modern ergonomic DX while maintaining 100% backward compatibility for legacy `defineAgent` and `build`.
+  - Verified full 4-layer testing suite: Layer 1 static checks (`cargo fmt`, `cargo clippy`, `roc fmt`, `roc check`), Layer 2 unit tests (53 host tests + 26 Roc tests), Layer 3 component builds and validation (`./tooling/build.sh all`), Layer 4 consumer smoke test (`./tooling/test_consumer.sh`), and Layer 4 live Golem server runtime suite (`./tooling/test_runtime.sh` 100% passing across all 4 agents).
+  - Refreshed `README.md` to showcase the concise, idiomatic modern agent definition.
+
 ## Open questions
 
 - None.
 
 ## Next steps
 
-- All Units (00 through 15) Complete. All 25 Known Issues (KI-01 through KI-25) Resolved. Platform v1.0.0 GA released and verified.
+- All Phase 4 Unit 16 deliverables completed and verified. Platform is release-ready for community showcase on Golem Discord and GitHub.
+
 
