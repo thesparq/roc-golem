@@ -73,9 +73,9 @@ platform "golem"
 	targets: {
 		inputs_dir: "targets/",
 		wasm32: {
-			inputs: ["libroc_golem_host.a", app],
+			inputs: ["libroc_golem_host.a", "libc.a", app],
 			output: Shared,
-			exports: ["main_init_for_host", "main_handle_message_for_host", "main_handle_tool_call_for_host", "main_metadata_for_host", "golem:agent/guest@2.0.0#discover-agent-types", "golem:agent/guest@2.0.0#get-definition", "golem:agent/guest@2.0.0#initialize", "golem:agent/guest@2.0.0#invoke", "cabi_post_golem:agent/guest@2.0.0#discover-agent-types", "cabi_post_golem:agent/guest@2.0.0#get-definition", "cabi_post_golem:agent/guest@2.0.0#initialize", "cabi_post_golem:agent/guest@2.0.0#invoke", "cabi_realloc"],
+			exports: ["main_init_for_host", "main_handle_message_for_host", "main_handle_tool_call_for_host", "main_metadata_for_host", "golem:agent/guest@2.0.0#discover-agent-types", "golem:agent/guest@2.0.0#get-definition", "[async-lift]golem:agent/guest@2.0.0#initialize", "[async-lift]golem:agent/guest@2.0.0#invoke", "[callback][async-lift]golem:agent/guest@2.0.0#initialize", "[callback][async-lift]golem:agent/guest@2.0.0#invoke", "cabi_post_golem:agent/guest@2.0.0#discover-agent-types", "cabi_post_golem:agent/guest@2.0.0#get-definition", "cabi_realloc"],
 		},
 	}
 

@@ -2,23 +2,29 @@ package golem:agent-platform;
 
 world golem-agent {
     import golem:api/host@1.5.0;
+    import golem:api/oplog@1.5.0;
+    import golem:api/context@1.5.0;
+    import golem:api/retry@1.5.0;
+
     import golem:agent/common@2.0.0;
     import golem:agent/host@2.0.0;
-    import golem:websocket/client@1.5.0;
-    import wasi:clocks/monotonic-clock@0.2.3;
-    import wasi:clocks/wall-clock@0.2.3;
-    import wasi:filesystem/types@0.2.3;
-    import wasi:filesystem/preopens@0.2.3;
-    import wasi:logging/logging;
-    import wasi:io/poll@0.2.3;
-    import wasi:io/streams@0.2.3;
-    import wasi:http/outgoing-handler@0.2.3;
-    import wasi:keyvalue/eventual@0.1.0;
-    import wasi:blobstore/blobstore;
-    import golem:api/context@1.5.0;
-    import wasi:config/store@0.2.0-draft;
+    import golem:agent/durable-streams@2.0.0;
+    import golem:tool/host@0.1.0;
+
+    import golem:durability/durability@1.6.0;
+    import golem:quota/types@1.5.0;
+    import golem:secrets/types@0.1.0;
+    import golem:secrets/reveal@0.1.0;
     import golem:rdbms/postgres@1.5.0;
     import golem:rdbms/mysql@1.5.0;
+
+    import wasi:blobstore/blobstore;
+    import wasi:blobstore/container;
+    import wasi:keyvalue/eventual-batch@0.1.0;
+    import wasi:keyvalue/eventual@0.1.0;
+    import wasi:logging/logging;
+    import wasi:config/store@0.2.0-draft;
+    import golem:websocket/client@1.5.0;
 
     export golem:agent/guest@2.0.0;
 }

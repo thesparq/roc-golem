@@ -28,9 +28,9 @@ verify_toolchain() {
     fi
 
     if command -v rustup &> /dev/null; then
-        if ! rustup target list --installed | grep -q "wasm32-unknown-unknown"; then
-            echo "Error: Rust target 'wasm32-unknown-unknown' is not installed." >&2
-            echo "Install it via: rustup target add wasm32-unknown-unknown" >&2
+        if ! rustup target list --installed | grep -q "wasm32-wasip2"; then
+            echo "Error: Rust target 'wasm32-wasip2' is not installed." >&2
+            echo "Install it via: rustup target add wasm32-wasip2" >&2
             exit 1
         fi
     fi
@@ -80,20 +80,26 @@ build_platform() {
     fi
 
     if command -v rustup &> /dev/null; then
-        if ! rustup target list --installed | grep -q "wasm32-unknown-unknown"; then
-            echo "Error: Rust target 'wasm32-unknown-unknown' is not installed." >&2
-            echo "Install it via: rustup target add wasm32-unknown-unknown" >&2
+        if ! rustup target list --installed | grep -q "wasm32-wasip2"; then
+            echo "Error: Rust target 'wasm32-wasip2' is not installed." >&2
+            echo "Install it via: rustup target add wasm32-wasip2" >&2
             exit 1
         fi
     fi
 
-    echo "==> Compiling Rust Host for WebAssembly target (wasm32-unknown-unknown)..."
-    cargo build --manifest-path "$HOST_DIR/Cargo.toml" --target wasm32-unknown-unknown --release --no-default-features
+    echo "==> Compiling Rust Host for WebAssembly target (wasm32-wasip2)..."
+    cargo build --manifest-path "$HOST_DIR/Cargo.toml" --target wasm32-wasip2 --release --no-default-features
 
-    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PRECOMPILED_HOST_A"
+    cp "$HOST_DIR/target/wasm32-wasip2/release/libroc_golem_host.a" "$PRECOMPILED_HOST_A"
     mkdir -p "$PLATFORM_DIR/targets/wasm32"
-    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a"
-    cp "$HOST_DIR/target/wasm32-unknown-unknown/release/libroc_golem_host.a" "$PLATFORM_DIR/libhost.a"
+    cp "$HOST_DIR/target/wasm32-wasip2/release/libroc_golem_host.a" "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a"
+    cp "$HOST_DIR/target/wasm32-wasip2/release/libroc_golem_host.a" "$PLATFORM_DIR/libhost.a"
+
+    local RUST_SYSROOT
+    RUST_SYSROOT="$(rustc --print sysroot)"
+    if [[ -f "$RUST_SYSROOT/lib/rustlib/wasm32-wasip2/lib/self-contained/libc.a" ]]; then
+        cp "$RUST_SYSROOT/lib/rustlib/wasm32-wasip2/lib/self-contained/libc.a" "$PLATFORM_DIR/targets/wasm32/libc.a"
+    fi
 
     echo "==> Platform pre-compiled successfully:"
     echo "    Static Library: $PRECOMPILED_HOST_A"

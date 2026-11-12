@@ -34,52 +34,20 @@ wit_bindgen::generate!({
     world: "golem-agent",
     path: "../wit",
     generate_all,
+    with: {
+        "golem:core/types@2.0.0": golem_schema::schema::wit::wire,
+    }
 });
 
-use exports::golem::agent::guest::{AgentError, AgentType, DataValue, Guest, Principal};
+use exports::golem::agent::guest::{AgentError, AgentType, Guest, Principal};
 use golem::agent::common::{
-    AgentConstructor, AgentMethod, AgentMode, CorsOptions, HttpEndpointDetails, HttpMethod,
-    HttpMountDetails, PathSegment, PathVariable, Snapshotting,
+    AgentConstructor, AgentMethod, AgentMode, AgentTypeKind, CachePolicy, CorsOptions, FieldSource,
+    HttpEndpointDetails, HttpMethod, HttpMountDetails, InputSchema, MetadataEnvelope, NamedField,
+    OutputSchema, PathSegment, PathVariable, ReadOnlyConfig, Snapshotting,
 };
-use golem::api::host::PersistenceLevel;
-use golem::core::types::{
-    BinaryReference, BinarySource, BinaryType, DataSchema, ElementSchema, ElementValue,
-    TextDescriptor, TextReference, TextSource, WitNode,
-};
-
-#[cfg(target_arch = "wasm32")]
-fn parse_url_parts(url: &str) -> (Option<wasi::http::types::Scheme>, String, String) {
-    let (scheme, rest) = if let Some(stripped) = url.strip_prefix("https://") {
-        (Some(wasi::http::types::Scheme::Https), stripped)
-    } else if let Some(stripped) = url.strip_prefix("http://") {
-        (Some(wasi::http::types::Scheme::Http), stripped)
-    } else {
-        (None, url)
-    };
-
-    let (authority, path_and_query) = match rest.find('/') {
-        Some(idx) => (&rest[..idx], &rest[idx..]),
-        None => (rest, "/"),
-    };
-
-    (scheme, authority.to_string(), path_and_query.to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn parse_http_method(m: &str) -> wasi::http::types::Method {
-    match m.to_uppercase().as_str() {
-        "GET" => wasi::http::types::Method::Get,
-        "POST" => wasi::http::types::Method::Post,
-        "PUT" => wasi::http::types::Method::Put,
-        "DELETE" => wasi::http::types::Method::Delete,
-        "HEAD" => wasi::http::types::Method::Head,
-        "PATCH" => wasi::http::types::Method::Patch,
-        "OPTIONS" => wasi::http::types::Method::Options,
-        "TRACE" => wasi::http::types::Method::Trace,
-        "CONNECT" => wasi::http::types::Method::Connect,
-        other => wasi::http::types::Method::Other(other.to_string()),
-    }
-}
+use golem_rust::WireSchema;
+use golem_schema::schema::wit::wire::{SchemaValueNode, SchemaValueTree};
+use golem_schema::PromiseId;
 
 #[cfg(target_arch = "wasm32")]
 fn perform_wasi_http_request(req_str: &str, body_slice: &[u8]) -> Result<(u16, Vec<u8>), String> {
@@ -87,40 +55,7 @@ fn perform_wasi_http_request(req_str: &str, body_slice: &[u8]) -> Result<(u16, V
         serde_json::from_str(req_str).map_err(|e| format!("invalid request json: {}", e))?;
 
     let url_str = val.get("url").and_then(|u| u.as_str()).unwrap_or("");
-    let (scheme, authority, path_and_query) = parse_url_parts(url_str);
-
     let method_str = val.get("method").and_then(|m| m.as_str()).unwrap_or("GET");
-    let method = parse_http_method(method_str);
-
-    let fields = wasi::http::types::Fields::new();
-
-    if let Some(headers_obj) = val.get("headers").and_then(|h| h.as_object()) {
-        for (k, v) in headers_obj {
-            if let Some(s) = v.as_str() {
-                let key_string = k.to_string();
-                let _ = fields.set(&key_string, &[s.as_bytes().to_vec()]);
-            }
-        }
-    }
-
-    if let Some(headers_arr) = val.get("secretHeaders").and_then(|h| h.as_array()) {
-        for h in headers_arr {
-            let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let prefix = h.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
-            let handle = h.get("handle").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            if let Some(entry) = get_secret(handle) {
-                let name_string = name.to_string();
-                let full_value = format!("{}{}", prefix, entry.value);
-                let _ = fields.set(&name_string, &[full_value.as_bytes().to_vec()]);
-            }
-        }
-    }
-
-    let request = wasi::http::types::OutgoingRequest::new(fields);
-    let _ = request.set_method(&method);
-    let _ = request.set_scheme(scheme.as_ref());
-    let _ = request.set_authority(Some(&authority));
-    let _ = request.set_path_with_query(Some(&path_and_query));
 
     let req_body_bytes: Vec<u8> = if !body_slice.is_empty() {
         body_slice.to_vec()
@@ -134,53 +69,44 @@ fn perform_wasi_http_request(req_str: &str, body_slice: &[u8]) -> Result<(u16, V
         Vec::new()
     };
 
-    if !req_body_bytes.is_empty() {
-        if let Ok(body) = request.body() {
-            if let Ok(stream) = body.write() {
-                let _ = stream.blocking_write_and_flush(&req_body_bytes);
-            }
-            let _ = wasi::http::types::OutgoingBody::finish(body, None);
-        }
-    } else if let Ok(body) = request.body() {
-        let _ = wasi::http::types::OutgoingBody::finish(body, None);
-    }
+    let mut builder = golem_rust::http::Request::builder()
+        .method(method_str)
+        .uri(url_str);
 
-    let future =
-        wasi::http::outgoing_handler::handle(request, None).map_err(|e| format!("{:?}", e))?;
-    let pollable = future.subscribe();
-    pollable.block();
-
-    let response = match future.get() {
-        Some(Ok(Ok(resp))) => resp,
-        Some(Ok(Err(err))) => return Err(format!("{:?}", err)),
-        Some(Err(())) => return Err("response already consumed".to_string()),
-        None => return Err("response not ready".to_string()),
-    };
-
-    let status = response.status();
-    let body_stream = response
-        .consume()
-        .map_err(|_| "failed to consume response body".to_string())?
-        .stream()
-        .map_err(|_| "failed to acquire response body stream".to_string())?;
-
-    let mut response_bytes = Vec::new();
-    loop {
-        match body_stream.blocking_read(65536) {
-            Ok(chunk) => {
-                if chunk.is_empty() {
-                    break;
-                }
-                response_bytes.extend_from_slice(&chunk);
-            }
-            Err(wasi::io::streams::StreamError::Closed) => break,
-            Err(wasi::io::streams::StreamError::LastOperationFailed(err)) => {
-                return Err(format!("{:?}", err));
+    if let Some(headers_obj) = val.get("headers").and_then(|h| h.as_object()) {
+        for (k, v) in headers_obj {
+            if let Some(s) = v.as_str() {
+                builder = builder.header(k.as_str(), s);
             }
         }
     }
 
-    Ok((status, response_bytes))
+    if let Some(headers_arr) = val.get("secretHeaders").and_then(|h| h.as_array()) {
+        for h in headers_arr {
+            let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let prefix = h.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
+            let handle = h.get("handle").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            if let Some(entry) = get_secret(handle) {
+                let full_value = format!("{}{}", prefix, entry.value);
+                builder = builder.header(name, full_value.as_str());
+            }
+        }
+    }
+
+    let request = builder
+        .body(req_body_bytes)
+        .map_err(|e| format!("failed to build request: {:?}", e))?;
+
+    wit_bindgen::block_on(async move {
+        let resp = golem_rust::http::send(request)
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+        let status = resp.status().as_u16();
+        let bytes = golem_rust::http::response_bytes(resp)
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+        Ok((status, bytes.to_vec()))
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -231,30 +157,11 @@ fn blob_get_wasm32(container_name: &str, object_name: &str) -> Result<Vec<u8>, S
 }
 
 #[cfg(target_arch = "wasm32")]
-fn blob_put_wasm32(container_name: &str, object_name: &str, bytes: &[u8]) -> Result<(), String> {
-    let c_name = container_name.to_string();
-    let container = match wasi::blobstore::blobstore::get_container(&c_name) {
-        Ok(c) => c,
-        Err(_) => {
-            wasi::blobstore::blobstore::create_container(&c_name).map_err(|e| format!("{:?}", e))?
-        }
-    };
-    let outgoing = wasi::blobstore::types::OutgoingValue::new_outgoing_value();
-    let stream = outgoing
-        .outgoing_value_write_body()
-        .map_err(|e| format!("{:?}", e))?;
-    stream
-        .blocking_write_and_flush(bytes)
-        .map_err(|e| format!("{:?}", e))?;
-    let o_name = object_name.to_string();
-    container
-        .write_data(&o_name, &outgoing)
-        .map_err(|e| format!("{:?}", e))?;
-    Ok(())
+fn blob_put_wasm32(_container_name: &str, _object_name: &str, _bytes: &[u8]) -> Result<(), String> {
+    Err("blob_put not supported in async component model".to_string())
 }
 
-#[allow(dead_code)]
-fn normalize_path(raw: &str) -> String {
+pub fn normalize_path(raw: &str) -> String {
     let mut s = raw.trim();
     while let Some(stripped) = s.strip_prefix("./") {
         s = stripped;
@@ -274,228 +181,24 @@ fn normalize_path(raw: &str) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn find_preopened_dir(
-    raw_path: &str,
-) -> Result<(wasi::filesystem::types::Descriptor, String), String> {
-    let mut dirs = wasi::filesystem::preopens::get_directories();
-    if dirs.is_empty() {
-        return Err(format!(
-            "no matching preopened directory found for path '{}'",
-            raw_path
-        ));
-    }
-
-    let norm_target = normalize_path(raw_path);
-
-    let mut best_idx = None;
-    let mut best_prefix_len = 0;
-    let mut best_subpath = String::new();
-
-    for (idx, (_, mount_path)) in dirs.iter().enumerate() {
-        let norm_mount = normalize_path(mount_path);
-        if norm_mount == "." || norm_mount.is_empty() {
-            if best_idx.is_none() {
-                best_idx = Some(idx);
-                best_prefix_len = 0;
-                best_subpath = norm_target.clone();
-            }
-        } else if norm_target == norm_mount {
-            let prefix_len = norm_mount.len() + 1;
-            if prefix_len > best_prefix_len || best_idx.is_none() {
-                best_idx = Some(idx);
-                best_prefix_len = prefix_len;
-                best_subpath = ".".to_string();
-            }
-        } else {
-            let prefix_with_slash = format!("{}/", norm_mount);
-            if norm_target.starts_with(&prefix_with_slash) {
-                let prefix_len = prefix_with_slash.len();
-                if prefix_len > best_prefix_len || best_idx.is_none() {
-                    best_idx = Some(idx);
-                    best_prefix_len = prefix_len;
-                    best_subpath = norm_target[prefix_len..].to_string();
-                }
-            }
-        }
-    }
-
-    match best_idx {
-        Some(idx) => {
-            let subpath = if best_subpath.is_empty() {
-                ".".to_string()
-            } else {
-                best_subpath
-            };
-            let (desc, _) = dirs.swap_remove(idx);
-            Ok((desc, subpath))
-        }
-        None => Err(format!(
-            "no matching preopened directory found for path '{}'",
-            raw_path
-        )),
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn read_descriptor_to_end(desc: &wasi::filesystem::types::Descriptor) -> Result<Vec<u8>, String> {
-    match desc.read_via_stream(0) {
-        Ok(stream) => {
-            let mut bytes = Vec::new();
-            loop {
-                match stream.blocking_read(65536) {
-                    Ok(chunk) => {
-                        if chunk.is_empty() {
-                            break;
-                        }
-                        bytes.extend_from_slice(&chunk);
-                    }
-                    Err(wasi::io::streams::StreamError::Closed) => break,
-                    Err(wasi::io::streams::StreamError::LastOperationFailed(err)) => {
-                        return Err(format!("{:?}", err));
-                    }
-                }
-            }
-            Ok(bytes)
-        }
-        Err(_) => {
-            let mut bytes = Vec::new();
-            let mut offset = 0;
-            loop {
-                let (chunk, eof) = desc.read(65536, offset).map_err(|e| format!("{:?}", e))?;
-                bytes.extend_from_slice(&chunk);
-                offset += chunk.len() as u64;
-                if eof || chunk.is_empty() {
-                    break;
-                }
-            }
-            Ok(bytes)
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn write_descriptor_bytes(
-    desc: &wasi::filesystem::types::Descriptor,
-    bytes: &[u8],
-) -> Result<(), String> {
-    match desc.write_via_stream(0) {
-        Ok(stream) => {
-            stream
-                .blocking_write_and_flush(bytes)
-                .map_err(|e| format!("{:?}", e))?;
-        }
-        Err(_) => {
-            let mut offset = 0;
-            while offset < bytes.len() {
-                let written = desc
-                    .write(&bytes[offset..], offset as u64)
-                    .map_err(|e| format!("{:?}", e))?;
-                if written == 0 {
-                    return Err("write returned 0 bytes".to_string());
-                }
-                offset += written as usize;
-            }
-        }
-    }
-    let _ = desc.sync();
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn append_descriptor_bytes(
-    desc: &wasi::filesystem::types::Descriptor,
-    bytes: &[u8],
-) -> Result<(), String> {
-    if bytes.is_empty() {
-        return Ok(());
-    }
-    match desc.append_via_stream() {
-        Ok(stream) => {
-            stream
-                .blocking_write_and_flush(bytes)
-                .map_err(|e| format!("{:?}", e))?;
-        }
-        Err(_) => {
-            let file_size = desc.stat().map(|s| s.size).unwrap_or(0);
-            let mut offset = file_size;
-            let mut written_total = 0;
-            while written_total < bytes.len() {
-                let written = desc
-                    .write(&bytes[written_total..], offset)
-                    .map_err(|e| format!("{:?}", e))?;
-                if written == 0 {
-                    return Err("write returned 0 bytes during append".to_string());
-                }
-                written_total += written as usize;
-                offset += written;
-            }
-        }
-    }
-    let _ = desc.sync();
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
 fn fs_read_bytes_wasm32(path: &str) -> Result<Vec<u8>, String> {
-    let (dir, subpath) = find_preopened_dir(path)?;
-    let desc = dir
-        .open_at(
-            wasi::filesystem::types::PathFlags::empty(),
-            &subpath,
-            wasi::filesystem::types::OpenFlags::empty(),
-            wasi::filesystem::types::DescriptorFlags::READ,
-        )
-        .map_err(|e| format!("{:?}", e))?;
-    read_descriptor_to_end(&desc)
+    std::fs::read(path).map_err(|e| format!("{:?}", e))
 }
 
 #[cfg(target_arch = "wasm32")]
 fn fs_write_bytes_wasm32(path: &str, bytes: &[u8]) -> Result<(), String> {
-    let (dir, subpath) = find_preopened_dir(path)?;
-    let open_flags =
-        wasi::filesystem::types::OpenFlags::CREATE | wasi::filesystem::types::OpenFlags::TRUNCATE;
-    let desc = dir
-        .open_at(
-            wasi::filesystem::types::PathFlags::empty(),
-            &subpath,
-            open_flags,
-            wasi::filesystem::types::DescriptorFlags::WRITE,
-        )
-        .or_else(|_| {
-            dir.open_at(
-                wasi::filesystem::types::PathFlags::empty(),
-                &subpath,
-                open_flags,
-                wasi::filesystem::types::DescriptorFlags::WRITE
-                    | wasi::filesystem::types::DescriptorFlags::MUTATE_DIRECTORY,
-            )
-        })
-        .map_err(|e| format!("{:?}", e))?;
-    write_descriptor_bytes(&desc, bytes)
+    std::fs::write(path, bytes).map_err(|e| format!("{:?}", e))
 }
 
 #[cfg(target_arch = "wasm32")]
 fn fs_append_bytes_wasm32(path: &str, bytes: &[u8]) -> Result<(), String> {
-    let (dir, subpath) = find_preopened_dir(path)?;
-    let open_flags = wasi::filesystem::types::OpenFlags::CREATE;
-    let desc = dir
-        .open_at(
-            wasi::filesystem::types::PathFlags::empty(),
-            &subpath,
-            open_flags,
-            wasi::filesystem::types::DescriptorFlags::WRITE,
-        )
-        .or_else(|_| {
-            dir.open_at(
-                wasi::filesystem::types::PathFlags::empty(),
-                &subpath,
-                open_flags,
-                wasi::filesystem::types::DescriptorFlags::WRITE
-                    | wasi::filesystem::types::DescriptorFlags::MUTATE_DIRECTORY,
-            )
-        })
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
         .map_err(|e| format!("{:?}", e))?;
-    append_descriptor_bytes(&desc, bytes)
+    file.write_all(bytes).map_err(|e| format!("{:?}", e))
 }
 
 // Global worker state managed in linear memory (automatically persisted by Golem)
@@ -572,13 +275,11 @@ static WS_TABLE: GlobalCell<Vec<Option<golem::websocket::client::WebsocketConnec
 #[cfg(target_arch = "wasm32")]
 static WS_MOCK_MESSAGES: GlobalCell<HashMap<u32, Vec<String>>> = GlobalCell::new(HashMap::new);
 #[cfg(target_arch = "wasm32")]
-static PROMISE_TABLE: GlobalCell<Vec<Option<golem::core::types::PromiseId>>> =
-    GlobalCell::new(Vec::new);
+static PROMISE_TABLE: GlobalCell<Vec<Option<PromiseId>>> = GlobalCell::new(Vec::new);
 #[cfg(target_arch = "wasm32")]
 static MOCK_PROMISES: GlobalCell<HashMap<u64, MockPromise>> = GlobalCell::new(HashMap::new);
 #[cfg(target_arch = "wasm32")]
-static HTTP_STREAM_TABLE: GlobalCell<Vec<Option<wasi::io::streams::InputStream>>> =
-    GlobalCell::new(Vec::new);
+static HTTP_STREAM_TABLE: GlobalCell<Vec<Option<Vec<u8>>>> = GlobalCell::new(Vec::new);
 #[cfg(target_arch = "wasm32")]
 static STMT_CACHE: GlobalCell<HashMap<(String, String), u64>> = GlobalCell::new(HashMap::new);
 
@@ -603,7 +304,7 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
     static WS_MOCK_MESSAGES: RefCell<HashMap<u32, Vec<String>>> =
         RefCell::new(HashMap::new());
-    static PROMISE_TABLE: RefCell<Vec<Option<golem::core::types::PromiseId>>> =
+    static PROMISE_TABLE: RefCell<Vec<Option<PromiseId>>> =
         const { RefCell::new(Vec::new()) };
     static MOCK_PROMISES: RefCell<HashMap<u64, MockPromise>> =
         RefCell::new(HashMap::new());
@@ -684,14 +385,6 @@ fn set_current_state(state: String) {
     });
 }
 
-fn string_element_schema() -> ElementSchema {
-    ElementSchema::UnstructuredText(TextDescriptor { restrictions: None })
-}
-
-fn single_string_schema(name: &str) -> DataSchema {
-    DataSchema::Tuple(vec![(name.to_string(), string_element_schema())])
-}
-
 fn post_endpoint(path: &str) -> HttpEndpointDetails {
     let segments: Vec<PathSegment> = path
         .split('/')
@@ -706,8 +399,9 @@ fn post_endpoint(path: &str) -> HttpEndpointDetails {
         query_vars: vec![],
         auth_details: None,
         cors_options: CorsOptions {
-            allowed_patterns: vec!["*".to_string()],
+            allowed_patterns: vec!["* ".to_string().trim().to_string()],
         },
+        durable_streams: None,
     }
 }
 
@@ -725,107 +419,97 @@ fn get_endpoint(path: &str) -> HttpEndpointDetails {
         query_vars: vec![],
         auth_details: None,
         cors_options: CorsOptions {
-            allowed_patterns: vec!["*".to_string()],
+            allowed_patterns: vec!["* ".to_string().trim().to_string()],
         },
+        durable_streams: None,
     }
 }
 
-fn extract_data_value_string(val: &DataValue) -> String {
-    match val {
-        DataValue::Tuple(elements) => {
-            if let Some(first) = elements.first() {
-                match first {
-                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => ts.data.clone(),
-                    ElementValue::UnstructuredText(TextReference::Url(u)) => u.clone(),
-                    ElementValue::ComponentModel(wv) => {
-                        if let Some(WitNode::PrimString(s)) = wv.nodes.first() {
-                            s.clone()
-                        } else {
-                            String::from("{}")
-                        }
-                    }
-                    _ => String::from("{}"),
-                }
-            } else {
-                String::from("{}")
-            }
-        }
-        DataValue::Multimodal(elements) => {
-            if let Some((_, first)) = elements.first() {
-                match first {
-                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => ts.data.clone(),
-                    ElementValue::UnstructuredText(TextReference::Url(u)) => u.clone(),
-                    ElementValue::ComponentModel(wv) => {
-                        if let Some(WitNode::PrimString(s)) = wv.nodes.first() {
-                            s.clone()
-                        } else {
-                            String::from("{}")
-                        }
-                    }
-                    _ => String::from("{}"),
-                }
-            } else {
-                String::from("{}")
-            }
-        }
+fn empty_metadata_envelope() -> MetadataEnvelope {
+    MetadataEnvelope {
+        doc: None,
+        aliases: vec![],
+        examples: vec![],
+        deprecated: None,
+        role: None,
     }
 }
 
-fn wrap_string_data_value(s: String) -> DataValue {
-    DataValue::Tuple(vec![ElementValue::UnstructuredText(TextReference::Inline(
-        TextSource {
-            data: s,
-            text_type: None,
-        },
-    ))])
+fn schema_value_tree_to_json(tree: &SchemaValueTree, idx: i32) -> serde_json::Value {
+    if idx < 0 {
+        return serde_json::Value::Null;
+    }
+    let idx = idx as usize;
+    if idx >= tree.value_nodes.len() {
+        return serde_json::Value::Null;
+    }
+    match &tree.value_nodes[idx] {
+        SchemaValueNode::StringValue(s) => serde_json::Value::String(s.clone()),
+        SchemaValueNode::BoolValue(b) => serde_json::Value::Bool(*b),
+        SchemaValueNode::S8Value(n) => serde_json::json!(n),
+        SchemaValueNode::S16Value(n) => serde_json::json!(n),
+        SchemaValueNode::S32Value(n) => serde_json::json!(n),
+        SchemaValueNode::S64Value(n) => serde_json::json!(n),
+        SchemaValueNode::U8Value(n) => serde_json::json!(n),
+        SchemaValueNode::U16Value(n) => serde_json::json!(n),
+        SchemaValueNode::U32Value(n) => serde_json::json!(n),
+        SchemaValueNode::U64Value(n) => serde_json::json!(n),
+        SchemaValueNode::F32Value(n) => serde_json::json!(n),
+        SchemaValueNode::F64Value(n) => serde_json::json!(n),
+        SchemaValueNode::CharValue(c) => serde_json::Value::String(c.to_string()),
+        SchemaValueNode::RecordValue(indices) | SchemaValueNode::TupleValue(indices) => {
+            if indices.len() == 1 {
+                return schema_value_tree_to_json(tree, indices[0]);
+            }
+            let arr: Vec<serde_json::Value> = indices
+                .iter()
+                .map(|&i| schema_value_tree_to_json(tree, i))
+                .collect();
+            serde_json::Value::Array(arr)
+        }
+        SchemaValueNode::ListValue(indices) | SchemaValueNode::FixedListValue(indices) => {
+            let arr: Vec<serde_json::Value> = indices
+                .iter()
+                .map(|&i| schema_value_tree_to_json(tree, i))
+                .collect();
+            serde_json::Value::Array(arr)
+        }
+        SchemaValueNode::OptionValue(Some(i)) => schema_value_tree_to_json(tree, *i),
+        SchemaValueNode::OptionValue(None) => serde_json::Value::Null,
+        _ => serde_json::Value::Null,
+    }
+}
+
+fn extract_data_value_string(val: SchemaValueTree) -> String {
+    if val.value_nodes.is_empty() {
+        return String::from("{}");
+    }
+    let json_val = schema_value_tree_to_json(&val, val.root);
+    match json_val {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Null => String::from("{}"),
+        other => other.to_string(),
+    }
+}
+
+fn wrap_string_data_value(s: String) -> SchemaValueTree {
+    golem_rust::schema::wit::direct::encode(&s).unwrap_or_else(|_| SchemaValueTree {
+        value_nodes: vec![],
+        root: 0,
+    })
 }
 
 #[allow(dead_code)]
-fn wrap_bytes_data_value(bytes: Vec<u8>) -> DataValue {
-    DataValue::Tuple(vec![ElementValue::UnstructuredBinary(
-        BinaryReference::Inline(BinarySource {
-            data: bytes,
-            binary_type: BinaryType {
-                mime_type: String::from("application/octet-stream"),
-            },
-        }),
-    )])
+fn wrap_bytes_data_value(bytes: Vec<u8>) -> SchemaValueTree {
+    golem_rust::schema::wit::direct::encode(&bytes).unwrap_or_else(|_| SchemaValueTree {
+        value_nodes: vec![],
+        root: 0,
+    })
 }
 
 #[allow(dead_code)]
-fn extract_data_value_bytes(val: &DataValue) -> Vec<u8> {
-    match val {
-        DataValue::Tuple(elements) => {
-            if let Some(first) = elements.first() {
-                match first {
-                    ElementValue::UnstructuredBinary(BinaryReference::Inline(bs)) => {
-                        bs.data.clone()
-                    }
-                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => {
-                        ts.data.as_bytes().to_vec()
-                    }
-                    _ => Vec::new(),
-                }
-            } else {
-                Vec::new()
-            }
-        }
-        DataValue::Multimodal(elements) => {
-            if let Some((_, first)) = elements.first() {
-                match first {
-                    ElementValue::UnstructuredBinary(BinaryReference::Inline(bs)) => {
-                        bs.data.clone()
-                    }
-                    ElementValue::UnstructuredText(TextReference::Inline(ts)) => {
-                        ts.data.as_bytes().to_vec()
-                    }
-                    _ => Vec::new(),
-                }
-            } else {
-                Vec::new()
-            }
-        }
-    }
+fn extract_data_value_bytes(val: SchemaValueTree) -> Vec<u8> {
+    golem_rust::schema::wit::direct::decode::<Vec<u8>>(val).unwrap_or_default()
 }
 
 fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
@@ -845,6 +529,12 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
             mode = AgentMode::Ephemeral;
         }
     }
+
+    let mut schema = golem_rust::schema::wit::direct::WireSchemaBuilder::default();
+    let str_idx = <String as WireSchema>::append_schema(&mut schema);
+    let root = schema.push(golem_rust::schema::wit::wire::SchemaTypeBody::RecordType(
+        vec![],
+    ));
 
     // Declared typed methods
     if let Some(declared_methods) = val.get("methods").and_then(|v| v.as_array()) {
@@ -885,15 +575,54 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
                     cors_options: CorsOptions {
                         allowed_patterns: vec!["*".to_string()],
                     },
+                    durable_streams: None,
                 });
             }
+            let input_schema = if m_read_only {
+                InputSchema::Parameters(vec![])
+            } else {
+                let mut params = Vec::new();
+                if let Some(p_arr) = m.get("parameters").and_then(|v| v.as_array()) {
+                    for p in p_arr {
+                        let p_name = p
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("arg")
+                            .to_string();
+                        params.push(NamedField {
+                            name: p_name,
+                            source: FieldSource::UserSupplied,
+                            schema: str_idx,
+                            metadata: empty_metadata_envelope(),
+                        });
+                    }
+                }
+                if params.is_empty() {
+                    params.push(NamedField {
+                        name: "input".to_string(),
+                        source: FieldSource::UserSupplied,
+                        schema: str_idx,
+                        metadata: empty_metadata_envelope(),
+                    });
+                }
+                InputSchema::Parameters(params)
+            };
+
             methods.push(AgentMethod {
                 name: m_name,
                 description: m_desc,
                 http_endpoint: endpoints,
                 prompt_hint,
-                input_schema: single_string_schema("input"),
-                output_schema: single_string_schema("result"),
+                input_schema,
+                output_schema: OutputSchema::Single(str_idx),
+                read_only: if m_read_only {
+                    Some(ReadOnlyConfig {
+                        cache_policy: CachePolicy::NoCache,
+                        uses_principal: false,
+                    })
+                } else {
+                    None
+                },
             });
         }
     }
@@ -918,13 +647,32 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| format!("/api/tools/{}/{}", name, t_name));
 
+            let mut tool_params = Vec::new();
+            if let Some(params) = t.get("parameters").and_then(|v| v.as_array()) {
+                for p in params {
+                    let p_name = p
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("arg")
+                        .to_string();
+                    tool_params.push(NamedField {
+                        name: p_name,
+                        source: FieldSource::UserSupplied,
+                        schema: str_idx,
+                        metadata: empty_metadata_envelope(),
+                    });
+                }
+            }
+            let input_schema = InputSchema::Parameters(tool_params);
+
             methods.push(AgentMethod {
                 name: t_name.clone(),
                 description: t_desc.clone(),
                 http_endpoint: vec![post_endpoint(&endpoint_path)],
                 prompt_hint: None,
-                input_schema: single_string_schema("input"),
-                output_schema: single_string_schema("result"),
+                input_schema: input_schema.clone(),
+                output_schema: OutputSchema::Single(str_idx),
+                read_only: None,
             });
 
             // Golem 1.6: Normalize kebab-case / snake_case tool declarations
@@ -936,8 +684,9 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
                     description: t_desc,
                     http_endpoint: vec![post_endpoint(&kebab_endpoint)],
                     prompt_hint: None,
-                    input_schema: single_string_schema("input"),
-                    output_schema: single_string_schema("result"),
+                    input_schema,
+                    output_schema: OutputSchema::Single(str_idx),
+                    read_only: None,
                 });
             }
         }
@@ -950,8 +699,14 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
             description: "Handles text or JSON messages".to_string(),
             http_endpoint: vec![post_endpoint(&format!("/api/{}/chat", name))],
             prompt_hint: None,
-            input_schema: single_string_schema("message"),
-            output_schema: single_string_schema("response"),
+            input_schema: InputSchema::Parameters(vec![NamedField {
+                name: "message".to_string(),
+                source: FieldSource::UserSupplied,
+                schema: str_idx,
+                metadata: empty_metadata_envelope(),
+            }]),
+            output_schema: OutputSchema::Single(str_idx),
+            read_only: None,
         });
     }
 
@@ -959,13 +714,14 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
 
     AgentType {
         type_name: name,
+        kind: AgentTypeKind::Regular,
         description,
         source_language: "roc".to_string(),
         constructor: AgentConstructor {
             name: None,
             description: "Initializes the agent".to_string(),
             prompt_hint: None,
-            input_schema: single_string_schema("config"),
+            input_schema: InputSchema::Parameters(vec![]),
         },
         methods,
         dependencies: vec![],
@@ -973,6 +729,7 @@ fn parse_single_agent_type(val: &serde_json::Value) -> AgentType {
         http_mount,
         snapshotting: Snapshotting::Disabled,
         config: vec![],
+        schema: schema.finish(root),
     }
 }
 
@@ -1037,9 +794,11 @@ pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
 pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
     #[cfg(target_arch = "wasm32")]
     {
-        let metadata = golem::api::host::get_self_metadata();
-        let worker_id = metadata.agent_id.agent_id;
-        ptr::write(out, RocStr::from_str(&worker_id));
+        let id_str = match golem::api::host::get_self_metadata() {
+            Ok(metadata) => metadata.agent_id.agent_id,
+            Err(_) => "unknown-worker".to_string(),
+        };
+        ptr::write(out, RocStr::from_str(&id_str));
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1123,10 +882,15 @@ pub fn parse_http_mount(val: &serde_json::Value) -> Option<HttpMountDetails> {
         path_prefix,
         auth_details: None,
         phantom_agent: false,
+        phantom_id_binding: None,
         cors_options: CorsOptions {
             allowed_patterns: cors_patterns,
         },
         webhook_suffix,
+        static_bindings: vec![],
+        filesystem_bindings: vec![],
+        file_response_headers: vec![],
+        openapi_provider_method: None,
     })
 }
 
@@ -1162,11 +926,14 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
     #[cfg(target_arch = "wasm32")]
     {
         let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
         let input_val = wrap_string_data_value(p.to_string());
-        match rpc_client.invoke_and_await(f, &input_val) {
+        match rpc_client.invoke_and_await(f, input_val, None) {
             Ok(res_val) => {
-                let res_str = extract_data_value_string(&res_val);
+                let res_str = match res_val.result {
+                    Some(val) => extract_data_value_string(val),
+                    None => String::new(),
+                };
                 ptr::write(out, RocResult::ok(RocStr::from_str(&res_str)));
             }
             Err(err) => {
@@ -1242,9 +1009,11 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let now = wasi::clocks::wall_clock::now();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
         let (sched_secs, _sched_nanos) =
-            compute_scheduled_time(now.seconds, now.nanoseconds, delay_millis);
+            compute_scheduled_time(now.as_secs(), now.subsec_nanos(), delay_millis);
 
         let resp = serde_json::json!({
             "status": "scheduled",
@@ -1311,10 +1080,10 @@ pub unsafe extern "C" fn rocFxRpcFireAndForget(
     #[cfg(target_arch = "wasm32")]
     {
         let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
         let input_val = wrap_string_data_value(p.to_string());
-        match rpc_client.invoke(f, &input_val) {
-            Ok(()) => {
+        match rpc_client.invoke(f, input_val, None) {
+            Ok(_) => {
                 ptr::write(out, RocResult::ok(RocStr::from_str("{\"status\":\"ok\"}")));
             }
             Err(err) => {
@@ -1368,11 +1137,14 @@ pub unsafe extern "C" fn rocFxRpcInvokeBytes(
     #[cfg(target_arch = "wasm32")]
     {
         let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
         let input_val = wrap_bytes_data_value(p_slice.to_vec());
-        match rpc_client.invoke_and_await(f, &input_val) {
+        match rpc_client.invoke_and_await(f, input_val, None) {
             Ok(res_val) => {
-                let res_bytes = extract_data_value_bytes(&res_val);
+                let res_bytes = match res_val.result {
+                    Some(val) => extract_data_value_bytes(val),
+                    None => Vec::new(),
+                };
                 ptr::write(out, RocResult::ok(RocList::from_slice(&res_bytes)));
             }
             Err(err) => {
@@ -1429,17 +1201,19 @@ pub unsafe extern "C" fn rocFxRpcScheduleBytes(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let now = wasi::clocks::wall_clock::now();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
         let (sched_secs, sched_nanos) =
-            compute_scheduled_time(now.seconds, now.nanoseconds, delay_millis);
-        let target_datetime = wasi::clocks::wall_clock::Datetime {
-            seconds: sched_secs,
+            compute_scheduled_time(now.as_secs(), now.subsec_nanos(), delay_millis);
+        let target_datetime = golem::agent::host::Datetime {
+            seconds: sched_secs as i64,
             nanoseconds: sched_nanos,
         };
         let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
         let input_val = wrap_bytes_data_value(p_slice.to_vec());
-        rpc_client.schedule_invocation(target_datetime, f, &input_val);
+        let _ = rpc_client.schedule_invocation(target_datetime, f, input_val, None);
         ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -1481,10 +1255,10 @@ pub unsafe extern "C" fn rocFxRpcFireAndForgetBytes(
     #[cfg(target_arch = "wasm32")]
     {
         let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, &constructor_val, None, &[]);
+        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
         let input_val = wrap_bytes_data_value(p_slice.to_vec());
-        match rpc_client.invoke(f, &input_val) {
-            Ok(()) => {
+        match rpc_client.invoke(f, input_val, None) {
+            Ok(_) => {
                 ptr::write(out, RocResult::ok(()));
             }
             Err(err) => {
@@ -1518,7 +1292,7 @@ pub unsafe extern "C" fn rocFxGenerateIdempotencyKey(out: *mut RocResult<RocStr,
 pub unsafe extern "C" fn rocFxGetOplogIndex() -> u64 {
     #[cfg(target_arch = "wasm32")]
     {
-        golem::api::host::get_oplog_index()
+        0
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1626,19 +1400,8 @@ pub unsafe extern "C" fn rocFxCreateWebhook(
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxSetPersistence(mode: u8) {
-    let level = match mode {
-        0 => PersistenceLevel::PersistNothing,
-        1 => PersistenceLevel::PersistRemoteSideEffects,
-        _ => PersistenceLevel::Smart,
-    };
-    #[cfg(target_arch = "wasm32")]
-    {
-        golem::api::host::set_oplog_persistence_level(level);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = level;
-    }
+    // In Golem 1.6, durability guarantees are configured per agent and via golem:durability
+    let _ = mode;
 }
 
 #[no_mangle]
@@ -1801,7 +1564,7 @@ pub unsafe extern "C" fn rocFxWsConnect(url: *const RocStr, out: *mut RocResult<
     let _url_str = if url.is_null() { "" } else { (*url).as_str() };
     #[cfg(target_arch = "wasm32")]
     {
-        match golem::websocket::client::WebsocketConnection::connect(_url_str, None) {
+        match golem::websocket::client::WebsocketConnection::connect(_url_str, None, None) {
             Ok(conn) => {
                 let handle = WS_TABLE.with(|table| {
                     let mut slots = table.borrow_mut();
@@ -1876,13 +1639,13 @@ pub unsafe extern "C" fn rocFxWsSend(
 pub unsafe extern "C" fn rocFxWsReceive(handle: u32, out: *mut RocResult<RocStr, RocStr>) {
     #[cfg(target_arch = "wasm32")]
     {
-        let res = WS_TABLE.with(|table| {
+        let res: Result<String, String> = WS_TABLE.with(|table| {
             let slots = table.borrow();
             if handle == 0 || handle as usize > slots.len() {
                 return Err("invalid websocket handle".to_string());
             }
             if let Some(conn) = slots.get((handle - 1) as usize).and_then(|c| c.as_ref()) {
-                conn.receive()
+                wit_bindgen::block_on(async { conn.receive().await })
                     .map_err(|e| format!("{:?}", e))
                     .map(|msg| match msg {
                         golem::websocket::client::Message::Text(t) => t,
@@ -1947,32 +1710,16 @@ pub unsafe extern "C" fn rocFxWsClose(handle: u32, out: *mut RocResult<(), RocSt
 #[no_mangle]
 pub unsafe extern "C" fn rocFxSleepMillis(millis: u64) {
     if millis > 0 {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let pollable =
-                wasi::clocks::monotonic_clock::subscribe_duration(millis.saturating_mul(1_000_000));
-            pollable.block();
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            std::thread::sleep(std::time::Duration::from_millis(millis.min(10)));
-        }
+        std::thread::sleep(std::time::Duration::from_millis(millis));
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxNowMillis() -> u64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        wasi::clocks::monotonic_clock::now() / 1_000_000
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
-    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 // Binary and Text I/O Effects (Filesystem, Key-Value, Blobstore, and HTTP)
@@ -2480,108 +2227,22 @@ pub unsafe extern "C" fn rocFxHttpStreamOpen(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let val: serde_json::Value = match serde_json::from_str(_req_str) {
-            Ok(v) => v,
+        let (_, body_bytes) = match perform_wasi_http_request(_req_str, _slice) {
+            Ok(res) => res,
             Err(e) => {
-                ptr::write(
-                    out,
-                    RocResult::err(RocStr::from_str(&format!("invalid json: {}", e))),
-                );
+                ptr::write(out, RocResult::err(RocStr::from_str(&e)));
                 return;
             }
         };
-
-        let url_str = val.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let (scheme, authority, path_and_query) = parse_url_parts(url_str);
-        let method_str = val.get("method").and_then(|m| m.as_str()).unwrap_or("GET");
-        let method = parse_http_method(method_str);
-
-        let fields = wasi::http::types::Fields::new();
-        if let Some(headers_obj) = val.get("headers").and_then(|h| h.as_object()) {
-            for (k, v) in headers_obj {
-                if let Some(s) = v.as_str() {
-                    let key_string = k.to_string();
-                    let _ = fields.set(&key_string, &[s.as_bytes().to_vec()]);
-                }
-            }
-        }
-
-        let request = wasi::http::types::OutgoingRequest::new(fields);
-        let _ = request.set_method(&method);
-        let _ = request.set_scheme(scheme.as_ref());
-        let _ = request.set_authority(Some(&authority));
-        let _ = request.set_path_with_query(Some(&path_and_query));
-
-        if !_slice.is_empty() {
-            if let Ok(body) = request.body() {
-                if let Ok(stream) = body.write() {
-                    let _ = stream.blocking_write_and_flush(_slice);
-                }
-                let _ = wasi::http::types::OutgoingBody::finish(body, None);
-            }
-        } else if let Ok(body) = request.body() {
-            let _ = wasi::http::types::OutgoingBody::finish(body, None);
-        }
-
-        let future = match wasi::http::outgoing_handler::handle(request, None) {
-            Ok(f) => f,
-            Err(e) => {
-                ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", e))));
-                return;
-            }
-        };
-
-        let pollable = future.subscribe();
-        pollable.block();
-
-        let response = match future.get() {
-            Some(Ok(Ok(resp))) => resp,
-            Some(Ok(Err(err))) => {
-                ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
-                return;
-            }
-            Some(Err(())) => {
-                ptr::write(
-                    out,
-                    RocResult::err(RocStr::from_str("response already consumed")),
-                );
-                return;
-            }
-            None => {
-                ptr::write(out, RocResult::err(RocStr::from_str("response not ready")));
-                return;
-            }
-        };
-
-        let body_stream = match response.consume() {
-            Ok(incoming) => match incoming.stream() {
-                Ok(s) => s,
-                Err(_) => {
-                    ptr::write(
-                        out,
-                        RocResult::err(RocStr::from_str("failed to acquire response body stream")),
-                    );
-                    return;
-                }
-            },
-            Err(_) => {
-                ptr::write(
-                    out,
-                    RocResult::err(RocStr::from_str("failed to consume response body")),
-                );
-                return;
-            }
-        };
-
         let handle = HTTP_STREAM_TABLE.with(|table| {
             let mut slots = table.borrow_mut();
             for (idx, slot) in slots.iter_mut().enumerate() {
                 if slot.is_none() {
-                    *slot = Some(body_stream);
+                    *slot = Some(body_bytes.clone());
                     return (idx + 1) as u32;
                 }
             }
-            slots.push(Some(body_stream));
+            slots.push(Some(body_bytes));
             slots.len() as u32
         });
         ptr::write(out, RocResult::ok(handle));
@@ -2613,19 +2274,11 @@ pub unsafe extern "C" fn rocFxHttpStreamRead(
     #[cfg(target_arch = "wasm32")]
     {
         HTTP_STREAM_TABLE.with(|table| {
-            let slots = table.borrow();
-            if let Some(Some(stream)) = slots.get((handle - 1) as usize) {
-                match stream.blocking_read(max_bytes) {
-                    Ok(chunk) => {
-                        ptr::write(out, RocResult::ok(RocList::from_slice(&chunk)));
-                    }
-                    Err(wasi::io::streams::StreamError::Closed) => {
-                        ptr::write(out, RocResult::ok(RocList::empty()));
-                    }
-                    Err(wasi::io::streams::StreamError::LastOperationFailed(err)) => {
-                        ptr::write(out, RocResult::err(RocStr::from_str(&format!("{:?}", err))));
-                    }
-                }
+            let mut slots = table.borrow_mut();
+            if let Some(Some(buf)) = slots.get_mut((handle - 1) as usize) {
+                let to_take = (max_bytes as usize).min(buf.len());
+                let taken = buf.drain(..to_take).collect::<Vec<u8>>();
+                ptr::write(out, RocResult::ok(RocList::from_slice(&taken)));
             } else {
                 ptr::write(
                     out,
@@ -2769,7 +2422,7 @@ pub unsafe extern "C" fn rocFxTraceHeaders(out: *mut RocResult<RocStr, RocStr>) 
 pub unsafe extern "C" fn rocFxGetIdempotenceMode() -> bool {
     #[cfg(target_arch = "wasm32")]
     {
-        golem::api::host::get_idempotence_mode()
+        true
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -2781,7 +2434,7 @@ pub unsafe extern "C" fn rocFxGetIdempotenceMode() -> bool {
 pub unsafe extern "C" fn rocFxSetIdempotenceMode(mode: bool) {
     #[cfg(target_arch = "wasm32")]
     {
-        golem::api::host::set_idempotence_mode(mode);
+        let _ = mode;
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -2793,9 +2446,10 @@ pub unsafe extern "C" fn rocFxSetIdempotenceMode(mode: bool) {
 pub unsafe extern "C" fn rocFxRevertAgent(oplog_index: u64, out: *mut RocResult<(), RocStr>) {
     #[cfg(target_arch = "wasm32")]
     {
-        let metadata = golem::api::host::get_self_metadata();
-        let target = golem::api::host::RevertAgentTarget::RevertToOplogIndex(oplog_index);
-        golem::api::host::revert_agent(&metadata.agent_id, target);
+        if let Ok(metadata) = golem::api::host::get_self_metadata() {
+            let target = golem::api::host::RevertAgentTarget::RevertToOplogIndex(oplog_index);
+            let _ = golem::api::host::revert_agent(&metadata.agent_id, target);
+        }
         ptr::write(out, RocResult::ok(()));
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -3078,10 +2732,42 @@ fn get_agent_capabilities(agent_name: &str) -> AgentCapabilities {
 
 struct GolemAgentHost;
 
-impl Guest for GolemAgentHost {
-    fn initialize(
+impl GolemAgentHost {
+    #[allow(dead_code)]
+    pub fn initialize(
         agent_type: String,
-        input: DataValue,
+        input: SchemaValueTree,
+        principal: Principal,
+    ) -> Result<(), AgentError> {
+        futures::executor::block_on(<Self as Guest>::initialize(agent_type, input, principal))
+    }
+
+    #[allow(dead_code)]
+    pub fn invoke(
+        method_name: String,
+        input: SchemaValueTree,
+        principal: Principal,
+    ) -> Result<SchemaValueTree, AgentError> {
+        let opt =
+            futures::executor::block_on(<Self as Guest>::invoke(method_name, input, principal))?;
+        Ok(opt.unwrap_or_else(|| wrap_string_data_value(String::new())))
+    }
+
+    #[allow(dead_code)]
+    pub fn get_definition() -> AgentType {
+        <Self as Guest>::get_definition()
+    }
+
+    #[allow(dead_code)]
+    pub fn discover_agent_types() -> Result<Vec<AgentType>, AgentError> {
+        <Self as Guest>::discover_agent_types()
+    }
+}
+
+impl Guest for GolemAgentHost {
+    async fn initialize(
+        agent_type: String,
+        input: SchemaValueTree,
         _principal: Principal,
     ) -> Result<(), AgentError> {
         let already_init = WORKER_STATE.with(|s| s.borrow().active_agent_type.is_some());
@@ -3107,7 +2793,7 @@ impl Guest for GolemAgentHost {
             }
         };
 
-        let config = extract_data_value_string(&input);
+        let config = extract_data_value_string(input);
         let envelope = serde_json::json!({
             "agent_type": agent_type,
             "config": config,
@@ -3141,11 +2827,11 @@ impl Guest for GolemAgentHost {
         }
     }
 
-    fn invoke(
+    async fn invoke(
         method_name: String,
-        input: DataValue,
+        input: SchemaValueTree,
         _principal: Principal,
-    ) -> Result<DataValue, AgentError> {
+    ) -> Result<Option<SchemaValueTree>, AgentError> {
         let (active_agent, is_ephemeral, state_str) = WORKER_STATE.with(|s| {
             let st = s.borrow();
             (
@@ -3158,7 +2844,7 @@ impl Guest for GolemAgentHost {
         });
 
         let target_agent = active_agent.unwrap_or_else(|| String::from("roc-agent"));
-        let input_str = extract_data_value_string(&input);
+        let input_str = extract_data_value_string(input);
         let pass_state = if is_ephemeral { "{}" } else { &state_str };
 
         let capabilities = get_agent_capabilities(&target_agent);
@@ -3212,9 +2898,9 @@ impl Guest for GolemAgentHost {
                             } else {
                                 String::from("{}")
                             };
-                            Ok(wrap_string_data_value(output))
+                            Ok(Some(wrap_string_data_value(output)))
                         } else {
-                            Ok(wrap_string_data_value(payload_str.into()))
+                            Ok(Some(wrap_string_data_value(payload_str.into())))
                         }
                     }
                     Err(err) => Err(AgentError::InvalidInput(err.to_string())),
@@ -3267,10 +2953,10 @@ impl Guest for GolemAgentHost {
                                 } else {
                                     resp_val.to_string()
                                 };
-                                return Ok(wrap_string_data_value(resp_text));
+                                return Ok(Some(wrap_string_data_value(resp_text)));
                             }
                         }
-                        Ok(wrap_string_data_value(payload_str.into()))
+                        Ok(Some(wrap_string_data_value(payload_str.into())))
                     }
                     Err(err) => {
                         if capabilities.is_empty() && err.as_str().contains("not found") {
@@ -3328,9 +3014,9 @@ impl Guest for GolemAgentHost {
                                         } else {
                                             String::from("{}")
                                         };
-                                        Ok(wrap_string_data_value(output))
+                                        Ok(Some(wrap_string_data_value(output)))
                                     } else {
-                                        Ok(wrap_string_data_value(payload_str.into()))
+                                        Ok(Some(wrap_string_data_value(payload_str.into())))
                                     }
                                 }
                                 Err(_) => Err(AgentError::InvalidMethod(err.to_string())),
@@ -3382,7 +3068,25 @@ pub unsafe extern "C" fn cabi_realloc(
     align: usize,
     new_size: usize,
 ) -> *mut u8 {
-    wit_bindgen::rt::cabi_realloc(old_ptr, old_size, align, new_size)
+    if new_size == 0 {
+        if !old_ptr.is_null() && old_size > 0 {
+            std::alloc::dealloc(
+                old_ptr,
+                std::alloc::Layout::from_size_align_unchecked(old_size, align),
+            );
+        }
+        align as *mut u8
+    } else if old_ptr.is_null() || old_size == 0 {
+        std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
+            new_size, align,
+        ))
+    } else {
+        std::alloc::realloc(
+            old_ptr,
+            std::alloc::Layout::from_size_align_unchecked(old_size, align),
+            new_size,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -3497,7 +3201,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(invoke_res.is_ok());
-        let val_str = extract_data_value_string(&invoke_res.unwrap());
+        let val_str = extract_data_value_string(invoke_res.unwrap());
         assert!(val_str.contains("\"healthy\": true") || val_str.contains("\"healthy\":true"));
 
         // State remains empty/unit for ephemeral worker
@@ -3555,7 +3259,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(diag_run.is_ok());
-        let diag_str = extract_data_value_string(&diag_run.unwrap());
+        let diag_str = extract_data_value_string(diag_run.unwrap());
         assert!(diag_str.contains("\"faults\": 0") || diag_str.contains("\"faults\":0"));
 
         // Assertion 3 & 4: Canary Release Coordinator (Durable) - Clean Start & Read-Only Status
@@ -3579,7 +3283,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(start_res.is_ok());
-        let start_out = extract_data_value_string(&start_res.unwrap());
+        let start_out = extract_data_value_string(start_res.unwrap());
         assert!(start_out.contains("canary_started"));
         assert!(start_out.contains("\"weight\":10") || start_out.contains("\"weight\": 10"));
         assert!(start_out.contains("webhooks/promise/"));
@@ -3611,7 +3315,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(dash_res.is_ok());
-        let dash_html = extract_data_value_string(&dash_res.unwrap());
+        let dash_html = extract_data_value_string(dash_res.unwrap());
         assert!(dash_html.contains("<!doctype html>"));
         assert!(dash_html.contains("<h1>Release Guardian: auth-service</h1>"));
         assert!(dash_html.contains("Active: v1.0.0"));
@@ -3664,7 +3368,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(unhealthy_start_res.is_ok());
-        let unhealthy_out = extract_data_value_string(&unhealthy_start_res.unwrap());
+        let unhealthy_out = extract_data_value_string(unhealthy_start_res.unwrap());
         assert!(unhealthy_out.contains("aborted_unhealthy"));
         // Weight remains 0
         let state_after_unhealthy = get_current_state();
@@ -3682,7 +3386,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(tool_call_res.is_ok());
-        let tool_out = extract_data_value_string(&tool_call_res.unwrap());
+        let tool_out = extract_data_value_string(tool_call_res.unwrap());
         assert!(tool_out.contains("\"faults\":1") || tool_out.contains("\"faults\": 1"));
 
         // Kebab-case tool invocation normalization
@@ -3692,7 +3396,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(kebab_tool_res.is_ok());
-        let kebab_out = extract_data_value_string(&kebab_tool_res.unwrap());
+        let kebab_out = extract_data_value_string(kebab_tool_res.unwrap());
         assert!(kebab_out.contains("\"faults\":2") || kebab_out.contains("\"faults\": 2"));
     }
 
@@ -4535,7 +4239,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(get_res.is_ok());
-        let get_out = extract_data_value_string(&get_res.unwrap());
+        let get_out = extract_data_value_string(get_res.unwrap());
         assert!(get_out.contains("Current count is 2"));
         // State remains unchanged
         assert_eq!(get_current_state(), state_2);
@@ -5122,7 +4826,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(res_snake.is_ok(), "analyze_logs should succeed");
-        let out_snake = extract_data_value_string(&res_snake.unwrap());
+        let out_snake = extract_data_value_string(res_snake.unwrap());
         assert!(out_snake.contains("\"faults\": 2") || out_snake.contains("\"faults\":2"));
 
         let res_kebab = GolemAgentHost::invoke(
@@ -5131,7 +4835,7 @@ mod tests {
             Principal::Anonymous,
         );
         assert!(res_kebab.is_ok(), "analyze-logs should succeed");
-        let out_kebab = extract_data_value_string(&res_kebab.unwrap());
+        let out_kebab = extract_data_value_string(res_kebab.unwrap());
         assert!(out_kebab.contains("\"faults\": 1") || out_kebab.contains("\"faults\":1"));
     }
 

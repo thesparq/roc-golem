@@ -1,39 +1,43 @@
 # Schema for IDEA:
-# $schema: https://schema.golem.cloud/app/golem/1.2.5/golem.schema.json
-# Schema for vscode-yaml
-# yaml-language-server: $schema=https://schema.golem.cloud/app/golem/1.2.5/golem.schema.json
+# $schema: https://schema.golem.cloud/app/golem/1.6.0/golem.schema.json
+# Schema for vscode-yaml:
+# yaml-language-server: $schema=https://schema.golem.cloud/app/golem/1.6.0/golem.schema.json
 
-witDeps:
-  - "wit/deps"
+manifestVersion: 1.6.0
+
+app: roc-golem
+
+version:
+  git:
+    tagPattern: "v*"
+    hashFallback: true
+    staticFallback: "v1.0.0"
+
+environments:
+  local:
+    server: local
+    version:
+      git:
+        allowDirty: true
+  cloud:
+    server: cloud
+    deployment:
+      versionCheck: true
 
 components:
-  canary-release:
+  roc-golem:canary-release:
     componentWasm: "build/canary_release_agent.wasm"
-    sourceWit: "examples/canary_release/wit"
-    generatedWit: "examples/canary_release/wit"
     build:
       - command: "./tooling/build.sh canary_release"
-  counter:
+  roc-golem:counter:
     componentWasm: "build/counter_agent.wasm"
-    sourceWit: "examples/counter/wit"
-    generatedWit: "examples/counter/wit"
     build:
       - command: "./tooling/build.sh counter"
-  ai-tool:
+  roc-golem:ai-tool:
     componentWasm: "build/ai_tool_agent.wasm"
-    sourceWit: "examples/ai_tool/wit"
-    generatedWit: "examples/ai_tool/wit"
     build:
       - command: "./tooling/build.sh ai_tool"
-  streaming-agent:
+  roc-golem:streaming-agent:
     componentWasm: "build/streaming_agent_agent.wasm"
-    sourceWit: "examples/streaming_agent/wit"
-    generatedWit: "examples/streaming_agent/wit"
     build:
       - command: "./tooling/build.sh streaming_agent"
-
-profiles:
-  local:
-    default: true
-  cloud:
-    cloud: true
