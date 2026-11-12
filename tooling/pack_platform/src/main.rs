@@ -140,6 +140,7 @@ app [agent] {{
 ### Included Platform Artifacts
 - `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`, `platform/Json.roc`
 - Precompiled `targets/wasm32/libroc_golem_host.a` (static library for Wasm32 Golem Cloud host)
+- Precompiled `targets/wasm32/libc.a` (WASI libc static library)
 - Precompiled `libhost.a` (root compatibility static library)
 - Integrity Hash: BLAKE3 (base64url unpadded)
 "#
@@ -199,7 +200,7 @@ fn create_reproducible_tar(
 
     let mut files_to_add: Vec<(PathBuf, String)> = Vec::new();
 
-    // 1. Platform files (recursive, preserves targets/wasm32/libroc_golem_host.a)
+    // 1. Platform files (recursive, preserves targets/wasm32/libroc_golem_host.a & libc.a)
     collect_files_recursively(platform_dir, platform_dir, &mut files_to_add)?;
 
     // 2. Precompiled host files: ensure targets/wasm32/libroc_golem_host.a exists
@@ -221,6 +222,17 @@ fn create_reproducible_tar(
                     String::from("targets/wasm32/libroc_golem_host.a"),
                 ));
             }
+        }
+    }
+
+    // Ensure targets/wasm32/libc.a exists in archive
+    let has_target_libc = files_to_add
+        .iter()
+        .any(|(_, name)| name == "targets/wasm32/libc.a");
+    if !has_target_libc {
+        let target_libc = platform_dir.join("targets/wasm32/libc.a");
+        if target_libc.exists() {
+            files_to_add.push((target_libc, String::from("targets/wasm32/libc.a")));
         }
     }
 
@@ -270,7 +282,7 @@ fn create_reproducible_tar(
 }
 
 fn compress_zstd(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut encoder = zstd::stream::Encoder::new(Vec::new(), 19)?;
+    let mut encoder = zstd::stream::Encoder::new(Vec::new(), 15)?;
     encoder.write_all(data)?;
     Ok(encoder.finish()?)
 }
@@ -278,7 +290,7 @@ fn compress_zstd(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 fn compress_brotli(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut output = Vec::new();
     let mut cursor = Cursor::new(data);
-    let mut writer = brotli::CompressorWriter::new(&mut output, 4096, 11, 22);
+    let mut writer = brotli::CompressorWriter::new(&mut output, 65536, 9, 22);
     std::io::copy(&mut cursor, &mut writer)?;
     drop(writer);
     Ok(output)

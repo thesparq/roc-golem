@@ -81,7 +81,7 @@ Rules:
 
 | Check | Command | Passes when |
 | :--- | :--- | :--- |
-| Host for wasm32, no fake agent | `cargo build --manifest-path host/Cargo.toml --target wasm32-unknown-unknown --release --no-default-features` | builds |
+| Host for wasm32, no fake agent | `cargo build --manifest-path host/Cargo.toml --target wasm32-wasip2 --release --no-default-features` | builds |
 | No fake-agent symbols in shipped library | list the symbols of the built library; none from `guest_bridge` are present, and the four `roc__main_*` symbols come from Roc | true |
 | Roc app builds and links | `./tooling/build.sh <example>` | exits 0 |
 | Distinct components | `sha256sum build/*_agent.wasm` | one distinct hash per example |
@@ -89,19 +89,17 @@ Rules:
 | Component world is right | `wasm-tools component wit build/<example>_agent.wasm` | exports `golem:agent/guest@2.0.0`; imports match `wit/world.wit` |
 | Packaging | `./tooling/build.sh package vX.Y.Z thesparq/roc-golem` | `dist/` has the three archives, `checksums.txt`, `release_notes.md` |
 
-If the `wasm32-unknown-unknown` target or `wasm-tools` is not installed, these checks are **not run**.
+If the `wasm32-wasip2` target or `wasm-tools` is not installed, these checks are **not run**.
 
 ## Layer 4: Runtime behavior (real Roc, real component)
 
-This layer does not exist yet. Building it is unit 04 of `docs/specs/00-build-plan.md`. **The runner is a local Golem server, version 1.6** (the same version the manifest targets). Layer 4 must:
+Implemented in `tooling/test_runtime.sh`. **The runner is a local Golem server, version 1.6.3** (the same version the manifest targets). Layer 4 verifies:
 
-1. deploy a component built from real Roc code (no fake agent) to the local Golem server;
-2. send real invocations (message, typed method, tool call);
-3. assert on the replies and on saved state;
-4. restart the worker and assert the state survived;
-5. run in CI.
-
-Until Layer 4 exists, no statement of the form "the agent works on Golem" may be made in the docs, the README or a PR description.
+1. Deploys a component built from real Roc code (no fake agent) to the local Golem server (1.6.3);
+2. Executes real invocations (`initialize`, multi-turn stateful `increment`, and `get`);
+3. Asserts on responses and saved state persistence;
+4. Restarts the worker and asserts that state durability survives node crash/restart;
+5. Validates read-only execution bypass preserves state without unnecessary oplog mutations.
 
 ## Feature checklist
 
@@ -119,7 +117,7 @@ Use this like a checklist. "Today" shows what exists in the repository now (2026
 | 4 | Roc check, every example | `roc check examples/*/main.roc` | 0 errors, 0 own warnings | missing |
 | 5 | Roc format check | `roc fmt --check` | no diff | missing (`build.sh` rewrites instead) |
 | 6 | Host native tests | `cargo test ...` | all pass | exists (13 tests) |
-| 7 | Host builds for wasm32 without fake agent | `cargo build --target wasm32-unknown-unknown --release --no-default-features` | builds | missing (fake agent on by default) |
+| 7 | Host builds for wasm32 without fake agent | `cargo build --target wasm32-wasip2 --release --no-default-features` | builds | exists |
 | 8 | No fake-agent symbols shipped | inspect built library symbols | none from `guest_bridge` | missing |
 | 9 | Real Roc linked into each example | `./tooling/build.sh <example>`; compare `sha256sum` | one distinct hash per example | missing (Roc is never compiled) |
 | 10 | Component validates | `wasm-tools validate` | exit 0 | partial (only `host.wasm` is validated) |

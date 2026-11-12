@@ -8,11 +8,11 @@ What the repository contains today, the contracts between its parts, and the rul
 | :--- | :--- | :--- |
 | Agent code | Roc nightly `nightly-2026-09-29-7f11a82` (new compiler; syntax: `snake_case` standard library, `match`, `or`/`and`, `\|x\|` lambdas) | The application author's pure functions |
 | Platform | Roc platform `platform/main.roc` with `Golem.roc`, `Effect.roc`, `Types.roc` | The SDK the author imports, and the entry points the host calls |
-| Host | Rust (`host/`, crate `roc-golem-host`; crate types `staticlib`, `cdylib`, `rlib`; `wit-bindgen` 0.36.0; `serde_json`) | Translates between Roc text messages and Golem's WIT interfaces; performs effects |
+| Host | Rust (`host/`, crate `roc-golem-host`; crate types `staticlib`, `cdylib`, `rlib`; `wit-bindgen` 0.59.0; `serde_json`) | Translates between Roc text messages and Golem's WIT interfaces; performs effects |
 | Interface definitions | WIT in `wit/` (`world.wit`, vendored `wit/deps/**`) | The contract with Golem: exports `golem:agent/guest@2.0.0`; imports Golem host APIs and WASI |
-| Componentizing | `wasm-tools` (CI pins 1.220.0 in two workflows and 1.222.0 in one) | Wraps the core WebAssembly module as a Component Model component |
-| Target | `wasm32-unknown-unknown` | Build target of the host and of every agent |
-| Runtime | Local Golem server, version 1.6 (the runtime for all runtime tests), manifest `golem.yaml` (`manifestVersion: 1.6.0`); Golem Cloud in production | Runs components as durable workers |
+| Componentizing | `wasm-tools` (1.263.0) | Wraps the core WebAssembly module as a Component Model component |
+| Target | `wasm32-wasip2` (host static library) / `wasm32` (Roc application) | Build target of the host (`wasm32-wasip2`) and core module of every agent |
+| Runtime | Local Golem server, version 1.6.3 (the runtime for all runtime tests), manifest `golem.yaml` (`manifestVersion: 1.6.0`); Golem Cloud in production | Runs components as durable workers |
 | Packaging | `tooling/pack_platform` (Rust), BLAKE3 base64url checksums | Release archives `.tar.zst`, `.tar.br`, `.tar.gz` |
 | CI / release | GitHub Actions (`.github/workflows/`) | Test, build, validate, publish |
 
@@ -114,7 +114,7 @@ The exported symbol names are part of the ABI and are fixed:
 4. **Every JSON envelope must be valid JSON for every possible input.** All dynamic text (state, responses, errors, names) is escaped by one shared function before it is placed in a string. Quotes, backslashes, newlines, tabs and non-ASCII characters must survive a round trip.
 5. **State lives in the agent's own saved JSON, and nothing else.** No hidden globals that need to survive a restart. Process-local tables in the host (secret handles, WebSocket handles, promise handles, streams) are valid only within one invocation and must be documented as such.
 6. **No JSON parser in the Roc platform.** Payloads are read with explicit, small scanners that live in one place and handle escapes. Examples must use the shared codecs, not their own `Str.split_first` tricks.
-7. **The WebAssembly target has no operating system.** `wasm32-unknown-unknown` has no filesystem, environment variables, or standard output. Anything an effect needs from outside must come through a WIT import declared in `wit/world.wit` (for example `wasi:config/store`, `wasi:filesystem`, `wasi:cli`), or the effect must return a clear "unsupported" error.
+7. **The WebAssembly target has no ambient host operating system.** The host static library compiles for `wasm32-wasip2` and links with WASI `libc.a`; anything an effect needs from outside must come through a WIT import declared in `wit/world.wit` (for example `wasi:config/store`, `wasi:filesystem`, `wasi:cli`, `wasi:clocks`), or the effect must return a clear "unsupported" error.
 8. **Secrets stay out of agent memory.** Agents hold opaque handles. The host injects values into outgoing requests. Revealing a secret is an explicit, opt-in call.
 9. **Errors are surfaced, not hidden.** A failing handler returns its own error. The host must not retry a failed call as a different kind of call and report a different error.
 10. **The platform and host contain no example-specific logic.** Behavior that an agent needs (for instance an HTTP mount) is declared in the agent's metadata, not switched on by agent name in the host.

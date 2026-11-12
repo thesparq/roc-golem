@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-ARCHIVE="${1:-"$ROOT_DIR/dist/roc-golem-v1.0.0.tar.zst"}"
+ARCHIVE="${1:-"$ROOT_DIR/dist/roc-golem-v1.1.0.tar.zst"}"
 
 echo "=============================================================="
 echo " [Consumer Smoke Test] Testing Platform Package: $(basename "$ARCHIVE")"
@@ -40,12 +40,18 @@ mkdir -p "$PLATFORM_DIR" "$APP_DIR"
 echo "==> Step 1: Unpacking archive to isolated directory..."
 tar --zstd -xf "$ARCHIVE" -C "$PLATFORM_DIR"
 
-echo "==> Step 2: Verifying critical target static library..."
+echo "==> Step 2: Verifying critical target static libraries..."
 if [[ ! -f "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a" ]]; then
     echo "Error: targets/wasm32/libroc_golem_host.a is missing from unpacked archive!" >&2
     exit 1
 fi
 echo "    Found targets/wasm32/libroc_golem_host.a ($(wc -c < "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a") bytes)"
+
+if [[ ! -f "$PLATFORM_DIR/targets/wasm32/libc.a" ]]; then
+    echo "Error: targets/wasm32/libc.a is missing from unpacked archive!" >&2
+    exit 1
+fi
+echo "    Found targets/wasm32/libc.a ($(wc -c < "$PLATFORM_DIR/targets/wasm32/libc.a") bytes)"
 
 echo "==> Step 3: Authoring minimal consumer Roc agent..."
 cat << "EOF" > "$APP_DIR/main.roc"

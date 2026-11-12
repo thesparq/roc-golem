@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.0.0/1aVTck6fmsX05n5zAlJtzJu32GV0r6cWd3DSs4sUIEc.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.1.0/g6nYrU3LtwR9Ls6Q_DScCje3CiI0Q53Waq1Y9_g9HuI.tar.zst",
 }
 
 import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
@@ -221,7 +221,7 @@ Produces `platform/targets/wasm32/libroc_golem_host.a` and `platform/libhost.a`.
 
 ### 3. Deploy to Golem Cloud
 ```bash
-# Using Golem CLI (v1.2.5+):
+# Using Golem CLI (v1.6.3+):
 # 1. Start local server (if testing locally)
 golem server run
 
@@ -245,15 +245,15 @@ golem worker invoke "streaming/stream-worker-1" \
 ### Automatic GitHub Release (Recommended)
 1. Push a version tag to Git:
    ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
+   git tag v1.1.0
+   git push origin v1.1.0
    ```
 2. GitHub Actions automatically builds the host, validates all agents, packages the `.tar.zst`, `.tar.br`, `.tar.gz` bundles with BLAKE3 hashes, and creates the GitHub release with ready-to-copy Roc code snippets!
 
 ### Local Release Packaging
 You can generate release tarballs locally at any time:
 ```bash
-./tooling/build.sh package v1.0.0 thesparq/roc-golem
+./tooling/build.sh package v1.1.0 thesparq/roc-golem
 ```
 Artifacts and `release_notes.md` will be placed in `dist/`.
 

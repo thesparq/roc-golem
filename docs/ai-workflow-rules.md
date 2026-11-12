@@ -85,7 +85,7 @@ Before marking a unit complete, verify every item. If any item fails, fix it bef
 1. **Format and lint:** `cargo fmt --manifest-path host/Cargo.toml --all -- --check` and `cargo clippy --manifest-path host/Cargo.toml --all-targets -- -D warnings` are clean. If Roc code changed, `roc fmt` leaves no diff.
 2. **Roc compiles:** `roc check` ends with 0 errors and 0 warnings of our own for `platform/main.roc` and for every example touched. If the Roc compiler is not available in your environment, write "not run: no Roc compiler" and do not mark this item complete.
 3. **Host tests:** `cargo test --manifest-path host/Cargo.toml --all-targets` passes.
-4. **WebAssembly build:** the host builds for `wasm32-unknown-unknown` in release mode with `--no-default-features`, and `wasm-tools validate` accepts the result. If the target is not installed, write "not run" and why.
+4. **WebAssembly build:** the host builds for `wasm32-wasip2` in release mode with `--no-default-features`, and `wasm-tools validate` accepts the result. If the target is not installed, write "not run" and why.
 5. **Real build of affected examples:** `./tooling/build.sh <example>` compiles and links real Roc code and produces a component that validates. Different examples produce different components.
 6. **No regressions:** everything that worked before still works. If a change could affect existing behavior, explain why it does not.
 7. **Principles preserved:** review the Principles in `architecture.md`. Confirm the change does not break any, and does not add a new deviation. If it would, stop and raise the conflict.

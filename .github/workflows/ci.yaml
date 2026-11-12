@@ -25,13 +25,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-wasip2
           components: clippy, rustfmt
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
         with:
-          version: "1.222.0"
+          version: "1.263.0"
 
       - name: Cache Roc Compiler
         id: cache-roc

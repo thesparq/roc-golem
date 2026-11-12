@@ -106,15 +106,15 @@ if ! echo "${GET_OUT}" | grep -q "Current count is 3"; then
 fi
 log_ok "State verified: count is 3 after 3 increment turns"
 
-log_step "6. Execute command on agent using 'golem ssh'"
+log_step "6. Auxiliary Tool Check: Execute command on agent environment using 'golem ssh'"
 SSH_CMD='echo "=== HELLO FROM GOLEM SSH ===" && echo "Agent host: $(uname -m)" && echo "Working dir: $(pwd)"'
 SSH_OUT=$(golem ssh 'counter-agent()' -c "${SSH_CMD}")
 echo "${SSH_OUT}"
 if ! echo "${SSH_OUT}" | grep -q "HELLO FROM GOLEM SSH"; then
-    echo -e "${C_RED}golem ssh failed: ${SSH_OUT}${C_RESET}" >&2
+    echo -e "${C_RED}golem ssh auxiliary check failed: ${SSH_OUT}${C_RESET}" >&2
     exit 1
 fi
-log_ok "golem ssh interactive command execution verified!"
+log_ok "Auxiliary tool check verified (golem ssh runs in auxiliary container/environment, distinct from core agent WASM invocation)"
 
 log_step "7. Test Server Shutdown and Durable State Recovery"
 echo "Stopping Golem server (simulating node crash / full server reboot)..."

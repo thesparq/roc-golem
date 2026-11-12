@@ -2,14 +2,35 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Phase 3 — Release (2026-11-09) — Unit 15 (Release Polish & Hardening)
+### Current Phase: Production Stable — Golem 1.6.3 Async Component Model & v1.1.0 Release (2026-11-12)
 
-Goal: address post-GA completeness review findings to ensure packaging integrity, automated consumer smoke tests, release asset synchronization, clean Roc compilation, and manifest consistency.
+Goal: Golem 1.6.3 async Component Model upgrade, toolchain hardening (wasm32-wasip2, wasm-tools 1.263.0, pinned wit-bindgen), packaging integrity (libc.a included), consumer smoke test automation, and v1.1.0 release.
 
-Status: **Unit 15 Spec Written.** Addressing KI-20 through KI-25. Specification authored at `docs/specs/15-release-polish-and-hardening.md`.
+Status: **v1.1.0 Released & Verified.** All 4 verification layers passing clean. Consumer smoke test passing.
 
 
 ## Done
+
+- **Golem 1.6.3 Remediation & v1.1.0 Release Complete & Verified (2026-11-12)**:
+  - CI & Toolchain Hardening: Updated `.github/workflows/ci.yaml` and `release.yaml` to `wasm32-wasip2` and `wasm-tools 1.263.0`.
+  - Pinned `wit-bindgen` in `host/Cargo.toml` to immutable commit `c0eb9d2ff0dac16cbf04f6206fc9e86cfa70f5bd` on `golemcloud/wit-bindgen`.
+  - Release Packaging: Verified `libc.a` inclusion in `targets/wasm32/libc.a`, generated `v1.1.0` release packages (.tar.zst, .tar.br, .tar.gz) with BLAKE3 checksums (`g6nYrU3LtwR9Ls6Q_DScCje3CiI0Q53Waq1Y9_g9HuI`).
+  - Consumer Smoke Test: Updated `tooling/test_consumer.sh` to verify both `targets/wasm32/libroc_golem_host.a` and `targets/wasm32/libc.a` in the unpacked archive, compiling a consumer app with Roc, componentizing with `wasm-tools 1.263.0`, and validating with `wasm-tools validate` (100% pass).
+  - Clarified `golem ssh` as an auxiliary tool check in `tooling/run_live_demo.sh`.
+  - Synchronized documentation (`README.md`, `docs/architecture.md`, `docs/testing.md`, `docs/ai-workflow-rules.md`, `docs/feature-checklist.md`).
+
+- **Unit 16 (Developer Ergonomics: Unified Tools & Response Primitives) Complete (2026-11-10)**:
+  - Added unified tools (`tool`, `statefulTool`, `statelessTool`, `toolJson`, `statelessToolJson`) bundling schema and execution logic.
+  - Added expressive response primitives (`reply`, `readOnly`, `stay`, `fail`, `replyJson`, `readOnlyJson`).
+  - Added default JSON state serialization/deserialization.
+  - Added stateless worker shortcut `Golem.ephemeral({ name, onMessage, tools })`.
+  - Added test suite `tests/dx_primitives.roc` (12 tests passing).
+
+- **Unit 15 (Release Polish & Hardening) Complete (2026-11-09)**:
+  - Recursive platform packaging in `tooling/pack_platform` preserving `targets/wasm32/libroc_golem_host.a`.
+  - Automated consumer verification in `tooling/test_consumer.sh`.
+  - Fixed manifest schema warnings in `golem.yaml`.
+  - End-to-end live demonstration script in `tooling/run_live_demo.sh`.
 
 - **Unit 14 (End-to-End Golem Cloud Verification and v1.0.0 GA) Complete & Verified (2026-11-08)**:
   - Expanded Layer 4 runtime test harness (`tooling/test_runtime.sh`) with 4 comprehensive suites covering all four real Roc Golem agents against local Golem Cloud server (v1.6 / 1.2.5):

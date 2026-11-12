@@ -28,4 +28,4 @@ lto = true
 codegen-units = 1
 
 [patch.crates-io]
-wit-bindgen = { git = "https://github.com/golemcloud/wit-bindgen", branch = "wit-bindgen-golem-1.6", version = "=0.59.0" }
+wit-bindgen = { git = "https://github.com/golemcloud/wit-bindgen", rev = "c0eb9d2ff0dac16cbf04f6206fc9e86cfa70f5bd", version = "=0.59.0" }
