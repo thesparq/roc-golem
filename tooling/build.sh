@@ -205,7 +205,7 @@ case "$COMMAND" in
         ;;
     package)
         shift || true
-        package_platform "${1:-v1.0.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        package_platform "${1:-v1.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     release)
         shift || true
@@ -214,7 +214,7 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "canary_release"
-        package_platform "${1:-v1.0.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        package_platform "${1:-v1.1.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     counter|ai_tool|streaming_agent|canary_release)
         build_app "$COMMAND"
@@ -225,7 +225,7 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "canary_release"
-        package_platform "v1.0.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
+        package_platform "v1.1.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)
         if [[ -f "$COMMAND" ]]; then
