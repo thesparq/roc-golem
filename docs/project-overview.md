@@ -87,13 +87,12 @@ Golem Cloud            (runs the component, stores history, replays on failure)
 
 ## Current state (honest summary)
 
-This section is intentionally blunt so nobody builds on a false assumption. The live list is in `docs/progress-tracker.md`.
+The live list is in `docs/progress-tracker.md`.
 
-- The Rust host has real Golem calls for most effects and 13 native tests that pass.
-- Those tests run against a **fake Roc agent written in Rust**, not against real Roc code.
-- The build script does not yet compile or link the Roc application, and CI does not run the Roc compiler.
-- Several effects only work in tests (see "Known issues" in `docs/progress-tracker.md`).
-- Therefore: the platform is **not yet proven end to end** on Golem. Closing that gap is Phase 0 of the build plan.
+- The platform is **production-ready and fully verified end to end** on Golem Cloud (v1.6.3), released as `v1.1.0`.
+- The Rust host compiles for `wasm32-wasip2`, links against WASI `libc.a`, and translates WIT `golem:agent/guest@2.0.0` async Component Model interfaces into Roc handler calls.
+- All four verification layers pass: Layer 1 static checks (`cargo fmt`, `clippy`, `roc fmt`, `roc check`), Layer 2 host unit tests and Roc tests, Layer 3 component builds, and Layer 4 live runtime tests on local Golem server (v1.6.3).
+- Platform distribution archives (`.tar.zst`, `.tar.br`, `.tar.gz`) are packaged with BLAKE3 base64url checksums and verified via automated consumer smoke tests.
 
 ## In Scope
 

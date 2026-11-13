@@ -9,7 +9,7 @@ This skill provides guidelines and patterns for building and deploying WebAssemb
 
 ## Architecture & Core Concepts
 
-- **Pre-compiled Host Architecture**: The Rust translation layer (`host/src/lib.rs`) is pre-compiled into `build/libhost.a` and `build/host.wasm` (`wasm32-unknown-unknown`), implementing the official `golem:agent/guest` component model interface.
+- **Pre-compiled Host Architecture**: The Rust translation layer (`host/src/lib.rs`) is pre-compiled for target `wasm32-wasip2` into `targets/wasm32/libroc_golem_host.a` and packaged with WASI `libc.a`, implementing Golem Cloud 1.6.3 async Component Model interfaces (`golem:agent/guest@2.0.0`).
 - **Universal Pass-Through Bridge**: Guest methods, tools, and message handling pass through JSON/string representations across the Roc↔Rust boundary.
 - **Worker Instance Lifecycle**: In Golem Cloud, a worker instance is initialized for one specific `agent-type` and stays hot in memory.
 - **Pure Functional Agents in Roc**: Agents are implemented as pure state machines with idiomatic Roc syntax, decoupled from low-level WebAssembly Component Model plumbing.
@@ -319,17 +319,17 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
    ```bash
    ./tooling/build.sh platform
    ```
-   Produces `build/libhost.a` and `build/host.wasm`.
+   Produces `platform/targets/wasm32/libroc_golem_host.a`, `platform/targets/wasm32/libc.a`, and `platform/libhost.a`.
 
 2. **Run Host Unit Tests**:
    ```bash
-   cargo test --manifest-path host/Cargo.toml --lib
+   cargo test --manifest-path host/Cargo.toml --features stub-guest --lib
    ```
    Verifies binary I/O, secret handle resolution, agent lifecycle, and read-only state bypass.
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v0.9.0 thesparq/roc-golem
+   ./tooling/build.sh package v1.1.0 thesparq/roc-golem
    ```
    Generates reproducible `.tar.zst`, `.tar.br`, and `.tar.gz` bundles with BLAKE3 hashes in `dist/`.
 

@@ -216,6 +216,7 @@ Source: code review of 2026-11-07 and build verification.
 | KI-23 | `golem.yaml` and README have path/naming mismatches (`streaming_agent.wasm` vs `streaming_agent_agent.wasm`, nonexistent `host.wasm`). | Medium | **Resolved** in Unit 15 (dual component emission, verified golem.yaml manifest with component WITs) |
 | KI-24 | `tooling/test_runtime.sh` assumes port 9881 is free; fails if server is already running or component name exists. | Medium | **Resolved** in Unit 15 (active server reuse, idempotent component update, timestamped worker IDs) |
 | KI-25 | Feature checklist rows 15 & 16 out of sync with unit test status; live server vs host mock test verifications are not clearly distinguished. | Low | **Resolved** in Unit 15 (rows 15 & 16 marked passed, explicit verification source tags across checklist) |
+| KI-26 | Golem 1.6.3 async Component Model upgrade introduces async lift/callback exports and wasm32-wasip2 target requirements, breaking older wasm32-unknown-unknown host builds and unpinned wit-bindgen. | High | **Resolved** in Unit 17 / v1.1.0 release (pinned wit-bindgen rev, wasm32-wasip2 host build, wasm-tools 1.263.0, libc.a packaging, v1.1.0 release) |
 
 - **Unit 16 (Developer Experience & Ergonomics) Complete & Verified (2026-11-11)**:
   - Designed and implemented ergonomic response primitives directly in `platform/Golem.roc`: `reply` (state mutated, oplog commit), `readOnly` ($O(1)$ in-memory response, safe oplog bypass), `stay` (noop), `fail` (error propagation), `replyJson`, and `readOnlyJson`.
@@ -232,6 +233,6 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Next steps
 
-- All Phase 4 Unit 16 deliverables completed and verified. Platform is release-ready for community showcase on Golem Discord and GitHub.
+- All Phase 5 Golem 1.6.3 async Component Model upgrade and v1.1.0 release deliverables completed, published, and verified. Official release `v1.1.0` live on GitHub.
 
 

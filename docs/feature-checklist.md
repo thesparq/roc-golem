@@ -105,7 +105,7 @@ All tests carry an explicit verification source tag:
 
 | # | Test | How | Expected | Status |
 |---|------|-----|----------|:---:|
-| 43 | Package | `./tooling/build.sh package v1.0.0 thesparq/roc-golem` | three archives, `checksums.txt` and `release_notes.md` in `dist/` | **PASSED** (2026-11-10) [Build & Packaging Tooling] |
-| 44 | Consume a release | a new Roc app using the README header | `roc check` and the build succeed | **PASSED** (2026-11-10) [test_consumer.sh] |
-| 45 | Hash matches | recompute the BLAKE3 base64url hash of the published archive | equals the hash in the README URL | **PASSED** (2026-11-10) [Build & Packaging Tooling] |
-| 46 | Native library unit tests | `cargo test --manifest-path host/Cargo.toml --all-targets --features stub-guest` | all 53 unit tests pass on host | **PASSED** (2026-11-10) [Host Unit Test (Mock)] |
+| 43 | Package | `./tooling/build.sh package v1.1.0 thesparq/roc-golem` | three archives, `checksums.txt` and `release_notes.md` in `dist/` | **PASSED** (2026-11-13) [Build & Packaging Tooling] |
+| 44 | Consume a release | a new Roc app using the README header | `roc check` and the build succeed | **PASSED** (2026-11-13) [test_consumer.sh] |
+| 45 | Hash matches | recompute the BLAKE3 base64url hash of the published archive | equals the hash in the README URL | **PASSED** (2026-11-13) [Build & Packaging Tooling] |
+| 46 | Native library unit tests | `cargo test --manifest-path host/Cargo.toml --all-targets --features stub-guest` | all 53 unit tests pass on host | **PASSED** (2026-11-13) [Host Unit Test (Mock)] |

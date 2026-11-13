@@ -172,7 +172,7 @@ build_app() {
 }
 
 package_platform() {
-    local TAG="${1:-v1.0.0}"
+    local TAG="${1:-v1.1.0}"
     local REPO="${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
 
     if [[ ! -f "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a" || ! -f "$PRECOMPILED_HOST_A" ]]; then

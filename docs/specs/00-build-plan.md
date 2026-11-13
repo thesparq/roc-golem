@@ -105,4 +105,11 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *Dependencies:* 15.
 *Status:* Complete.
 
+## Phase 5 — Golem 1.6.3 Upgrade & v1.1.0 Release
+
+**17. Golem 1.6.3 async Component Model upgrade and v1.1.0 release**
+*What it builds:* Upgrades to Golem 1.6.3 async Component Model exports (`[async-lift]` and `[callback][async-lift]`), pins `wit-bindgen` to commit `c0eb9d2ff0dac16cbf04f6206fc9e86cfa70f5bd`, targets `wasm32-wasip2` and bundles `libc.a`, upgrades `wasm-tools` to 1.263.0, demarcates `golem ssh` as auxiliary tool check, aligns documentation, publishes `v1.1.0` release package with BLAKE3 checksums, and updates CI/release workflows.
+*Dependencies:* 16.
+*Status:* Complete.
+
 
