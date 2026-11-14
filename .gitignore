@@ -13,6 +13,7 @@ target/
 golem-temp/
 examples/*/wit/deps/
 .DS_Store
+.claude
 
 # Local audit snapshots (not part of the repository)
 /.audit-*/

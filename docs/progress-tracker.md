@@ -4,12 +4,21 @@ Keep this file short (about 150 lines). It is a status page, not a diary. Move f
 
 ### Current Phase: Production Stable — Platform Hardening & v1.2.0 Release (2026-11-14)
 
-Goal: Platform correctness and security hardening (Phases 1–5, KI-26 through KI-63, F-1 and F-2), real wasm32 host effects, typed HttpRequest, SecretHandle nominal union, comprehensive test coverage, reproducible packaging, and v1.2.0 release.
+Goal: Platform correctness and security hardening (Phases 1–5, KI-26 through KI-63, F-1 and F-2), real wasm32 host effects, typed HttpRequest, SecretHandle nominal union, comprehensive test coverage, reproducible packaging, and live Golem 1.6.3 validation.
 
-Status: **v1.2.0 Released & Verified.** All 4 verification layers passing clean. Consumer smoke test passing.
+Status: **v1.2.0 Released & 100% Verified on Golem Cloud 1.6.3.** All 4 verification layers passing clean. Live runtime test suites 1–4 passing against Golem 1.6.3 server.
 
 
 ## Done
+
+- **v1.2.0 Remediation, Runtime ABI Fixes & Live Golem 1.6.3 Verification (2026-11-14)**:
+  - Documented full review, remediation plan, and DX improvements in `docs/specs/18-v1.2.0-remediation-and-dx-polish.md`.
+  - Normalized empty constructor input in host and `platform/Golem.roc` to accept `()`, `""`, `"{}"`, `"[]"`, `"null"`.
+  - Fixed wasm32 C-ABI discriminant layout offset (12) for `RocResult<u64, RocStr>` in `rocFxCreatePromise`.
+  - Fixed RPC parameter wrapping: wrapped constructor and method parameters in `SchemaValueNode::RecordValue` tree for Golem Component Model RPC compliance.
+  - Sanitized target agent type in `rocFxGetWorkerId` and RPC client initialization.
+  - Re-packaged platform release `v1.2.0` with updated BLAKE3 checksums (`GwOAebosL1NCD985QwFannL3pqU5wIYsYwNDtBjGp6c.tar.zst`).
+  - Executed Layer 4 live runtime test suite (`./tooling/test_runtime.sh`): 100% pass across Counter Agent, Canary Release Multi-Agent Coordinator, AI Tool Agent, and Streaming Agent against clean Golem 1.6.3 server. Saved live test log to `docs/demo/v1.2.0-live-test.log`.
 
 - **Platform Correctness & Hardening (Phases 1–5, KI-26 through KI-63) Complete & Verified (2026-11-13)**:
   - **Phase 1 (Critical Correctness)**: Implemented real wasm32 host implementations for `createPromise`, `blobPut`, `getOplogIndex`, and `rpcSchedule`. Extended `Json.escape` to handle U+0000..U+001F, `\b`, `\f`. Fixed `agentWith` initialization error propagation and builder missing-handler diagnostics. Updated WIT imports to `@1.6.x`. Fixed counter example JSON serialization.
@@ -40,7 +49,7 @@ Status: **v1.2.0 Released & Verified.** All 4 verification layers passing clean.
   - End-to-end live demonstration script in `tooling/run_live_demo.sh`.
 
 - **Unit 14 (End-to-End Golem Cloud Verification and v1.0.0 GA) Complete & Verified (2026-11-08)**:
-  - Expanded Layer 4 runtime test harness (`tooling/test_runtime.sh`) with 4 comprehensive suites covering all four real Roc Golem agents against local Golem Cloud server (v1.6 / 1.2.5):
+  - Expanded Layer 4 runtime test harness (`tooling/test_runtime.sh`) with 4 comprehensive suites covering all four real Roc Golem agents against local Golem Cloud server (v1.6.3):
     - Suite 1: Counter Agent (deploy, first call, multi-turn mutations, crash/restart durability simulation, read-only bypass & state stability; Checklist #3, #5, #6, #7, #8, #9).
     - Suite 2: Canary Release Agent (bundled agent discovery `canary-release` and `diagnostics-worker`, service initialization, `start_canary` allocating durable promise & webhook URL, live HTML `dashboard` rendering, `approve_gate` promotion to 100% traffic, stateless `analyze_logs` tool, ephemeral `diagnostics-worker` log scanning; Checklist #4, #10, #12, #36, #38, #41).
     - Suite 3: AI Tool Agent (deploy, worker init, typed `calculator` tool execution returning 42, `echo` tool handling quotes & JSON escaping; Checklist #11, #44).
@@ -224,15 +233,7 @@ Source: code review of 2026-11-07 and build verification.
 | KI-24 | `tooling/test_runtime.sh` assumes port 9881 is free; fails if server is already running or component name exists. | Medium | **Resolved** in Unit 15 (active server reuse, idempotent component update, timestamped worker IDs) |
 | KI-25 | Feature checklist rows 15 & 16 out of sync with unit test status; live server vs host mock test verifications are not clearly distinguished. | Low | **Resolved** in Unit 15 (rows 15 & 16 marked passed, explicit verification source tags across checklist) |
 | KI-26 | Golem 1.6.3 async Component Model upgrade introduces async lift/callback exports and wasm32-wasip2 target requirements, breaking older wasm32-unknown-unknown host builds and unpinned wit-bindgen. | High | **Resolved** in Unit 17 / v1.1.0 release (pinned wit-bindgen rev, wasm32-wasip2 host build, wasm-tools 1.263.0, libc.a packaging, v1.1.0 release) |
-
-- **Unit 16 (Developer Experience & Ergonomics) Complete & Verified (2026-11-11)**:
-  - Designed and implemented ergonomic response primitives directly in `platform/Golem.roc`: `reply` (state mutated, oplog commit), `readOnly` ($O(1)$ in-memory response, safe oplog bypass), `stay` (noop), `fail` (error propagation), `replyJson`, and `readOnlyJson`.
-  - Implemented first-class unified tools (`Tool(state)`, `StatelessTool`) with constructors `tool`, `toolJson`, `statefulTool`, `statelessTool`, `statelessToolJson`, and `statelessToTool`. Eliminated tool double-declaration between schema and execution, automated `toolCall.id` forwarding, and automated `{ id, success, output }` JSON envelope wrapping.
-  - Implemented canonical agent constructors `Golem.agent`, `Golem.agentWith`, `Golem.simpleAgent`, `Golem.ephemeral`, and `Golem.simpleEphemeral` with default JSON state serialization, automatic tool dispatch, and read-only oplog bypass.
-  - Authored comprehensive test suite `tests/dx_primitives.roc` with 22 pure assertions testing all response primitives, schema helpers, tool constructors, and dispatch functions (`roc test tests/dx_primitives.roc` passing 22/22).
-  - Refactored `examples/counter/main.roc` (lines reduced by 53%), `examples/ai_tool/main.roc`, and `examples/streaming_agent/main.roc` to the modern ergonomic DX while maintaining 100% backward compatibility for legacy `defineAgent` and `build`.
-  - Verified full 4-layer testing suite: Layer 1 static checks (`cargo fmt`, `cargo clippy`, `roc fmt`, `roc check`), Layer 2 unit tests (53 host tests + 26 Roc tests), Layer 3 component builds and validation (`./tooling/build.sh all`), Layer 4 consumer smoke test (`./tooling/test_consumer.sh`), and Layer 4 live Golem server runtime suite (`./tooling/test_runtime.sh` 100% passing across all 4 agents).
-  - Refreshed `README.md` to showcase the concise, idiomatic modern agent definition.
+| KI-27 | Golem 1.6.3 WasmRpc requires RecordValue root parameter tree for constructor and methods, and wasm32 RocResult tag union offset 12 in `rocFxCreatePromise`. | High | **Resolved** in v1.2.0 remediation (RecordValue wrapping, wasm32 discriminant alignment) |
 
 ## Open questions
 
@@ -240,6 +241,6 @@ Source: code review of 2026-11-07 and build verification.
 
 ## Next steps
 
-- All Phase 5 Golem 1.6.3 async Component Model upgrade and v1.1.0 release deliverables completed, published, and verified. Official release `v1.1.0` live on GitHub.
+- All v1.2.0 remediation and Golem 1.6.3 live runtime verification items completed, published, and verified.
 
 

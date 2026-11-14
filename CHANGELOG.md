@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Upgraded `wasm-tools` support to 1.263.0.
 - Automated consumer verification suite in `tooling/test_consumer.sh`.
 
-## [1.0.0] — 2026-10-31
+## [1.0.0] — 2026-11-08
 
 ### Added
 - Initial GA release of the `roc-golem` platform.

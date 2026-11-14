@@ -553,8 +553,17 @@ fn extract_data_value_string(val: SchemaValueTree) -> String {
     }
     let json_val = schema_value_tree_to_json(&val, val.root);
     match json_val {
-        serde_json::Value::String(s) => s,
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() || trimmed == "{}" || trimmed == "[]" || trimmed == "null" {
+                String::from("{}")
+            } else {
+                s
+            }
+        }
         serde_json::Value::Null => String::from("{}"),
+        serde_json::Value::Array(arr) if arr.is_empty() => String::from("{}"),
+        serde_json::Value::Object(map) if map.is_empty() => String::from("{}"),
         other => other.to_string(),
     }
 }
@@ -564,6 +573,74 @@ fn wrap_string_data_value(s: String) -> SchemaValueTree {
         value_nodes: vec![],
         root: 0,
     })
+}
+
+#[allow(dead_code)]
+fn wrap_constructor_parameter_tree(c: &str) -> SchemaValueTree {
+    let trimmed = c.trim();
+    if trimmed.is_empty()
+        || trimmed == "{}"
+        || trimmed == "[]"
+        || trimmed == "()"
+        || trimmed == "null"
+    {
+        SchemaValueTree {
+            value_nodes: vec![SchemaValueNode::RecordValue(vec![])],
+            root: 0,
+        }
+    } else {
+        SchemaValueTree {
+            value_nodes: vec![
+                SchemaValueNode::StringValue(c.to_string()),
+                SchemaValueNode::RecordValue(vec![0]),
+            ],
+            root: 1,
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn wrap_method_parameter_tree(p: &str) -> SchemaValueTree {
+    let trimmed = p.trim();
+    if trimmed.is_empty()
+        || trimmed == "{}"
+        || trimmed == "[]"
+        || trimmed == "()"
+        || trimmed == "null"
+    {
+        SchemaValueTree {
+            value_nodes: vec![SchemaValueNode::RecordValue(vec![])],
+            root: 0,
+        }
+    } else {
+        SchemaValueTree {
+            value_nodes: vec![
+                SchemaValueNode::StringValue(p.to_string()),
+                SchemaValueNode::RecordValue(vec![0]),
+            ],
+            root: 1,
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn wrap_method_bytes_parameter_tree(bytes: &[u8]) -> SchemaValueTree {
+    let vec_bytes = bytes.to_vec();
+    let mut tree = golem_rust::schema::wit::direct::encode(&vec_bytes).unwrap_or_else(|_| SchemaValueTree {
+        value_nodes: vec![],
+        root: 0,
+    });
+    if tree.value_nodes.is_empty() {
+        SchemaValueTree {
+            value_nodes: vec![SchemaValueNode::RecordValue(vec![])],
+            root: 0,
+        }
+    } else {
+        let payload_root = tree.root;
+        tree.value_nodes.push(SchemaValueNode::RecordValue(vec![payload_root]));
+        tree.root = (tree.value_nodes.len() - 1) as i32;
+        tree
+    }
 }
 
 #[allow(dead_code)]
@@ -857,14 +934,35 @@ pub unsafe extern "C" fn rocFxLog(level: u8, msg: *const RocStr) {
     }
 }
 
+#[allow(dead_code)]
+fn sanitize_target_agent_type(target: &str) -> &str {
+    if let Some(idx) = target.find('(') {
+        target[..idx].trim()
+    } else {
+        target.trim()
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
     #[cfg(target_arch = "wasm32")]
     {
-        let id_str = match golem::api::host::get_self_metadata() {
-            Ok(metadata) => metadata.agent_id.agent_id,
-            Err(_) => "unknown-worker".to_string(),
-        };
+        let id_str = WORKER_STATE.with(|s| {
+            s.borrow()
+                .active_agent_type
+                .clone()
+                .unwrap_or_else(|| match golem::api::host::get_self_metadata() {
+                    Ok(metadata) => {
+                        let raw = metadata.agent_id.agent_id;
+                        if let Some(idx) = raw.find('(') {
+                            raw[..idx].trim().to_string()
+                        } else {
+                            raw
+                        }
+                    }
+                    Err(_) => "unknown-worker".to_string(),
+                })
+        });
         ptr::write(out, RocStr::from_str(&id_str));
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -992,9 +1090,14 @@ pub unsafe extern "C" fn rocFxRpcInvoke(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
-        let input_val = wrap_string_data_value(p.to_string());
+        let constructor_val = wrap_constructor_parameter_tree(c);
+        let rpc_client = golem::agent::host::WasmRpc::new(
+            sanitize_target_agent_type(t),
+            constructor_val,
+            None,
+            Vec::new(),
+        );
+        let input_val = wrap_method_parameter_tree(p);
         match rpc_client.invoke_and_await(f, input_val, None) {
             Ok(res_val) => {
                 let res_str = match res_val.result {
@@ -1088,9 +1191,14 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
             seconds: sched_secs as i64,
             nanoseconds: sched_nanos,
         };
-        let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
-        let input_val = wrap_string_data_value(p.to_string());
+        let constructor_val = wrap_constructor_parameter_tree(c);
+        let rpc_client = golem::agent::host::WasmRpc::new(
+            sanitize_target_agent_type(t),
+            constructor_val,
+            None,
+            Vec::new(),
+        );
+        let input_val = wrap_method_parameter_tree(p);
         let _ = rpc_client.schedule_invocation(target_datetime, f, input_val, None);
 
         let resp = serde_json::json!({
@@ -1157,9 +1265,14 @@ pub unsafe extern "C" fn rocFxRpcFireAndForget(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
-        let input_val = wrap_string_data_value(p.to_string());
+        let constructor_val = wrap_constructor_parameter_tree(c);
+        let rpc_client = golem::agent::host::WasmRpc::new(
+            sanitize_target_agent_type(t),
+            constructor_val,
+            None,
+            Vec::new(),
+        );
+        let input_val = wrap_method_parameter_tree(p);
         match rpc_client.invoke(f, input_val, None) {
             Ok(_) => {
                 ptr::write(out, RocResult::ok(RocStr::from_str("{\"status\":\"ok\"}")));
@@ -1217,9 +1330,14 @@ pub unsafe extern "C" fn rocFxRpcInvokeBytes(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
-        let input_val = wrap_bytes_data_value(p_slice.to_vec());
+        let constructor_val = wrap_constructor_parameter_tree(c);
+        let rpc_client = golem::agent::host::WasmRpc::new(
+            sanitize_target_agent_type(t),
+            constructor_val,
+            None,
+            Vec::new(),
+        );
+        let input_val = wrap_method_bytes_parameter_tree(p_slice);
         match rpc_client.invoke_and_await(f, input_val, None) {
             Ok(res_val) => {
                 let res_bytes = match res_val.result {
@@ -1294,15 +1412,20 @@ pub unsafe extern "C" fn rocFxRpcScheduleBytes(
             seconds: sched_secs as i64,
             nanoseconds: sched_nanos,
         };
-        let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
-        let input_val = wrap_bytes_data_value(p_slice.to_vec());
+        let constructor_val = wrap_constructor_parameter_tree(c);
+        let rpc_client = golem::agent::host::WasmRpc::new(
+            sanitize_target_agent_type(t),
+            constructor_val,
+            None,
+            Vec::new(),
+        );
+        let input_val = wrap_method_bytes_parameter_tree(p_slice);
         let _ = rpc_client.schedule_invocation(target_datetime, f, input_val, None);
         ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (c, delay_millis);
+        let _ = (t, c, f, delay_millis);
         ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
     }
 }
@@ -1338,9 +1461,14 @@ pub unsafe extern "C" fn rocFxRpcFireAndForgetBytes(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let constructor_val = wrap_string_data_value(c.to_string());
-        let rpc_client = golem::agent::host::WasmRpc::new(t, constructor_val, None, Vec::new());
-        let input_val = wrap_bytes_data_value(p_slice.to_vec());
+        let constructor_val = wrap_constructor_parameter_tree(c);
+        let rpc_client = golem::agent::host::WasmRpc::new(
+            sanitize_target_agent_type(t),
+            constructor_val,
+            None,
+            Vec::new(),
+        );
+        let input_val = wrap_method_bytes_parameter_tree(p_slice);
         match rpc_client.invoke(f, input_val, None) {
             Ok(_) => {
                 ptr::write(out, RocResult::ok(()));
@@ -1417,6 +1545,8 @@ pub unsafe extern "C" fn rocFxCreatePromise(out: *mut RocResult<u64, RocStr>) {
             slots.len() as u64
         });
         ptr::write(out, RocResult::ok(handle));
+        let raw = out as *mut u8;
+        *raw.add(12) = 1;
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1433,6 +1563,8 @@ pub unsafe extern "C" fn rocFxCreatePromise(out: *mut RocResult<u64, RocStr>) {
             next_id
         });
         ptr::write(out, RocResult::ok(handle));
+        let raw = out as *mut u8;
+        *raw.add(12) = 1;
     }
 }
 

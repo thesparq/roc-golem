@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.0/7tvjAkNOXfbP1LmNSFknACmMXKul4-q3geVJkood0r8.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.0/gaeT4elx5DUSLROJgzbAXG5ewzzf71k35bQVGHmsYPQ.tar.zst",
 }
 
 import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
@@ -63,6 +63,10 @@ agent = Golem.agent({
         },
 })
 ```
+
+> [!TIP]
+> You can also use the canonical named archive URL:
+> `https://github.com/thesparq/roc-golem/releases/download/v1.2.0/roc-golem-v1.2.0.tar.zst`
 
 > **Developer Experience (DX) Features**:
 > - **Unified Tools**: Tool schema (`ToolDefinition`) and execution logic are defined together. Tool ID forwarding, JSON envelope wrapping, and dispatch are automatic.
@@ -134,6 +138,7 @@ Lossy UTF-8 conversions replace arbitrary non-UTF-8 bytes with `U+FFFD`, corrupt
 - **Idempotency & Oplog Controls**:
   - `generateIdempotencyKey : Effect(Result(Str, Str))` — acquire a unique Golem Cloud idempotency UUID.
   - `getOplogIndex : Effect(U64)` — retrieve current worker operation log index.
+    *(Note: On Golem Cloud wasm32, returns `0` due to a WIT export gap in Golem 1.6. Do not pass this value to `revertAgent`, as doing so rolls the agent back to initial state.)*
   - `oplogCommit : U8 -> Effect({})` — persist and commit oplog up to current index with specified replica quorum.
   - `getIdempotenceMode : Effect(Bool)` / `setIdempotenceMode : Bool -> Effect({})` — inspect and toggle idempotency replay protection.
   - `revertAgent : U64 -> Effect(Result({}, Str))` — roll back agent execution state to prior oplog index.

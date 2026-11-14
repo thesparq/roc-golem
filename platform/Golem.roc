@@ -577,15 +577,17 @@ agentWith = |cfg| {
 			mode: Durable,
 			httpMount: None,
 		},
-		init: |configStr|
-			if Str.is_empty(configStr) or configStr == "{}" {
+		init: |configStr| {
+			trimmed = Str.trim(configStr)
+			if Str.is_empty(trimmed) or trimmed == "{}" or trimmed == "[]" or trimmed == "null" or trimmed == "\"\"" {
 				Ok((cfg.serializeState)(cfg.initial))
 			} else {
 				match (cfg.deserializeState)(configStr) {
 					Ok(parsed) => Ok((cfg.serializeState)(parsed))
 					Err(e) => Err("init failed to parse config: ${e}")
 				}
-			},
+			}
+		},
 		invokeMethod: |methodName, stateJson, inputJson|
 			match findTool(cfg.tools, methodName) {
 				Ok(targetTool) =>
