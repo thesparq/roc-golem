@@ -137,11 +137,7 @@ build_app() {
         build_platform
     fi
 
-    # Step 1: Format & validate Roc code
-    echo "==> Formatting Roc code ($APP_FILE)..."
-    roc fmt "$APP_FILE" "$PLATFORM_DIR/main.roc"
-
-    # Step 2: Compile Roc application and host into core WebAssembly module
+    # Step 1: Compile Roc application and host into core WebAssembly module
     echo "==> Compiling Roc application to WebAssembly core module ($CORE_WASM)..."
     roc build --target=wasm32 "$APP_FILE" --output="$CORE_WASM" || {
         local STATUS=$?
@@ -151,7 +147,7 @@ build_app() {
         fi
     }
 
-    # Step 3: Componentize WASM module into Golem Component Model
+    # Step 2: Componentize WASM module into Golem Component Model
     echo "==> Componentizing WASM module into Golem Component Model ($OUTPUT_COMPONENT)..."
     wasm-tools component new "$CORE_WASM" -o "$OUTPUT_COMPONENT"
     # Ensure both ${TARGET_APP}.wasm and ${TARGET_APP}_agent.wasm exist for manifest compatibility
@@ -159,7 +155,7 @@ build_app() {
         cp -f "$OUTPUT_COMPONENT" "$BUILD_DIR/${TARGET_APP}.wasm"
     fi
 
-    # Step 4: Validate Component Model compatibility
+    # Step 3: Validate Component Model compatibility
     echo "==> Validating Component Model compatibility..."
     wasm-tools validate "$OUTPUT_COMPONENT"
 

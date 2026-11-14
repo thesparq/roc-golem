@@ -188,7 +188,16 @@ impl Clone for RocStr {
         if self.is_small() {
             Self { words: self.words }
         } else {
-            Self::from_str(self.as_str())
+            let data_ptr = self.words[0] as *mut u8;
+            if !data_ptr.is_null() {
+                unsafe {
+                    let header_size = mem::size_of::<isize>();
+                    let ptr = data_ptr.sub(header_size);
+                    let ref_count = ptr as *mut isize;
+                    *ref_count += 1;
+                }
+            }
+            Self { words: self.words }
         }
     }
 }
@@ -401,5 +410,64 @@ mod tests {
         let cloned = roc_list.clone();
         assert_eq!(cloned.as_slice(), sample_bytes);
         assert_eq!(roc_list, cloned);
+    }
+
+    #[test]
+    fn test_rocstr_small_clone() {
+        let s = RocStr::from_str("short");
+        assert!(s.is_small());
+        let cloned = s.clone();
+        assert!(cloned.is_small());
+        assert_eq!(s.as_str(), "short");
+        assert_eq!(cloned.as_str(), "short");
+    }
+
+    #[test]
+    fn test_rocstr_large_clone_shares_pointer_and_refcounts() {
+        let long_str = "This is a long string designed to exceed the SSO threshold and trigger heap allocation!";
+        let original = RocStr::from_str(long_str);
+        assert!(!original.is_small());
+
+        let ptr1 = original.words[0] as *mut u8;
+        assert!(!ptr1.is_null());
+
+        // Check initial refcount is 1
+        unsafe {
+            let header_size = mem::size_of::<isize>();
+            let ref_count = *(ptr1.sub(header_size) as *const isize);
+            assert_eq!(ref_count, 1);
+        }
+
+        let clone1 = original.clone();
+        let ptr2 = clone1.words[0] as *mut u8;
+        // Verify pointer equality: both instances share the exact same buffer
+        assert_eq!(ptr1, ptr2);
+
+        // Check refcount incremented to 2
+        unsafe {
+            let header_size = mem::size_of::<isize>();
+            let ref_count = *(ptr1.sub(header_size) as *const isize);
+            assert_eq!(ref_count, 2);
+        }
+
+        {
+            let clone2 = clone1.clone();
+            assert_eq!(clone2.words[0] as *mut u8, ptr1);
+            unsafe {
+                let header_size = mem::size_of::<isize>();
+                let ref_count = *(ptr1.sub(header_size) as *const isize);
+                assert_eq!(ref_count, 3);
+            }
+        } // clone2 drops here
+
+        // Refcount decremented back to 2
+        unsafe {
+            let header_size = mem::size_of::<isize>();
+            let ref_count = *(ptr1.sub(header_size) as *const isize);
+            assert_eq!(ref_count, 2);
+        }
+
+        assert_eq!(original.as_str(), long_str);
+        assert_eq!(clone1.as_str(), long_str);
     }
 }

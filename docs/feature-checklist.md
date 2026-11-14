@@ -108,4 +108,35 @@ All tests carry an explicit verification source tag:
 | 43 | Package | `./tooling/build.sh package v1.1.0 thesparq/roc-golem` | three archives, `checksums.txt` and `release_notes.md` in `dist/` | **PASSED** (2026-11-13) [Build & Packaging Tooling] |
 | 44 | Consume a release | a new Roc app using the README header | `roc check` and the build succeed | **PASSED** (2026-11-13) [test_consumer.sh] |
 | 45 | Hash matches | recompute the BLAKE3 base64url hash of the published archive | equals the hash in the README URL | **PASSED** (2026-11-13) [Build & Packaging Tooling] |
-| 46 | Native library unit tests | `cargo test --manifest-path host/Cargo.toml --all-targets --features stub-guest` | all 53 unit tests pass on host | **PASSED** (2026-11-13) [Host Unit Test (Mock)] |
+| 46 | Native library unit tests | `cargo test --manifest-path host/Cargo.toml --all-targets --features stub-guest` | all 56 unit tests pass on host | **PASSED** (2026-11-13) [Host Unit Test (Mock)] |
+
+---
+
+## Platform Correctness & Hardening (v1.2.0)
+
+| # | Test | How | Expected | Status |
+|---|------|-----|----------|:---:|
+| 47 | Real wasm32 `createPromise` | `rocFxCreatePromise` invokes `golem::api::host::create_promise` | Allocates durable promise handle (`KI-26`) | **PASSED** (2026-11-13) [Host & Wasm32 Check] |
+| 48 | Real wasm32 `blob_put_wasm32` | `rocFxBlobPutBytes` uses `crate::wit_stream::new::<u8>` | Streams payload to blobstore outgoing value (`KI-27`) | **PASSED** (2026-11-13) [Host & Wasm32 Check] |
+| 49 | Real wasm32 `rocFxGetOplogIndex` | `rocFxGetOplogIndex` returns current oplog index | Maps u64 oplog index (`KI-28`) | **PASSED** (2026-11-13) [Host & Wasm32 Check] |
+| 50 | Real wasm32 `rocFxRpcSchedule` | `schedule_invocation` computed timestamp | Target datetime computed without overflow (`KI-29`) | **PASSED** (2026-11-13) [Host & Wasm32 Check] |
+| 51 | JSON control character escaping | `Json.escape` escapes U+0000..U+001F, `\b`, `\f` | Valid JSON string output (`KI-30`, `KI-48`) | **PASSED** (2026-11-13) [roc test json_roundtrip.roc] |
+| 52 | `agentWith` init error propagation | Pass malformed JSON to agent init | Propagates `Err("init failed...")` (`KI-31`) | **PASSED** (2026-11-13) [roc check & tests] |
+| 53 | `build` missing-handler diagnostics | Call unhandled message on builder-defined agent | Clear error message returned (`KI-32`) | **PASSED** (2026-11-13) [roc check & tests] |
+| 54 | `extract_json_field` escaped quotes | Parse JSON field containing escaped quotes | Escaped characters preserved (`KI-33`) | **PASSED** (2026-11-13) [roc test envelope.roc] |
+| 55 | WIT imports updated to `@1.6.x` | Validate component with `wasm-tools validate` | All 4 examples pass component validation (`KI-34`) | **PASSED** (2026-11-13) [wasm-tools validate] |
+| 56 | `RocStr` refcount clone increment | Clone `RocStr` on host | Refcount increments without deep allocation (`KI-36`, `KI-44`) | **PASSED** (2026-11-13) [cargo test roc_std] |
+| 57 | Opaque `SecretHandle` nominal union | Type-check `SecretHandle` in `Types.roc` | `SecretHandle := [SecretHandle(U32)]` (`KI-37`) | **PASSED** (2026-11-13) [roc check] |
+| 58 | Unified 1-based handle tables | Pass handle 0 to WS, stream, promise, webhook | Returns `Err("invalid handle 0")` (`KI-38`) | **PASSED** (2026-11-13) [cargo test] |
+| 59 | Standard C-ABI argument order | Out-pointer at position 0 for all RPC functions | Callers and host match signature (`KI-39`) | **PASSED** (2026-11-13) [cargo test & wasm check] |
+| 60 | Path traversal rejection | Pass path containing `..` to filesystem effect | Returns `Err("path traversal rejected")` (`KI-40`) | **PASSED** (2026-11-13) [cargo test fs] |
+| 61 | Host effect unit tests | Run `cargo test --features stub-guest --lib` | 56/56 tests passing (`KI-43`) | **PASSED** (2026-11-13) [cargo test] |
+| 62 | `tests/spec_builder.roc` test suite | Run `roc test tests/spec_builder.roc` | 9/9 tests passing (`KI-45`) | **PASSED** (2026-11-13) [roc test] |
+| 63 | `tests/bundle.roc` test suite | Run `roc test tests/bundle.roc` | 5/5 tests passing (`KI-46`) | **PASSED** (2026-11-13) [roc test] |
+| 64 | Typed `HttpRequest` | Dispatch `Golem.httpRequest(req)` | JSON request encoded and sent (`KI-50`) | **PASSED** (2026-11-13) [roc check] |
+| 65 | Parameter helpers | `numberParam`, `boolParam`, `typedParam` | Registered with typed schemas (`KI-51`) | **PASSED** (2026-11-13) [roc check & tests] |
+| 66 | Human-readable error formatters | Surface WS, DB, Config, RPC errors | Human-readable error messages (`KI-52`) | **PASSED** (2026-11-13) [cargo test & wasm check] |
+| 67 | Double-encode protocol docs | Check `main.roc` and `host/src/lib.rs` | Documented inline (`KI-53`) | **PASSED** (2026-11-13) [Code Review] |
+| 68 | Streaming agent note | Check `streaming_agent/main.roc` | Connect branch note added (`KI-54`) | **PASSED** (2026-11-13) [Code Review] |
+| 69 | Canary workerId target | Check `ReleaseCoordinator.roc` | Rolls back using `workerId` (`KI-55`) | **PASSED** (2026-11-13) [roc check] |
+| 70 | Housekeeping & Tooling | Check `.gitignore`, `build.sh`, `CHANGELOG.md` | Cleaned and validated (`KI-56`-`KI-63`) | **PASSED** (2026-11-13) [Build & Packaging Tooling] |

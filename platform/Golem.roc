@@ -1,42 +1,26 @@
 module [
+	# --- Agent Builders ---
 	Agent,
 	ErasedAgent,
-	Method,
 	Spec,
-	Handler,
-	Tool,
-	StatelessTool,
-	method,
-	define,
-	defineEphemeral,
 	agent,
 	agentWith,
 	simpleAgent,
 	ephemeral,
 	simpleEphemeral,
-	tool,
-	toolJson,
-	statefulTool,
-	statelessTool,
-	statelessToolJson,
-	statelessToTool,
-	param,
-	optionalParam,
-	reply,
-	readOnly,
-	stay,
-	fail,
-	replyJson,
-	readOnlyJson,
-	dispatchTool,
-	dispatchMessage,
-	dispatchStatelessTool,
-	withTools,
-	withToolHandler,
-	withStatelessToolHandler,
-	withEffectfulToolHandler,
-	withEffectfulStatelessToolHandler,
-	withHttpMount,
+	define,
+	defineEphemeral,
+	defineAgent,
+	build,
+	bundle,
+	bundle2,
+	bundleAll,
+	erase,
+
+	# --- Method & Handler Registration ---
+	Method,
+	Handler,
+	method,
 	register,
 	registerReadOnly,
 	registerEphemeral,
@@ -45,17 +29,50 @@ module [
 	registerEphemeralTyped,
 	registerEffectful,
 	registerEffectfulTyped,
-	build,
-	bundle,
-	bundle2,
-	erase,
-	defineAgent,
+	withHttpMount,
+
+	# --- Tool Helpers ---
+	Tool,
+	StatelessTool,
+	tool,
+	toolJson,
+	statefulTool,
+	statelessTool,
+	statelessToolJson,
+	statelessToTool,
+	withTools,
+	withToolHandler,
+	withStatelessToolHandler,
+	withEffectfulToolHandler,
+	withEffectfulStatelessToolHandler,
+	param,
+	optionalParam,
+	numberParam,
+	boolParam,
+	typedParam,
+	dispatchTool,
+	dispatchMessage,
+	dispatchStatelessTool,
+
+	# --- Response Primitives ---
+	reply,
+	readOnly,
+	stay,
+	fail,
+	replyJson,
+	readOnlyJson,
+
+	# --- Logging ---
 	logTrace,
 	logDebug,
 	logInfo,
 	logWarn,
 	logError,
+
+	# --- Worker Identity ---
 	workerId,
+
+	# --- RPC ---
 	rpc,
 	rpcInstance,
 	rpcSchedule,
@@ -68,57 +85,80 @@ module [
 	rpcScheduleTypedInstance,
 	rpcFireAndForgetTyped,
 	rpcFireAndForgetTypedInstance,
-	setPersistence,
-	http,
-	httpRequestBytes,
-	readFileBytes,
-	writeFileBytes,
-	appendFileBytes,
-	readFile,
-	writeFile,
-	kvGetBytes,
-	kvSetBytes,
-	kvGet,
-	kvSet,
-	blobGetBytes,
-	blobPutBytes,
-	blobGet,
-	blobPut,
-	websocketConnect,
-	websocketSend,
-	websocketReceive,
-	websocketClose,
-	sleep,
-	now,
-	getSecretHandle,
-	revealSecret,
-	generateIdempotencyKey,
-	getOplogIndex,
-	oplogCommit,
-	createPromise,
-	completePromise,
-	getPromise,
-	createWebhook,
-	configGet,
-	traceId,
-	spanId,
-	traceHeaders,
-	getIdempotenceMode,
-	setIdempotenceMode,
-	revertAgent,
-	dbExecute,
-	dbQuery,
 	rpcBytes,
 	rpcBytesInstance,
 	rpcScheduleBytes,
 	rpcScheduleBytesInstance,
 	rpcFireAndForgetBytes,
 	rpcFireAndForgetBytesInstance,
+
+	# --- HTTP ---
+	http,
+	httpRequest,
+	httpRequestBytes,
 	httpStreamOpen,
 	httpStreamReadChunk,
 	httpStreamClose,
+
+	# --- Storage: Filesystem ---
+	readFile,
+	writeFile,
+	readFileBytes,
+	writeFileBytes,
+	appendFileBytes,
+
+	# --- Storage: Key-Value ---
+	kvGet,
+	kvSet,
+	kvGetBytes,
+	kvSetBytes,
+
+	# --- Storage: Blobstore ---
+	blobGet,
+	blobPut,
+	blobGetBytes,
+	blobPutBytes,
+
+	# --- Secrets ---
+	getSecretHandle,
+	revealSecret,
+	wrapSecretHandle,
+	unwrapSecretHandle,
+
+	# --- Database ---
+	dbExecute,
 	dbExecuteParams,
+	dbQuery,
 	dbQueryParams,
+
+	# --- WebSocket ---
+	websocketConnect,
+	websocketSend,
+	websocketReceive,
+	websocketClose,
+
+	# --- Concurrency & Time ---
+	sleep,
+	now,
+
+	# --- Golem Primitives ---
+	setPersistence,
+	generateIdempotencyKey,
+	getOplogIndex,
+	oplogCommit,
+	getIdempotenceMode,
+	setIdempotenceMode,
+	revertAgent,
+	createPromise,
+	completePromise,
+	getPromise,
+	createWebhook,
+
+	# --- Observability ---
+	configGet,
+	traceId,
+	spanId,
+	traceHeaders,
 ]
 
 import Types exposing [
@@ -133,9 +173,11 @@ import Types exposing [
 	PersistenceMode,
 	SecretHandle,
 	SecretHeader,
+	HttpRequest,
 	HttpMount,
 ]
 import Effect
+import Json as PlatformJson exposing [escape]
 
 ## Phantom-typed Method declaration
 Method(input, output) : {
@@ -327,6 +369,33 @@ optionalParam = |name, description| {
 	required: False,
 }
 
+## Construct a numeric Tool parameter
+numberParam : Str, Str -> ToolParameter
+numberParam = |name, description| {
+	name,
+	description,
+	paramType: "number",
+	required: True,
+}
+
+## Construct a boolean Tool parameter
+boolParam : Str, Str -> ToolParameter
+boolParam = |name, description| {
+	name,
+	description,
+	paramType: "boolean",
+	required: True,
+}
+
+## Construct an arbitrary typed Tool parameter
+typedParam : Str, Str, Str -> ToolParameter
+typedParam = |name, description, paramType| {
+	name,
+	description,
+	paramType,
+	required: True,
+}
+
 ## Response Primitives
 reply : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str)
 reply = |nextState, responseText|
@@ -514,7 +583,7 @@ agentWith = |cfg| {
 			} else {
 				match (cfg.deserializeState)(configStr) {
 					Ok(parsed) => Ok((cfg.serializeState)(parsed))
-					Err(_) => Ok((cfg.serializeState)(cfg.initial))
+					Err(e) => Err("init failed to parse config: ${e}")
 				}
 			},
 		invokeMethod: |methodName, stateJson, inputJson|
@@ -1096,11 +1165,7 @@ build = |spec| {
 					}
 				}
 				Err(_) =>
-					Ok({
-						nextStateJson: "",
-						stateChanged: False,
-						response: "Agent received: ${msgStr}",
-					})
+					Err("No handle-message handler registered for this agent. Register one or use Golem.agent/simpleAgent instead.")
 			}
 		},
 	}
@@ -1114,6 +1179,10 @@ bundle = |agentList| {
 	{ agents: flattened }
 }
 
+## Synonym for bundle
+bundleAll : List(Agent({})) -> Agent({})
+bundleAll = bundle
+
 bundle2 : Agent(_), Agent(_) -> Agent({})
 bundle2 = |a, b| {
 	{ agents: List.concat(a.agents, b.agents) }
@@ -1122,7 +1191,10 @@ bundle2 = |a, b| {
 erase : Agent(_) -> Agent({})
 erase = |a| { agents: a.agents }
 
-## Backwards-compatible legacy single-agent definition
+## ⚠️ Backwards-compatible legacy single-agent definition.
+## Note: This shim always sets `stateChanged: True` on every `handleMessage`
+## call, which forces a full state serialisation even for read-only queries.
+## For zero-cost read-only bypass, migrate to `Golem.agent` with `readOnly`.
 defineAgent :
 	{
 		init : Str -> Result(state, Str),
@@ -1334,10 +1406,34 @@ setPersistence : PersistenceMode -> Effect.Effect({})
 setPersistence = |mode|
 	Effect.setPersistenceMode(mode)
 
-## Perform outgoing HTTP request
+## Perform outgoing HTTP request with raw JSON string
 http : Str -> Effect.Effect(Result(Str, Str))
 http = |reqJson|
 	Effect.httpRequest(reqJson)
+
+encodeHttpRequest : HttpRequest -> Str
+encodeHttpRequest = |req| {
+	headersList =
+		req.headers
+			|> List.map(|h| "{\"name\":\"${escape(h.name)}\",\"value\":\"${escape(h.value)}\"}")
+			|> Str.join_with(",")
+	secretHeadersList =
+		req.secretHeaders
+			|> List.map(
+				|sh| {
+					hVal = Types.unwrapSecretHandle(sh.handle)
+					"{\"name\":\"${escape(sh.name)}\",\"prefix\":\"${escape(sh.prefix)}\",\"handle\":${Str.inspect(hVal)}}"
+				},
+			)
+			|> Str.join_with(",")
+	"{\"url\":\"${escape(req.url)}\",\"method\":\"${escape(req.method)}\",\"headers\":[${headersList}],\"body\":\"${escape(req.body)}\",\"secretHeaders\":[${secretHeadersList}]}"
+}
+
+## Perform an outgoing HTTP request using a typed HttpRequest record.
+## For raw JSON control use `Golem.http`.
+httpRequest : HttpRequest -> Effect.Effect(Result(Str, Str))
+httpRequest = |req|
+	Effect.httpRequest(encodeHttpRequest(req))
 
 ## Perform binary HTTP request
 httpRequestBytes : Str, List(U8) -> Effect.Effect(Result(List(U8), Str))
@@ -1438,22 +1534,49 @@ sleep = |millis|
 now : Effect.Effect(U64)
 now = Effect.nowMillis
 
+wrapSecretHandle : U32 -> SecretHandle
+wrapSecretHandle = |raw| Types.wrapSecretHandle(raw)
+
+unwrapSecretHandle : SecretHandle -> U32
+unwrapSecretHandle = |handle| Types.unwrapSecretHandle(handle)
+
 ## Acquire an opaque secret handle from the host environment without leaking plaintext into guest memory
 getSecretHandle : Str -> Effect.Effect(Result(SecretHandle, Str))
 getSecretHandle = |name|
-	Effect.getSecretHandle(name)
+	Effect.map(
+		Effect.getSecretHandle(name),
+		|res|
+			match res {
+				Ok(raw) => Ok(wrapSecretHandle(raw))
+				Err(err) => Err(err)
+			},
+	)
 
 ## Explicitly reveal secret plaintext into guest memory
 revealSecret : SecretHandle -> Effect.Effect(Result(Str, Str))
 revealSecret = |handle|
-	Effect.revealSecret(handle)
+	Effect.revealSecret(unwrapSecretHandle(handle))
 
 ## Generate a unique idempotency key
 generateIdempotencyKey : Effect.Effect(Result(Str, Str))
 generateIdempotencyKey =
 	Effect.generateIdempotencyKey
 
-## Get the current oplog index
+## Get the current oplog index.
+##
+## **⚠️ Wasm32 limitation:** The Golem 1.6 WIT interface (`golem:api/host@1.5.0`)
+## does not expose an oplog-index query function, so this always returns `0`
+## when compiled for Golem Cloud. The value is non-zero only in the native
+## host test harness (returns `1` to allow unit tests to progress).
+##
+## Because `revertAgent` accepts the index returned by this function, calling
+## `getOplogIndex |> await |> revertAgent` on Golem Cloud will always revert
+## the worker back to the **very beginning** of its oplog. Use `revertAgent`
+## only when you have an index obtained from a prior snapshot or from an
+## oplog-processor callback — not from this function.
+##
+## Once Golem exposes `get-oplog-index` in a future WIT revision, this function
+## will return the live index automatically and this warning will be removed.
 getOplogIndex : Effect.Effect(U64)
 getOplogIndex =
 	Effect.getOplogIndex
@@ -1513,7 +1636,14 @@ setIdempotenceMode : Bool -> Effect.Effect({})
 setIdempotenceMode = |mode|
 	Effect.setIdempotenceMode(mode)
 
-## Revert agent execution state back to specified oplog index
+## Revert agent execution state back to a specified oplog index.
+##
+## **⚠️ Do not pass the value of `getOplogIndex` as this index on Golem Cloud.**
+## Because `getOplogIndex` always returns `0` on wasm32 (see its documentation),
+## doing so will revert the worker to the **beginning of its oplog**, erasing
+## all state. Only call `revertAgent` with an index from a known-good snapshot,
+## from an oplog-processor callback, or from a value you saved before the
+## operation you want to roll back.
 revertAgent : U64 -> Effect.Effect(Result({}, Str))
 revertAgent = |oplogIndex|
 	Effect.revertAgent(oplogIndex)

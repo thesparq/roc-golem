@@ -279,6 +279,11 @@ expect {
 
 expect Json.escape("hello \"world\"\nline2\r\ttab\\backslash") == "hello \\\"world\\\"\\nline2\\r\\ttab\\\\backslash"
 
+# Control characters U+0000..U+001F escaping
+expect Json.escape("\u(0000)\u(0001)\u(001f)") == "\\u0000\\u0001\\u001f"
+expect Json.escape("\u(0008)\u(000c)") == "\\b\\f"
+expect Json.escape("null\u(0000)byte and alert\u(0007)") == "null\\u0000byte and alert\\u0007"
+
 # Dummy agent to satisfy platform requirements
 agent : Agent({})
 agent = defineAgent({

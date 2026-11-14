@@ -31,6 +31,7 @@ agent = Golem.agent({
 	onMessage: |state, message|
 		match message {
 			"connect" =>
+			# NOTE: Simplified example. In an effectful method/workflow, use Golem.websocketConnect.
 				reply(
 					{ ..state, connected: True, handle: 1.U32 },
 					"WebSocket connected (handle=1)",

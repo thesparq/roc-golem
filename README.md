@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.1.0/b2AxFBF_6HtYiQMjIQvmM0aX0zbiUdNIPk83ei8PQ8g.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.0/7tvjAkNOXfbP1LmNSFknACmMXKul4-q3geVJkood0r8.tar.zst",
 }
 
 import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
@@ -78,20 +78,25 @@ app [agent] { pf: platform "../../platform/main.roc" }
 
 ### 🤝 Multi-Agent Bundling & Zero-Serialization (v0.7.0+)
 
-Combine multiple stateful or stateless (ephemeral) agents with distinct `State` types into a single WebAssembly component using `bundle`:
+Combine multiple stateful or stateless (ephemeral) agents with distinct `State` types into a single WebAssembly component using `bundle2` or `bundleAll`:
 
 ```roc
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [bundle]
+import pf.Golem exposing [bundleAll, erase]
 import ReleaseCoordinator
 import DiagnosticsWorker
+import AuditWorker
 
-agent = bundle([
-    ReleaseCoordinator.agent,
-    DiagnosticsWorker.agent,
+agent = bundleAll([
+    erase(ReleaseCoordinator.agent),
+    erase(DiagnosticsWorker.agent),
+    erase(AuditWorker.agent),
 ])
 ```
+
+> [!NOTE]
+> **Legacy `defineAgent` Notice**: The backwards-compatible `defineAgent` shim always triggers a full state re-serialization (`stateChanged: True`) on every message. For zero-cost read-only bypass, migrate to `Golem.agent` with `readOnly` or use the typed builder pipeline (`define` + `registerReadOnlyTyped`).
 
 - **Stateless Ephemeral Workers**: Define workers with `defineEphemeral({ ... }) |> registerEphemeral(method, handler) |> build` — no dummy `State` threading, and zero state persistence overhead.
 - **Zero-Bottleneck Read-Only Calls**: Handlers registered via `registerReadOnly` emit `stateChanged: False` and an empty state update string, instructing the Golem host to preserve in-memory state in $O(1)$ time without re-serializing.
@@ -245,17 +250,25 @@ golem worker invoke "streaming/stream-worker-1" \
 ### Automatic GitHub Release (Recommended)
 1. Push a version tag to Git:
    ```bash
-   git tag v1.1.0
-   git push origin v1.1.0
+   git tag v1.2.0
+   git push origin v1.2.0
    ```
 2. GitHub Actions automatically builds the host, validates all agents, packages the `.tar.zst`, `.tar.br`, `.tar.gz` bundles with BLAKE3 hashes, and creates the GitHub release with ready-to-copy Roc code snippets!
 
 ### Local Release Packaging
 You can generate release tarballs locally at any time:
 ```bash
-./tooling/build.sh package v1.1.0 thesparq/roc-golem
+./tooling/build.sh package v1.2.0 thesparq/roc-golem
 ```
 Artifacts and `release_notes.md` will be placed in `dist/`.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome!
+- **Code Formatting**: Formatting is verified in CI using `roc fmt --check` and `cargo fmt --check`. Developers should format Roc source files manually or via editor integration (`roc fmt <path/to/file.roc>`). The build scripts do not automatically mutate source files.
+- **Testing**: Run `./tooling/test_consumer.sh` and `cargo test --manifest-path host/Cargo.toml --features stub-guest --lib` prior to opening pull requests.
 
 ---
 

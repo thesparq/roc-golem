@@ -1,18 +1,23 @@
-target/
-host/target/
-tooling/pack_platform/target/
-build/
-dist/
-*.wasm
-*.tar.gz
-*.tar.br
-*.tar.zst
-*.o
-*.a
-*.so
-*.dylib
-*.dll
-.DS_Store
+# Build artifacts
+/build/
 
+# Release archives (content-addressed tarballs and named copies)
+/dist/
+
+# Rust compiled targets
+target/
+/tooling/pack_platform/target/
+/host/target/
+
+# Temporary files and directories
 golem-temp/
 examples/*/wit/deps/
+.DS_Store
+
+# Local audit snapshots (not part of the repository)
+/.audit-*/
+
+# Keep committed platform archives:
+# platform/targets/wasm32/libroc_golem_host.a
+# platform/targets/wasm32/libc.a
+# platform/libhost.a

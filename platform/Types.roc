@@ -10,7 +10,10 @@ module [
 	PersistenceMode,
 	LogLevel,
 	SecretHandle,
+	wrapSecretHandle,
+	unwrapSecretHandle,
 	SecretHeader,
+	HttpRequest,
 	HttpMount,
 ]
 
@@ -19,12 +22,26 @@ Result(ok, err) : Try(ok, err)
 
 ## Types representing Golem Agent Metadata, Methods, and Tool specifications
 
-SecretHandle : U32
+SecretHandle := [SecretHandle(U32)]
+
+wrapSecretHandle : U32 -> SecretHandle
+wrapSecretHandle = |raw| SecretHandle(raw)
+
+unwrapSecretHandle : SecretHandle -> U32
+unwrapSecretHandle = |SecretHandle(raw)| raw
 
 SecretHeader : {
 	name : Str,
 	prefix : Str,
 	handle : SecretHandle,
+}
+
+HttpRequest : {
+	url : Str,
+	method : Str,
+	headers : List({ name : Str, value : Str }),
+	body : Str,
+	secretHeaders : List(SecretHeader),
 }
 
 AgentMode : [

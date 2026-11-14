@@ -243,6 +243,11 @@ escape_json_str : Str -> Str
 escape_json_str = |input|
 	escape(input)
 
+## NOTE: The state is transmitted as an escaped JSON *string* embedded inside
+## the outer envelope JSON object. The host first decodes the outer envelope,
+## then decodes `state` as a second JSON parse. This avoids nested-object
+## escaping at the cost of two parse steps. Do not change without updating
+## the Rust host's `handle_invoke` decode logic simultaneously.
 format_reply_envelope : Str, Str -> Str
 format_reply_envelope = |next_state_json, response| {
 	escaped_state = escape_json_str(next_state_json)
@@ -270,17 +275,60 @@ parse_tool_call = |raw_json|
 	)
 
 extract_json_field : Str, Str -> Result(Str, [NotFound])
-extract_json_field = |json, field_name| {
-	target = "\"${field_name}\":\""
-	match Str.split_first(json, target) {
+extract_json_field = |json, field_name|
+	match Str.split_first(json, "\"${field_name}\"") {
+		Err(_) => Err(NotFound)
 		Ok({ after, .. }) =>
-			match Str.split_first(after, "\"") {
-				Ok({ before, .. }) => Ok(before)
+			match Str.split_first(after, ":") {
 				Err(_) => Err(NotFound)
+				Ok({ after: rest, .. }) => {
+					trimmed = Str.trim_start(rest)
+					if Str.starts_with(trimmed, "\"") {
+						content = Str.drop_prefix(trimmed, "\"")
+						extract_quoted(content)
+					} else {
+						extract_unquoted(trimmed)
+					}
+				}
 			}
+	}
 
+extract_quoted : Str -> Result(Str, [NotFound])
+extract_quoted = |s|
+	match Str.split_first(s, "\"") {
+		Err(_) => Err(NotFound)
+		Ok({ before, after }) =>
+			if Str.ends_with(before, "\\") and !(Str.ends_with(before, "\\\\")) {
+				match extract_quoted(after) {
+					Ok(rest) => Ok("${before}\"${rest}")
+					Err(e) => Err(e)
+				}
+			} else {
+				Ok(before)
+			}
+	}
+
+extract_unquoted : Str -> Result(Str, [NotFound])
+extract_unquoted = |s| {
+	trimmed = Str.trim_start(s)
+	match Str.split_first(trimmed, ",") {
+		Ok({ before, .. }) =>
+			match Str.split_first(before, "}") {
+				Ok({ before: val, .. }) => Ok(Str.trim(val))
+				Err(_) => Ok(Str.trim(before))
+			}
 		Err(_) =>
-			Err(NotFound)
+			match Str.split_first(trimmed, "}") {
+				Ok({ before: val, .. }) => Ok(Str.trim(val))
+				Err(_) => {
+					v = Str.trim(trimmed)
+					if Str.is_empty(v) {
+						Err(NotFound)
+					} else {
+						Ok(v)
+					}
+				}
+			}
 	}
 }
 

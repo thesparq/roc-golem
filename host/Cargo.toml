@@ -1,9 +1,9 @@
 [package]
 name = "roc-golem-host"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Rust Host translation layer for Roc Golem Cloud platform"
-authors = ["Samuel Iyeh <thesparq@vmi3258764.contaboserver.net>", "Roc Golem Platform Contributors"]
+authors = ["Samuel Iyeh <thesparq@users.noreply.github.com>", "Roc Golem Platform Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/thesparq/roc-golem"
 

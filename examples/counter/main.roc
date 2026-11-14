@@ -1,17 +1,17 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
+import pf.Golem exposing [Agent, agent, reply, readOnly, toolJson]
 
 # Agent State
 State : {
 	count : I64,
 }
 
-getCountTool = tool({
+getCountTool = toolJson({
 	name: "get_count",
 	description: "Returns current counter value",
 	params: [],
-	execute: |state, _args| Ok("{\"count\":${Str.inspect(state.count)}}"),
+	execute: |state, _args| Ok({ count: state.count }),
 })
 
 agent : Agent(State)

@@ -24,6 +24,8 @@ environments:
     deployment:
       versionCheck: true
 
+# Component names use kebab-case matching the agent `name` field in Roc source.
+# WASM output files use snake_case + _agent suffix (e.g. canary_release_agent.wasm).
 components:
   roc-golem:canary-release:
     componentWasm: "build/canary_release_agent.wasm"

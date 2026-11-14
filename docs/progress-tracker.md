@@ -2,14 +2,21 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Production Stable — Golem 1.6.3 Async Component Model & v1.1.0 Release (2026-11-12)
+### Current Phase: Production Stable — Platform Hardening & v1.2.0 Release (2026-11-14)
 
-Goal: Golem 1.6.3 async Component Model upgrade, toolchain hardening (wasm32-wasip2, wasm-tools 1.263.0, pinned wit-bindgen), packaging integrity (libc.a included), consumer smoke test automation, and v1.1.0 release.
+Goal: Platform correctness and security hardening (Phases 1–5, KI-26 through KI-63, F-1 and F-2), real wasm32 host effects, typed HttpRequest, SecretHandle nominal union, comprehensive test coverage, reproducible packaging, and v1.2.0 release.
 
-Status: **v1.1.0 Released & Verified.** All 4 verification layers passing clean. Consumer smoke test passing.
+Status: **v1.2.0 Released & Verified.** All 4 verification layers passing clean. Consumer smoke test passing.
 
 
 ## Done
+
+- **Platform Correctness & Hardening (Phases 1–5, KI-26 through KI-63) Complete & Verified (2026-11-13)**:
+  - **Phase 1 (Critical Correctness)**: Implemented real wasm32 host implementations for `createPromise`, `blobPut`, `getOplogIndex`, and `rpcSchedule`. Extended `Json.escape` to handle U+0000..U+001F, `\b`, `\f`. Fixed `agentWith` initialization error propagation and builder missing-handler diagnostics. Updated WIT imports to `@1.6.x`. Fixed counter example JSON serialization.
+  - **Phase 2 (Safety Hardening)**: Implemented `RocStr` refcount clone increment instead of deep copy. Made `SecretHandle` an opaque nominal tag union. Unified 1-based indexing across all resource tables with 0 guards. Standardized C-ABI return pointer at position 0 across all host exports. Added path traversal rejection to `normalize_path`. Added concurrency and state-changed documentation.
+  - **Phase 3 (Test Coverage)**: Expanded host unit tests to 56 tests (all passing). Created `tests/spec_builder.roc` (9 tests) and `tests/bundle.roc` (5 tests). Added control character escape tests to `tests/json_roundtrip.roc` (26 tests). All 66 Roc tests passing.
+  - **Phase 4 (DX Polish)**: Reorganized `platform/Golem.roc` export list by category. Added typed `HttpRequest` and `httpRequest` overload. Added parameter helpers `numberParam`, `boolParam`, `typedParam`, and `bundleAll`. Implemented human-readable error formatting across RPC, WS, DB, and Config. Documented double-encode state protocol. Fixed streaming agent note and canary rollback target using `workerId`.
+  - **Phase 5 (Housekeeping & Packaging)**: Updated `.gitignore`, removed mutating `roc fmt` from `build.sh`, updated `test_consumer.sh` archive resolution, added `CHANGELOG.md`, fixed `Cargo.toml` author email, added `golem.yaml` comment, updated BLAKE3 package hash in `README.md`, verified consumer smoke test pass, and updated checklists.
 
 - **Golem 1.6.3 Remediation & v1.1.0 Release Complete & Verified (2026-11-12)**:
   - CI & Toolchain Hardening: Updated `.github/workflows/ci.yaml` and `release.yaml` to `wasm32-wasip2` and `wasm-tools 1.263.0`.

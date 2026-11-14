@@ -22,6 +22,7 @@ import pf.Golem exposing [
 	createPromise,
 	createWebhook,
 	rpcSchedule,
+	workerId,
 ]
 import pf.Types as PfTypes exposing [ToolCall, ToolResult]
 import pf.Effect
@@ -207,37 +208,41 @@ handleStart = |state, input| {
 									Err(err) => Effect.always(Err("Failed to create webhook: ${err}"))
 									Ok(webhookUrl) =>
 										Effect.and_then(
-											rpcSchedule(
-												state.service,
-												emergencyRollback,
-												"{\"reason\":\"approval timeout expired\"}",
-												300000.U64,
-											),
-											|_scheduleRes| {
-												timerHandle = U64.to_u32_wrap(promiseId)
-												startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
-												events = List.append(state.events, startEvent)
-												nextState = {
-													..state,
-													canaryVersion: input.version,
-													weight: input.weight,
-													pendingTimerHandle: timerHandle,
-													approvalWebhookUrl: webhookUrl,
-													events: events,
-												}
-												Effect.always(
-													Ok({
-														state: nextState,
-														out: {
-															status: "canary_started",
-															version: input.version,
+											workerId,
+											|selfId|
+												Effect.and_then(
+													rpcSchedule(
+														selfId,
+														emergencyRollback,
+														"{\"reason\":\"approval timeout expired\"}",
+														300000.U64,
+													),
+													|_scheduleRes| {
+														timerHandle = U64.to_u32_wrap(promiseId)
+														startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
+														events = List.append(state.events, startEvent)
+														nextState = {
+															..state,
+															canaryVersion: input.version,
 															weight: input.weight,
+															pendingTimerHandle: timerHandle,
 															approvalWebhookUrl: webhookUrl,
-															faults: 0.U64,
-														},
-													}),
-												)
-											},
+															events: events,
+														}
+														Effect.always(
+															Ok({
+																state: nextState,
+																out: {
+																	status: "canary_started",
+																	version: input.version,
+																	weight: input.weight,
+																	approvalWebhookUrl: webhookUrl,
+																	faults: 0.U64,
+																},
+															}),
+														)
+													},
+												),
 										)
 								},
 						)

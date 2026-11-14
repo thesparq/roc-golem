@@ -12,19 +12,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-ARCHIVE="${1:-"$ROOT_DIR/dist/roc-golem-v1.1.0.tar.zst"}"
+ARCHIVE="${1:-$(ls -t "$ROOT_DIR/dist/roc-golem-"*.tar.zst 2>/dev/null | head -1)}"
+if [[ -z "$ARCHIVE" || ! -f "$ARCHIVE" ]]; then
+    echo "==> No archive found in dist/. Building platform package first..."
+    "$SCRIPT_DIR/build.sh" package
+    ARCHIVE=$(ls -t "$ROOT_DIR/dist/roc-golem-"*.tar.zst 2>/dev/null | head -1)
+fi
 
 echo "=============================================================="
 echo " [Consumer Smoke Test] Testing Platform Package: $(basename "$ARCHIVE")"
 echo "=============================================================="
 
-# Ensure archive exists
-if [[ ! -f "$ARCHIVE" ]]; then
-    echo "==> Archive not found at '$ARCHIVE'. Building platform package first..."
-    "$SCRIPT_DIR/build.sh" package
-fi
-
-if [[ ! -f "$ARCHIVE" ]]; then
+if [[ -z "$ARCHIVE" || ! -f "$ARCHIVE" ]]; then
     echo "Error: Archive '$ARCHIVE' does not exist." >&2
     exit 1
 fi
