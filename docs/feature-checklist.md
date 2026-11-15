@@ -56,9 +56,9 @@ All tests carry an explicit verification source tag:
 
 | # | Test | How | Expected | Status |
 |---|------|-----|----------|:---:|
-| 15 | Call and wait | the coordinator calls the diagnostics worker with `rpc` | the worker's reply comes back | **PASSED** (2026-11-08) [Host Unit Test (Mock)] |
-| 16 | Fire and forget | call another agent with `rpcFireAndForget` | the call is delivered and no reply is awaited | **PASSED** (2026-11-08) [Host Unit Test (Mock)] |
-| 17 | Scheduled call | `rpcSchedule` with a 5 second delay | nothing happens at once; the call happens once, about 5 seconds later (KI-04) | **PASSED** (2026-11-08) [Host Unit Test (Mock)] |
+| 15 | Call and wait | the coordinator calls the diagnostics worker with `rpc` | the worker's reply comes back | **PASSED** (2026-11-15) [Live Golem Server (1.6.3)] |
+| 16 | Fire and forget | call another agent with `rpcFireAndForget` | the call is delivered and no reply is awaited | **PASSED** (2026-11-15) [Live Golem Server (1.6.3)] |
+| 17 | Scheduled call | `rpcSchedule` with a 5 second delay | nothing happens at once; the call happens once, about 5 seconds later (KI-04) | **PASSED** (2026-11-15) [Live Golem Server (1.6.3)] |
 | 18 | Address one instance | call an agent that has a constructor argument | the right instance answers (KI-13) | **PASSED** (2026-11-08) [Host Unit Test (Mock)] |
 
 ---

@@ -18,9 +18,55 @@ This skill provides guidelines and patterns for building and deploying WebAssemb
 
 ## Agent Patterns
 
-### 1. Stateful Durable Agent (Builder Pattern)
+### 1. Canonical Stateful Agent (`Golem.agent`)
 
-Use `define`, `register`, and `registerReadOnly` with phantom-typed `Method(input, output)`:
+The simplest, zero-boilerplate way to define a durable agent in Roc:
+
+```roc
+app [agent] {
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.1/XGi4H5L-eqFfJ-jZLjjgbxyCqueoqNN3RsEYbMeUN7A.tar.zst",
+}
+
+import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]
+import pf.Types exposing [Result]
+
+State : {
+    count : I64,
+}
+
+getCountTool : Tool(State)
+getCountTool = tool({
+    name: "get_count",
+    description: "Returns current counter value",
+    params: [],
+    execute: |state, _args| Ok("{\"count\":${Str.inspect(state.count)}}"),
+})
+
+agent : Agent(State)
+agent = Golem.agent({
+    name: "counter-agent",
+    initial: { count: 0.I64 },
+    tools: [getCountTool],
+    onMessage: |state, message|
+        match message {
+            "increment" =>
+                reply({ count: state.count + 1.I64 }, "Incremented"),
+            "get" =>
+                readOnly(state, "Current count: ${Str.inspect(state.count)}"),
+            _ =>
+                readOnly(state, "Unknown command"),
+        },
+})
+```
+
+- **`reply(nextState, response)`**: Commits the state mutation (`stateChanged: True`) and appends an entry to the durable oplog.
+- **`readOnly(state, response)`**: Activates the zero-serialization bypass protocol ($O(1)$ read path, `stateChanged: False`) avoiding state re-serialization.
+
+---
+
+### 2. Stateful Durable Agent (Builder Pattern)
+
+For advanced scenarios requiring custom serialization codecs, use `define`, `register`, and `registerReadOnly` with phantom-typed `Method(input, output)`:
 
 ```roc
 import pf.Golem exposing [Agent, Method, define, register, registerReadOnly, method, build]
@@ -48,7 +94,7 @@ agent =
     define(
         {
             name: "counter-agent",
-            version: "1.0.0",
+            version: "1.2.0",
             description: "Durable Roc counter agent",
         },
         |_config| Ok({ count: 0 }),
@@ -63,13 +109,12 @@ handleIncrement : State, Str -> Result({ state : State, out : Str }, Str)
 handleIncrement = |state, _input|
     Ok({ state: { count: state.count + 1 }, out: "Incremented" })
 
-# Read-only handlers bypass serialization completely (stateChanged: False)
 handleStatus : State, Str -> Result(Str, Str)
 handleStatus = |state, _input|
     Ok("Current count is ${Num.to_str(state.count)}")
 ```
 
-### 1b. Effectful Method Handlers (`registerEffectfulTyped`)
+### 2b. Effectful Method Handlers (`registerEffectfulTyped`)
 
 When mutating methods need to invoke host effects (such as `rpcSchedule`, `http`, or `writeFileBytes`), use `registerEffectfulTyped`:
 
@@ -87,9 +132,11 @@ handleStartEffectful = |state, input|
     )
 ```
 
-### 2. Stateless Ephemeral Worker
+---
 
-For stateless tasks (log analysis, computation, formatting), use `defineEphemeral` and `registerEphemeral`:
+### 3. Stateless Ephemeral Worker
+
+For stateless tasks (log analysis, computation, formatting), use `defineEphemeral` and `registerEphemeral` (or `ephemeral`):
 
 ```roc
 import pf.Golem exposing [Agent, Method, defineEphemeral, registerEphemeral, method, build]
@@ -105,7 +152,7 @@ agent : Agent({})
 agent =
     defineEphemeral({
         name: "worker-agent",
-        version: "1.0.0",
+        version: "1.2.0",
         description: "Stateless worker",
     })
         |> registerEphemeral(processMethod, handleProcess)
@@ -119,39 +166,63 @@ handleProcess = |input|
 - Handlers take `input -> Result(out, Str)` directly without threading dummy `State`.
 - Emits `AgentMode::Ephemeral` in WIT discovery; the host avoids storing or caching state between calls.
 
-### 3. Multi-Agent Bundling in One Wasm Component
+---
 
-Combine multiple agents with completely different state types into a single component:
+### 4. Multi-Agent Bundling in One Wasm Component (`bundleAll` & `bundle2`)
+
+Combine multiple agents with completely different state types into a single WebAssembly component using `bundleAll` and `erase` (or `bundle2`):
 
 ```roc
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [bundle]
+import pf.Golem exposing [bundleAll, erase]
 import ReleaseCoordinator
 import DiagnosticsWorker
+import AuditWorker
 
-agent = bundle([
-    ReleaseCoordinator.agent,
-    DiagnosticsWorker.agent,
+agent = bundleAll([
+    erase(ReleaseCoordinator.agent),
+    erase(DiagnosticsWorker.agent),
+    erase(AuditWorker.agent),
 ])
 ```
 
-- Golem worker instances are created for a specific agent type (`golem worker add ...`).
+- Golem worker instances are created for a specific agent type (`golem agent new '<agent-type>()'`).
 - Dispatch automatically routes initialization and method invocations to the designated agent.
 
-### 4. Stateless vs. Stateful Tool Handlers
+---
 
-For AI agent tool integrations:
-- **Stateful Tool Handlers**: Use `withToolHandler(handler)` when tool calls need to read or update the agent's internal state:
-  ```roc
-  handleToolStateful : State, ToolCall -> Result({ state : State, result : ToolResult }, Str)
-  ```
-- **Stateless Tool Handlers**: Use `withStatelessToolHandler(handler)` when tool execution is pure and does not require agent state:
-  ```roc
-  handleToolStateless : ToolCall -> Result(ToolResult, Str)
-  ```
+### 5. Tool Parameter Helpers
 
-### 5. Metadata-Driven Dynamic HTTP Mounts (`withHttpMount`)
+Tool definitions can declare strongly-typed parameters using platform helpers:
+
+```roc
+import pf.Golem exposing [param, numberParam, boolParam, typedParam]
+
+# String parameter (required by default)
+nameP = param("name", "Customer full name")
+
+# Number parameter
+ageP = numberParam("age", "Customer age in years")
+
+# Boolean parameter
+vipP = boolParam("is_vip", "Whether the customer is a VIP")
+
+# Custom typed parameter (name, description, type, required)
+filterP = typedParam("filter", "Optional query filter expression", "string", False)
+```
+
+---
+
+### 6. Stateless vs. Stateful Tool Handlers
+
+- **Stateful Tool Handlers**: Use `statefulTool({ name, description, params, execute })` when tool execution reads or mutates the agent's internal state.
+- **Pure / Read-Only Tools**: Use `tool({ name, description, params, execute })` when tool execution reads state without mutation.
+- **Stateless Tools**: Use `statelessTool({ name, description, params, execute })` for tools independent of agent state.
+
+---
+
+### 7. Metadata-Driven Dynamic HTTP Mounts (`withHttpMount`)
 
 Any agent can declare dynamic HTTP mount routes in its metadata:
 ```roc
@@ -167,70 +238,35 @@ agent =
         })
         |> build
 ```
-The host parses `path_prefix` into literal segments and `{var}` path variables (e.g. `/api/{tenant_id}/orders/{order_id}`), configures CORS allowed patterns, and sets the webhook endpoint suffix, eliminating all example-specific host routing logic.
+The host parses `path_prefix` into literal segments and `{var}` path variables (e.g. `/api/{tenant_id}/orders/{order_id}`), configures CORS allowed patterns, and sets the webhook endpoint suffix.
 
 ---
 
-## Zero-Bottleneck Serialization Bypass Protocol
+## Strongly-Typed HTTP Dispatch (`HttpRequest`)
 
-- **Mutating calls**: Return `{ state: nextState, out: ... }` with `stateChanged: True`. The host updates `current_state_json`.
-- **Read-only calls (`registerReadOnly`)**: Return `out` with `stateChanged: False`. Roc guest returns `nextStateJson: ""`. The host checks for an empty state string and skips re-serializing or overwriting cached state in $O(1)$ time.
-- **Ephemeral calls (`registerEphemeral`)**: Operate with `stateChanged: False` and empty state string; host bypasses state updates entirely.
-
----
-
-## Typed Cross-Agent RPC & Codec Combinators
-
-Use phantom-typed `Method(in, out)` handles with `rpc`, `rpcSchedule`, and `rpcFireAndForget`, or with typed codecs `rpcTyped`, `rpcScheduleTyped`, and `rpcFireAndForgetTyped`.
-
-To address a specific worker instance initialized with custom constructor parameters, use the `*Instance` variants (`rpcInstance`, `rpcScheduleInstance`, `rpcFireAndForgetInstance`, `rpcTypedInstance`, `rpcBytesInstance`, etc.):
+Use `Golem.httpRequest` with the strongly-typed `HttpRequest` record:
 
 ```roc
-import pf.Golem exposing [
-    rpc,
-    rpcInstance,
-    rpcSchedule,
-    rpcScheduleInstance,
-    rpcFireAndForget,
-    rpcFireAndForgetInstance,
-    rpcTyped,
-    rpcTypedInstance,
-    rpcScheduleTyped,
-    rpcScheduleTypedInstance,
-    rpcFireAndForgetTyped,
-    rpcFireAndForgetTypedInstance,
-    rpcBytes,
-    rpcBytesInstance,
-]
+import pf.Golem exposing [httpRequest]
+import pf.Types exposing [HttpRequest]
 
-# Basic RPC with default constructor "{}"
-res = rpc("other-worker-id", OtherAgent.someMethod, "payload")
+req : HttpRequest
+req = {
+    url: "https://api.example.com/v1/notify",
+    method: "POST",
+    headers: [{ name: "Content-Type", value: "application/json" }],
+    body: "{\"status\":\"ok\"}",
+    secretHeaders: [],
+}
 
-# Target an instance initialized with specific constructor arguments
-resInstance = rpcInstance("canary-release", "{\"service\":\"payments\"}", OtherAgent.someMethod, "payload")
-
-# Typed RPC with constructor and custom codecs
-resTyped = rpcTypedInstance(
-    "canary-release",
-    "{\"service\":\"payments\"}",
-    RollbackCoordinator.emergencyRollback,
-    { reason: "latency spike" },
-    encodeRollbackInput,
-    decodeRollbackOutput,
-)
-
-# Scheduled invocation with delay in milliseconds
-_ = rpcScheduleInstance("worker-id", "{\"service\":\"payments\"}", OtherAgent.someMethod, "payload", 5000)
-
-# Fire-and-forget
-_ = rpcFireAndForgetInstance("worker-id", "{\"service\":\"payments\"}", OtherAgent.someMethod, "payload")
+Effect.map(httpRequest(req), |res| ...)
 ```
 
 ---
 
 ## Raw Binary Data Boundary & Lossy UTF-8 Remediation
 
-Converting arbitrary binary data (PNG images, zip/tar archives, protobuf streams, compiled WebAssembly modules) via UTF-8 string decoders causes irreversible data corruption, as invalid byte sequences are replaced with `U+FFFD`.
+Converting arbitrary binary data (PNG images, zip/tar archives, protobuf streams) via UTF-8 string decoders causes irreversible data corruption, as invalid byte sequences are replaced with `U+FFFD`.
 
 `roc-golem` provides clean, raw `List(U8)` byte primitives across all storage and communication subsystems (backed by live `wasi:keyvalue/eventual@0.1.0`, `wasi:blobstore/blobstore`, and `wasi:http/outgoing-handler@0.2.3` on wasm32):
 
@@ -258,7 +294,7 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
    apiKeyHandle : Result(SecretHandle, Str)
    apiKeyHandle = getSecretHandle("OPENAI_API_KEY")
    ```
-   Secrets are indexed as opaque `SecretHandle : U32` identifiers in the host's isolated memory table.
+   Secrets are represented as an opaque nominal type `SecretHandle := [SecretHandle(U32)]`. Use `wrapSecretHandle` and `unwrapSecretHandle` if raw handle translation is required.
 
 2. **Host-Mediated Outbound Injection**:
    Specify headers referencing the secret handle in HTTP requests:
@@ -270,10 +306,9 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
        handle: apiKeyHandle,
    }
    ```
-   When performing `http(requestJson)`, the Golem host resolves the secret handle directly into the WASI HTTP request headers without passing plaintext to the guest.
+   When performing `http` or `httpRequest`, the Golem host resolves the secret handle directly into WASI HTTP request headers without passing plaintext to the guest.
 
 3. **Explicit Reveal (Opt-In)**:
-   When plaintext is strictly required for cryptographic hashing or client signing:
    ```roc
    secretText : Result(Str, Str)
    secretText = revealSecret(handle)
@@ -284,18 +319,19 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
 ## Durability, Timers & Golem 1.6 Host Primitives
 
 - **Durable Sleep**: `sleep(millis)` uses Golem's durable timer subsystem; workers pause execution without consuming CPU, surviving restarts.
-- **Monotonic Timestamp**: `now` yields the current Unix timestamp in milliseconds.
+- **Monotonic Timestamp**: `now` yields current Unix timestamp in milliseconds.
 - **Persistence Modes**: `setPersistence(mode)` configures Golem persistence (`PersistNothing`, `PersistRemoteSideEffects`, `Smart`).
 - **Durable Promises & Webhooks**:
   - `createPromise : Effect(Result(U64, Str))` — allocates a durable promise handle.
   - `createWebhook : U64 -> Effect(Result(Str, Str))` — returns an external webhook URL associated with the promise.
-  - `completePromise : U64, List(U8) -> Effect(Result(Bool, Str))` — completes the promise with byte payload.
+  - `completePromise : U64, List(U8) -> Effect(Result(Bool, Str))` — completes promise with byte payload.
   - `getPromise : U64 -> Effect(Result(List(U8), Str))` — retrieves promise result or returns Err if still pending.
 - **Idempotency & Oplog Controls**:
-  - `generateIdempotencyKey : Effect(Result(Str, Str))` — generates unique idempotency UUID.
-  - `getOplogIndex : Effect(U64)` — retrieves current oplog index.
+  - `generateIdempotencyKey : Effect(Result(Str, Str))` — acquires unique idempotency UUID.
+  - `getOplogIndex : Effect(U64)` — retrieves current worker oplog index.
+    *(⚠️ Note on Golem Cloud wasm32: Returns `0` due to a WIT export gap in Golem 1.6. Do not pass this value to `revertAgent`, as doing so rolls back the worker to its initial state.)*
   - `oplogCommit : U8 -> Effect({})` — commits oplog up to current index with replica quorum.
-  - `getIdempotenceMode : Effect(Bool)` / `setIdempotenceMode : Bool -> Effect({})` — inspects and toggles idempotency mode.
+  - `getIdempotenceMode : Effect(Bool)` / `setIdempotenceMode : Bool -> Effect({})` — toggles idempotency mode.
   - `revertAgent : U64 -> Effect(Result({}, Str))` — rolls back agent state to specified oplog index.
 - **WebSockets**:
   - `websocketConnect : Str -> Effect(Result(U32, Str))`
@@ -305,7 +341,7 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
 - **Durable RDBMS (PostgreSQL & MySQL)**:
   - `dbExecute : Str, Str -> Effect(Result(U64, Str))` — executes SQL statement returning modified rows count.
   - `dbQuery : Str, Str -> Effect(Result(Str, Str))` — executes SQL query returning JSON column/row data.
-- **Distributed Tracing & Context**:
+- **Distributed Tracing**:
   - `traceId : Effect(Str)` / `spanId : Effect(Str)` — OpenTelemetry trace and span identifiers.
   - `traceHeaders : Effect(Result(Str, Str))` — W3C traceparent / tracestate headers JSON.
 - **Configuration Store**:
@@ -325,17 +361,16 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
    ```bash
    cargo test --manifest-path host/Cargo.toml --features stub-guest --lib
    ```
-   Verifies binary I/O, secret handle resolution, agent lifecycle, and read-only state bypass.
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v1.1.0 thesparq/roc-golem
+   ./tooling/build.sh package v1.2.1 thesparq/roc-golem
    ```
-   Generates reproducible `.tar.zst`, `.tar.br`, and `.tar.gz` bundles with BLAKE3 hashes in `dist/`.
 
-4. **Build Application Component**:
+4. **Build & Deploy Agent**:
    ```bash
-   ./tooling/build.sh canary_release
-   # or
-   ./tooling/build.sh app examples/canary_release/main.roc
+   golem build
+   golem deploy --yes
+   golem agent new '<agent-name>()'
+   golem agent invoke '<agent-name>()' handle-message '{"message":"hello"}'
    ```

@@ -2,14 +2,23 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Production Stable — Platform Hardening & v1.2.0 Release (2026-11-14)
+### Current Phase: Production Stable — Platform Hardening & v1.2.1 Release (2026-11-15)
 
-Goal: Platform correctness and security hardening (Phases 1–5, KI-26 through KI-63, F-1 and F-2), real wasm32 host effects, typed HttpRequest, SecretHandle nominal union, comprehensive test coverage, reproducible packaging, and live Golem 1.6.3 validation.
+Goal: Platform correctness and security hardening, live Golem 1.6.3 RPC verification, scheduled invocation error handling, CI formatting cleanup, reproducible packaging, and live multi-agent verification.
 
-Status: **v1.2.0 Released & 100% Verified on Golem Cloud 1.6.3.** All 4 verification layers passing clean. Live runtime test suites 1–4 passing against Golem 1.6.3 server.
+Status: **v1.2.1 Released & 100% Verified on Golem Cloud 1.6.3.** All 4 verification layers passing clean. Live runtime test suites 1–4 passing against Golem 1.6.3 server including live inter-agent RPC (Checklist #15), fire-and-forget RPC (Checklist #16), and scheduled invocation (Checklist #17).
 
 
 ## Done
+
+- **v1.2.1 Release, Live RPC Verification & Host Hardening (2026-11-15)**:
+  - Formatted `host/src/lib.rs` and `host/src/guest_bridge.rs` (`cargo fmt --check` 100% clean).
+  - Fixed `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` in `host/src/lib.rs` to match on `schedule_invocation` and propagate errors via `RocResult::err` instead of discarding.
+  - Implemented live inter-agent RPC call and wait with fault detection (`canary-release` calling `diagnostics-worker` via `rpcTyped`), scheduled invocation (`schedule_rollback` on delay), and fire-and-forget RPC (`fire_rollback` to `diagnostics-worker`).
+  - Executed Layer 4 live runtime test suite (`./tooling/test_runtime.sh`): 100% pass across all 4 suites and checklist rows #15, #16, and #17 on native Golem Cloud 1.6.3 server. Saved live test log to `docs/demo/v1.2.1-live-test.log`.
+  - Re-packaged platform release `v1.2.1` with BLAKE3 checksums (`XGi4H5L-eqFfJ-jZLjjgbxyCqueoqNN3RsEYbMeUN7A.tar.zst`).
+  - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.2.1.tar.zst`): 100% pass.
+  - Updated `README.md`, `CHANGELOG.md`, `golem.yaml`, `.agents/skills/roc-golem.md`, and default tags to `v1.2.1`.
 
 - **v1.2.0 Remediation, Runtime ABI Fixes & Live Golem 1.6.3 Verification (2026-11-14)**:
   - Documented full review, remediation plan, and DX improvements in `docs/specs/18-v1.2.0-remediation-and-dx-polish.md`.

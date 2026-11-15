@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.0/gaeT4elx5DUSLROJgzbAXG5ewzzf71k35bQVGHmsYPQ.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.1/XGi4H5L-eqFfJ-jZLjjgbxyCqueoqNN3RsEYbMeUN7A.tar.zst",
 }
 
 import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
@@ -66,7 +66,7 @@ agent = Golem.agent({
 
 > [!TIP]
 > You can also use the canonical named archive URL:
-> `https://github.com/thesparq/roc-golem/releases/download/v1.2.0/roc-golem-v1.2.0.tar.zst`
+> `https://github.com/thesparq/roc-golem/releases/download/v1.2.1/roc-golem-v1.2.1.tar.zst`
 
 > **Developer Experience (DX) Features**:
 > - **Unified Tools**: Tool schema (`ToolDefinition`) and execution logic are defined together. Tool ID forwarding, JSON envelope wrapping, and dispatch are automatic.
@@ -255,15 +255,15 @@ golem worker invoke "streaming/stream-worker-1" \
 ### Automatic GitHub Release (Recommended)
 1. Push a version tag to Git:
    ```bash
-   git tag v1.2.0
-   git push origin v1.2.0
+   git tag v1.2.1
+   git push origin v1.2.1
    ```
 2. GitHub Actions automatically builds the host, validates all agents, packages the `.tar.zst`, `.tar.br`, `.tar.gz` bundles with BLAKE3 hashes, and creates the GitHub release with ready-to-copy Roc code snippets!
 
 ### Local Release Packaging
 You can generate release tarballs locally at any time:
 ```bash
-./tooling/build.sh package v1.2.0 thesparq/roc-golem
+./tooling/build.sh package v1.2.1 thesparq/roc-golem
 ```
 Artifacts and `release_notes.md` will be placed in `dist/`.
 

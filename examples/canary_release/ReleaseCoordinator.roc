@@ -3,6 +3,8 @@ module [
 	startCanary,
 	approveGate,
 	emergencyRollback,
+	scheduleRollback,
+	fireRollback,
 	statusMethod,
 	dashboardMethod,
 ]
@@ -21,7 +23,9 @@ import pf.Golem exposing [
 	build,
 	createPromise,
 	createWebhook,
+	rpcTyped,
 	rpcSchedule,
+	rpcFireAndForget,
 	workerId,
 ]
 import pf.Types as PfTypes exposing [ToolCall, ToolResult]
@@ -34,6 +38,7 @@ import Types exposing [
 	StartOutput,
 	DecisionInput,
 	RollbackInput,
+	ScheduleRollbackInput,
 	Status,
 	LogBatch,
 	DiagnosticReport,
@@ -45,6 +50,8 @@ import Types exposing [
 	decodeDecisionInput,
 	encodeRollbackInput,
 	decodeRollbackInput,
+	encodeScheduleRollbackInput,
+	decodeScheduleRollbackInput,
 	encodeStatus,
 	decodeStatus,
 	encodeLogBatch,
@@ -73,6 +80,20 @@ emergencyRollback = method({
 	name: "emergency_rollback",
 	description: "Rolls the canary back to 0% of traffic.",
 	promptHint: "Call this to take the canary out of rotation immediately.",
+})
+
+scheduleRollback : Method(ScheduleRollbackInput, Str)
+scheduleRollback = method({
+	name: "schedule_rollback",
+	description: "Schedules an emergency rollback after delayMillis milliseconds.",
+	promptHint: "Call to schedule a delayed rollback.",
+})
+
+fireRollback : Method(RollbackInput, Str)
+fireRollback = method({
+	name: "fire_rollback",
+	description: "Fires an immediate rollback asynchronously without awaiting reply.",
+	promptHint: "Call to trigger rollback via fire-and-forget RPC.",
 })
 
 statusMethod : Method({}, Status)
@@ -134,6 +155,18 @@ agent =
 			decodeRollbackInput,
 			|s| s,
 		)
+		|> registerEffectfulTyped(
+			scheduleRollback,
+			handleScheduleRollback,
+			decodeScheduleRollbackInput,
+			|s| s,
+		)
+		|> registerEffectfulTyped(
+			fireRollback,
+			handleFireRollback,
+			decodeRollbackInput,
+			|s| s,
+		)
 		|> registerReadOnlyTyped(
 			statusMethod,
 			handleStatus,
@@ -170,86 +203,161 @@ initCoordinator = |configJson| {
 }
 
 handleStart : State, StartInput -> Effect.Effect(Result({ state : State, out : StartOutput }, Str))
-handleStart = |state, input| {
-	diagReport =
-		DiagnosticsWorker.handleRunDiagnostics({
-			service: state.service,
-			lines: input.logs,
-		})
-			?? { service: state.service, faults: 0.U64, healthy: True, summary: "ok" }
+handleStart = |state, input|
+	Effect.and_then(
+		rpcTyped(
+			"diagnostics-worker",
+			DiagnosticsWorker.runDiagnostics,
+			{ service: state.service, lines: input.logs },
+			encodeLogBatch,
+			decodeDiagnosticReport,
+		),
+		|diagRes| {
+			diagReport =
+				match diagRes {
+					Ok(rep) => rep
+					Err(_) =>
+						DiagnosticsWorker.handleRunDiagnostics({
+							service: state.service,
+							lines: input.logs,
+						})
+							?? { service: state.service, faults: 0.U64, healthy: True, summary: "ok" }
+				}
 
-	if !diagReport.healthy {
-		abortEvent = "canary_aborted: ${diagReport.summary}"
-		events = List.append(state.events, abortEvent)
-		nextState = { ..state, events: events }
-		Effect.always(
-			Ok({
-				state: nextState,
-				out: {
-					status: "aborted_unhealthy",
-					version: input.version,
-					weight: 0.U64,
-					approvalWebhookUrl: "",
-					faults: diagReport.faults,
-				},
-			}),
-		)
-	} else {
-		Effect.and_then(
-			createPromise,
-			|promiseRes|
-				match promiseRes {
-					Err(err) => Effect.always(Err("Failed to create promise: ${err}"))
-					Ok(promiseId) =>
-						Effect.and_then(
-							createWebhook(promiseId),
-							|webhookRes|
-								match webhookRes {
-									Err(err) => Effect.always(Err("Failed to create webhook: ${err}"))
-									Ok(webhookUrl) =>
-										Effect.and_then(
-											workerId,
-											|selfId|
+			if !diagReport.healthy {
+				abortEvent = "canary_aborted: ${diagReport.summary}"
+				events = List.append(state.events, abortEvent)
+				nextState = { ..state, events: events }
+				Effect.always(
+					Ok({
+						state: nextState,
+						out: {
+							status: "aborted_unhealthy",
+							version: input.version,
+							weight: 0.U64,
+							approvalWebhookUrl: "",
+							faults: diagReport.faults,
+						},
+					}),
+				)
+			} else {
+				Effect.and_then(
+					createPromise,
+					|promiseRes|
+						match promiseRes {
+							Err(err) => Effect.always(Err("Failed to create promise: ${err}"))
+							Ok(promiseId) =>
+								Effect.and_then(
+									createWebhook(promiseId),
+									|webhookRes|
+										match webhookRes {
+											Err(err) => Effect.always(Err("Failed to create webhook: ${err}"))
+											Ok(webhookUrl) =>
 												Effect.and_then(
-													rpcSchedule(
-														selfId,
-														emergencyRollback,
-														"{\"reason\":\"approval timeout expired\"}",
-														300000.U64,
-													),
-													|_scheduleRes| {
-														timerHandle = U64.to_u32_wrap(promiseId)
-														startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
-														events = List.append(state.events, startEvent)
-														nextState = {
-															..state,
-															canaryVersion: input.version,
-															weight: input.weight,
-															pendingTimerHandle: timerHandle,
-															approvalWebhookUrl: webhookUrl,
-															events: events,
-														}
-														Effect.always(
-															Ok({
-																state: nextState,
-																out: {
-																	status: "canary_started",
-																	version: input.version,
-																	weight: input.weight,
-																	approvalWebhookUrl: webhookUrl,
-																	faults: 0.U64,
+													workerId,
+													|selfId|
+														Effect.and_then(
+															rpcSchedule(
+																selfId,
+																emergencyRollback,
+																"{\"reason\":\"approval timeout expired\"}",
+																300000.U64,
+															),
+															|schedRes|
+																match schedRes {
+																	Err(err) =>
+																		Effect.always(Err("Failed to schedule emergency rollback: ${err}"))
+
+																	Ok(_) => {
+																		timerHandle = U64.to_u32_wrap(promiseId)
+																		startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
+																		events = List.append(state.events, startEvent)
+																		nextState = {
+																			..state,
+																			canaryVersion: input.version,
+																			weight: input.weight,
+																			pendingTimerHandle: timerHandle,
+																			approvalWebhookUrl: webhookUrl,
+																			events: events,
+																		}
+																		Effect.always(
+																			Ok({
+																				state: nextState,
+																				out: {
+																					status: "canary_started",
+																					version: input.version,
+																					weight: input.weight,
+																					approvalWebhookUrl: webhookUrl,
+																					faults: 0.U64,
+																				},
+																			}),
+																		)
+																	}
 																},
-															}),
-														)
-													},
-												),
-										)
-								},
-						)
+														),
+												)
+										},
+								)
+						},
+				)
+			}
+		},
+	)
+
+handleScheduleRollback : State, ScheduleRollbackInput -> Effect.Effect(Result({ state : State, out : Str }, Str))
+handleScheduleRollback = |state, input|
+	Effect.and_then(
+		workerId,
+		|selfId|
+			Effect.and_then(
+				rpcSchedule(
+					selfId,
+					emergencyRollback,
+					"{\"reason\":\"${input.reason}\"}",
+					input.delayMillis,
+				),
+				|schedRes|
+					match schedRes {
+						Err(err) => Effect.always(Err("Failed to schedule rollback: ${err}"))
+						Ok(_) =>
+							Effect.always(
+								Ok({
+									state: state,
+									out: "Rollback scheduled in ${Str.inspect(input.delayMillis)}ms",
+								}),
+							)
+					},
+			),
+	)
+
+handleFireRollback : State, RollbackInput -> Effect.Effect(Result({ state : State, out : Str }, Str))
+handleFireRollback = |state, input|
+	Effect.and_then(
+		rpcFireAndForget(
+			"diagnostics-worker",
+			DiagnosticsWorker.runDiagnostics,
+			"{\"service\":\"emergency-audit\",\"lines\":\"ALERT: emergency abort initiated: ${input.reason}\"}",
+		),
+		|fireRes|
+			match fireRes {
+				Err(err) => Effect.always(Err("Failed fire-and-forget to diagnostics-worker: ${err}")),
+				Ok(_) => {
+					events = List.append(state.events, "emergency_rollback_fired: ${input.reason}")
+					nextState = {
+						..state,
+						canaryVersion: "",
+						weight: 0.U64,
+						events: events,
+					}
+					Effect.always(
+						Ok({
+							state: nextState,
+							out: "Rollback fired via fire-and-forget RPC to diagnostics-worker",
+						}),
+					)
 				},
-		)
-	}
-}
+			},
+	)
 
 handleDashboard : State, {} -> Result(Str, Str)
 handleDashboard = |state, _|

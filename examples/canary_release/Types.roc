@@ -5,6 +5,7 @@ module [
 	StartOutput,
 	DecisionInput,
 	RollbackInput,
+	ScheduleRollbackInput,
 	Status,
 	LogBatch,
 	DiagnosticReport,
@@ -16,6 +17,8 @@ module [
 	decodeDecisionInput,
 	encodeRollbackInput,
 	decodeRollbackInput,
+	encodeScheduleRollbackInput,
+	decodeScheduleRollbackInput,
 	encodeStatus,
 	decodeStatus,
 	encodeLogBatch,
@@ -63,6 +66,11 @@ DecisionInput : {
 
 RollbackInput : {
 	reason : Str,
+}
+
+ScheduleRollbackInput : {
+	reason : Str,
+	delayMillis : U64,
 }
 
 Status : {
@@ -120,6 +128,14 @@ encodeRollbackInput = |inp|
 
 decodeRollbackInput : Str -> Result(RollbackInput, Str)
 decodeRollbackInput = |json|
+	decode(json)
+
+encodeScheduleRollbackInput : ScheduleRollbackInput -> Str
+encodeScheduleRollbackInput = |inp|
+	encode(inp)
+
+decodeScheduleRollbackInput : Str -> Result(ScheduleRollbackInput, Str)
+decodeScheduleRollbackInput = |json|
 	decode(json)
 
 encodeStatus : Status -> Str

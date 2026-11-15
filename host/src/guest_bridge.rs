@@ -253,6 +253,26 @@ pub unsafe extern "C" fn main_handle_message_for_host(
             .to_string(),
             String::from("Rolled back to 0%: critical issue"),
         )
+    } else if method == "schedule_rollback" {
+        (
+            state_str.to_string(),
+            String::from("Rollback scheduled in 2000ms"),
+        )
+    } else if method == "fire_rollback" {
+        (
+            serde_json::json!({
+                "service": "auth-service",
+                "activeVersion": "v1.0.0",
+                "canaryVersion": "",
+                "weight": 0,
+                "region": "us-east-1",
+                "pendingTimerHandle": 0,
+                "approvalWebhookUrl": "",
+                "events": ["coordinator_initialized", "emergency_rollback_fired: immediate abort"]
+            })
+            .to_string(),
+            String::from("Rollback fired via fire-and-forget RPC to diagnostics-worker"),
+        )
     } else if method == "analyze_logs"
         || method == "analyze-logs"
         || method == "calculator"
@@ -492,6 +512,18 @@ pub unsafe extern "C" fn main_metadata_for_host(out: *mut RocStr) {
                         "name": "emergency_rollback",
                         "description": "Rolls the canary back to 0% of traffic.",
                         "prompt_hint": "Call this to take the canary out of rotation immediately.",
+                        "read_only": false
+                    },
+                    {
+                        "name": "schedule_rollback",
+                        "description": "Schedules an emergency rollback after delayMillis milliseconds.",
+                        "prompt_hint": "Call to schedule a delayed rollback.",
+                        "read_only": false
+                    },
+                    {
+                        "name": "fire_rollback",
+                        "description": "Fires an immediate rollback asynchronously without awaiting reply.",
+                        "prompt_hint": "Call to trigger rollback via fire-and-forget RPC.",
                         "read_only": false
                     },
                     {

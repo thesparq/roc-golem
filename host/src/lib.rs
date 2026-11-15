@@ -626,10 +626,11 @@ fn wrap_method_parameter_tree(p: &str) -> SchemaValueTree {
 #[allow(dead_code)]
 fn wrap_method_bytes_parameter_tree(bytes: &[u8]) -> SchemaValueTree {
     let vec_bytes = bytes.to_vec();
-    let mut tree = golem_rust::schema::wit::direct::encode(&vec_bytes).unwrap_or_else(|_| SchemaValueTree {
-        value_nodes: vec![],
-        root: 0,
-    });
+    let mut tree =
+        golem_rust::schema::wit::direct::encode(&vec_bytes).unwrap_or_else(|_| SchemaValueTree {
+            value_nodes: vec![],
+            root: 0,
+        });
     if tree.value_nodes.is_empty() {
         SchemaValueTree {
             value_nodes: vec![SchemaValueNode::RecordValue(vec![])],
@@ -637,7 +638,8 @@ fn wrap_method_bytes_parameter_tree(bytes: &[u8]) -> SchemaValueTree {
         }
     } else {
         let payload_root = tree.root;
-        tree.value_nodes.push(SchemaValueNode::RecordValue(vec![payload_root]));
+        tree.value_nodes
+            .push(SchemaValueNode::RecordValue(vec![payload_root]));
         tree.root = (tree.value_nodes.len() - 1) as i32;
         tree
     }
@@ -948,10 +950,8 @@ pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
     #[cfg(target_arch = "wasm32")]
     {
         let id_str = WORKER_STATE.with(|s| {
-            s.borrow()
-                .active_agent_type
-                .clone()
-                .unwrap_or_else(|| match golem::api::host::get_self_metadata() {
+            s.borrow().active_agent_type.clone().unwrap_or_else(|| {
+                match golem::api::host::get_self_metadata() {
                     Ok(metadata) => {
                         let raw = metadata.agent_id.agent_id;
                         if let Some(idx) = raw.find('(') {
@@ -961,7 +961,8 @@ pub unsafe extern "C" fn rocFxGetWorkerId(out: *mut RocStr) {
                         }
                     }
                     Err(_) => "unknown-worker".to_string(),
-                })
+                }
+            })
         });
         ptr::write(out, RocStr::from_str(&id_str));
     }
@@ -1199,19 +1200,27 @@ pub unsafe extern "C" fn rocFxRpcSchedule(
             Vec::new(),
         );
         let input_val = wrap_method_parameter_tree(p);
-        let _ = rpc_client.schedule_invocation(target_datetime, f, input_val, None);
-
-        let resp = serde_json::json!({
-            "status": "scheduled",
-            "target": t,
-            "constructor": c,
-            "method": f,
-            "payload": p,
-            "delayMillis": delay_millis,
-            "scheduledSeconds": sched_secs,
-        })
-        .to_string();
-        ptr::write(out, RocResult::ok(RocStr::from_str(&resp)));
+        match rpc_client.schedule_invocation(target_datetime, f, input_val, None) {
+            Ok(_) => {
+                let resp = serde_json::json!({
+                    "status": "scheduled",
+                    "target": t,
+                    "constructor": c,
+                    "method": f,
+                    "payload": p,
+                    "delayMillis": delay_millis,
+                    "scheduledSeconds": sched_secs,
+                })
+                .to_string();
+                ptr::write(out, RocResult::ok(RocStr::from_str(&resp)));
+            }
+            Err(err) => {
+                ptr::write(
+                    out,
+                    RocResult::err(RocStr::from_str(&format_rpc_error(&err))),
+                );
+            }
+        }
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1420,8 +1429,17 @@ pub unsafe extern "C" fn rocFxRpcScheduleBytes(
             Vec::new(),
         );
         let input_val = wrap_method_bytes_parameter_tree(p_slice);
-        let _ = rpc_client.schedule_invocation(target_datetime, f, input_val, None);
-        ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
+        match rpc_client.schedule_invocation(target_datetime, f, input_val, None) {
+            Ok(_) => {
+                ptr::write(out, RocResult::ok(RocList::from_slice(p_slice)));
+            }
+            Err(err) => {
+                ptr::write(
+                    out,
+                    RocResult::err(RocStr::from_str(&format_rpc_error(&err))),
+                );
+            }
+        }
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

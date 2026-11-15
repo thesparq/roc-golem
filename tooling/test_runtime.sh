@@ -197,16 +197,25 @@ if ! echo "${DISCOVER_OUT}" | grep -q "canary-release" || ! echo "${DISCOVER_OUT
 fi
 log_pass "Checklist #4 PASSED: Discovered bundled agents 'canary-release' and 'diagnostics-worker'"
 
-log_info "Creating canary coordinator agent..."
+log_info "Creating canary coordinator and diagnostics worker agents..."
+golem agent new 'diagnostics-worker()' || true
 golem agent new 'canary-release()' || true
 
-log_info "Starting canary rollout with typed method & webhook allocation (Checklist #36)..."
+log_info "Starting canary rollout with typed method & webhook allocation (Checklist #36 & #15)..."
 START_OUT=$(golem agent invoke 'canary-release()' start_canary '{"version":"v1.2.0","weight":20,"logs":"startup ok","permissionCard":""}')
 if ! echo "${START_OUT}" | grep -q "canary_started" || ! echo "${START_OUT}" | grep -q "webhooks/promise/"; then
     log_fail "Checklist #36 FAILED: start_canary response missing canary_started or webhook URL: ${START_OUT}"
     exit 1
 fi
-log_pass "Checklist #36 PASSED: start_canary initiated rollout with webhook promise URL and 20% weight"
+log_pass "Checklist #36 & #15 PASSED: start_canary called diagnostics-worker via RPC and initiated rollout with webhook promise URL and 20% weight"
+
+log_info "Testing inter-agent RPC call and wait with fault detection (Checklist #15)..."
+UNHEALTHY_OUT=$(golem agent invoke 'canary-release()' start_canary '{"version":"v1.2.0","weight":20,"logs":"PANIC: kernel panic\nOOM: heap exhausted","permissionCard":""}')
+if ! echo "${UNHEALTHY_OUT}" | grep -q "aborted_unhealthy" || ! echo "${UNHEALTHY_OUT}" | grep -q 'faults.*2'; then
+    log_fail "Checklist #15 FAILED: Expected aborted_unhealthy with 2 faults from remote diagnostics-worker: ${UNHEALTHY_OUT}"
+    exit 1
+fi
+log_pass "Checklist #15 PASSED: Remote RPC to diagnostics-worker returned diagnostic report with fault detection"
 
 log_info "Querying live HTML dashboard (Checklist #41)..."
 DASH_OUT=$(golem agent invoke 'canary-release()' dashboard)
@@ -224,6 +233,36 @@ if ! echo "${APPROVE_OUT}" | grep -q "Promoted v1.2.0 to 100%" || ! echo "${APPR
 fi
 log_pass "Checklist #38 PASSED: approve_gate promoted canary to 100% traffic weight"
 
+log_info "Testing scheduled RPC invocation (Checklist #17)..."
+SCHED_OUT=$(golem agent invoke 'canary-release()' schedule_rollback '{"reason":"scheduled canary timeout","delayMillis":2000}')
+if ! echo "${SCHED_OUT}" | grep -q "Rollback scheduled in 2000ms"; then
+    log_fail "Checklist #17 FAILED: Expected rollback scheduled message, got: ${SCHED_OUT}"
+    exit 1
+fi
+log_info "Waiting 3 seconds for scheduled invocation to fire..."
+sleep 3
+STATUS_AFTER_SCHED=$(golem agent invoke 'canary-release()' get_status)
+if ! echo "${STATUS_AFTER_SCHED}" | grep -q 'weight.*0' || ! echo "${STATUS_AFTER_SCHED}" | grep -q "emergency_rollback: scheduled canary timeout"; then
+    log_fail "Checklist #17 FAILED: Scheduled rollback did not execute. Status: ${STATUS_AFTER_SCHED}"
+    exit 1
+fi
+log_pass "Checklist #17 PASSED: Scheduled RPC invocation executed on schedule after 2s delay"
+
+log_info "Testing fire-and-forget RPC invocation (Checklist #16)..."
+golem agent invoke 'canary-release()' approve_gate '{"approved":true,"reviewer":"alice"}' >/dev/null
+FIRE_OUT=$(golem agent invoke 'canary-release()' fire_rollback '{"reason":"immediate abort"}')
+if ! echo "${FIRE_OUT}" | grep -q "Rollback fired via fire-and-forget RPC"; then
+    log_fail "Checklist #16 FAILED: Expected fire-and-forget message, got: ${FIRE_OUT}"
+    exit 1
+fi
+sleep 1
+STATUS_AFTER_FIRE=$(golem agent invoke 'canary-release()' get_status)
+if ! echo "${STATUS_AFTER_FIRE}" | grep -q 'weight.*0' || ! echo "${STATUS_AFTER_FIRE}" | grep -q "emergency_rollback_fired: immediate abort"; then
+    log_fail "Checklist #16 FAILED: Fire-and-forget rollback did not execute. Status: ${STATUS_AFTER_FIRE}"
+    exit 1
+fi
+log_pass "Checklist #16 PASSED: Fire-and-forget RPC delivered and executed asynchronously"
+
 log_info "Invoking stateless analyze_logs tool (Checklist #12)..."
 TOOL_OUT=$(golem agent invoke 'canary-release()' analyze_logs '"PANIC: null pointer\nPANIC: out of bounds\nOOM: memory full"')
 if ! echo "${TOOL_OUT}" | grep -q 'faults.*3'; then
@@ -232,8 +271,7 @@ if ! echo "${TOOL_OUT}" | grep -q 'faults.*3'; then
 fi
 log_pass "Checklist #12 PASSED: analyze_logs tool detected 3 faults (2 panics, 1 OOM)"
 
-log_info "Spawning ephemeral diagnostics-worker and scanning logs (Checklist #10)..."
-golem agent new 'diagnostics-worker()' || true
+log_info "Spawning ephemeral diagnostics-worker and scanning logs directly (Checklist #10)..."
 DIAG_OUT=$(golem agent invoke 'diagnostics-worker()' run_diagnostics '{"service":"auth-service","lines":"PANIC: fatal error\nOOM: kill"}')
 if ! echo "${DIAG_OUT}" | grep -q 'faults.*2' || ! echo "${DIAG_OUT}" | grep -q 'healthy.*false'; then
     log_fail "Checklist #10 FAILED: Diagnostics report missing faults or healthy=false: ${DIAG_OUT}"
@@ -313,6 +351,9 @@ echo -e "  ${C_GREEN}✔${C_RESET} #9  Zero serialization overhead on read-only 
 echo -e "  ${C_GREEN}✔${C_RESET} #10 Stateless ephemeral worker lifecycle ('diagnostics-worker')"
 echo -e "  ${C_GREEN}✔${C_RESET} #11 AI Agent tool declaration & execution ('calculator' => 42)"
 echo -e "  ${C_GREEN}✔${C_RESET} #12 Stateless tool call scanning logs for panics and OOMs ('analyze_logs')"
+echo -e "  ${C_GREEN}✔${C_RESET} #15 Inter-agent RPC call and wait with fault detection ('start_canary' -> 'diagnostics-worker')"
+echo -e "  ${C_GREEN}✔${C_RESET} #16 Fire-and-forget asynchronous RPC rollback ('fire_rollback')"
+echo -e "  ${C_GREEN}✔${C_RESET} #17 Scheduled RPC invocation execution on delay ('schedule_rollback')"
 echo -e "  ${C_GREEN}✔${C_RESET} #36 Canary start with durable promise & webhook allocation ('start_canary')"
 echo -e "  ${C_GREEN}✔${C_RESET} #37 WebSocket streaming connection lifecycle ('connect')"
 echo -e "  ${C_GREEN}✔${C_RESET} #38 Human-in-the-loop promotion gate ('approve_gate' => 100%)"

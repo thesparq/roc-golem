@@ -4,6 +4,22 @@ All notable changes to roc-golem are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] — 2026-11-15
+
+### Added
+- Live verification of inter-agent RPC (`start_canary` calling `diagnostics-worker` over Component Model RPC).
+- Live verification of scheduled invocation (`rpcSchedule` delayed rollback execution).
+- Live verification of asynchronous fire-and-forget RPC (`rpcFireAndForget`).
+- Added `schedule_rollback` and `fire_rollback` methods to canary release coordinator example.
+
+### Fixed
+- Fixed WasmRpc constructor and method parameter wrapping: parameters are now wrapped in `SchemaValueNode::RecordValue` trees as required by Golem Cloud 1.6.3 Component Model RPC.
+- Fixed wasm32 C-ABI variant tag union offset (offset 12) for `RocResult<u64, RocStr>` in `rocFxCreatePromise`.
+- Fixed `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` to properly match on and propagate `schedule_invocation` results instead of discarding with `let _`.
+- Fixed constructor input normalization across host and guest: treats empty tuple `()`, empty object `{}`, empty array `[]`, and `null` as empty configuration.
+- Sanitized worker IDs to bare agent type name in `rocFxGetWorkerId` and RPC target resolution.
+- Fixed Rust code formatting diffs in `host/src/lib.rs` to satisfy `cargo fmt --check`.
+
 ## [1.2.0] — 2026-11-14
 
 ### Added

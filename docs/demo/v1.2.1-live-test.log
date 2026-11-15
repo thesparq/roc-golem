@@ -1,0 +1,1904 @@
+
+[0;34m[1m============================================================[0m
+[0;34m[1m Verifying Component Builds[0m
+[0;34m[1m============================================================[0m
+[0;32m[1m[PASS][0m All 4 Roc Agent WebAssembly components verified in build/
+
+[0;34m[1m============================================================[0m
+[0;34m[1m Starting Clean Golem Cloud v1.6.3 Server[0m
+[0;34m[1m============================================================[0m
+[0;36m[1m[TEST-RUNTIME][0m Starting clean local Golem server on router port 9881...
+[0;36m[1m[TEST-RUNTIME][0m Waiting for Golem server HTTP API readiness at http://127.0.0.1:9881/v1/components...
+[0;32m[1m[PASS][0m Golem server v1.6.3 is ready and operational.
+
+[0;34m[1m============================================================[0m
+[0;34m[1m Deploying Application via golem deploy (Checklist #3)[0m
+[0;34m[1m============================================================[0m
+Selected app: roc-golem, env: local, server: local - builtin (http://
+     localhost:9881/)
+Planning environment tool grant reconciliation
+  +--------+------------+--------------------------+------+---------+----------+
+  | Action | Release ID | Account                  | Tool | Version | Grant ID |
+  +============================================================================+
+  | create |            | builtin-tool-owner@golem | bash | 0.3.3   |          |
+  |        |            | .cloud                   |      |         |          |
+  +--------+------------+--------------------------+------+---------+----------+
+  Including default tool bash, which needs the grant above. To deploy without
+       the tool, leave it out of tools.defaults for the environment in the
+       application manifest.
+
+Auto confirming 
+> The environment tool grant changes above are a separate setup step required
+     before remote tool metadata can be read and the build or deployment plan
+     can continue. They are committed immediately and are not rolled back if
+     the build fails or the deployment is later cancelled. Do you want to
+     apply them?
+Applying environment tool grant setup as a separate committed step
+Committed environment tool grant setup; these changes remain applied if the
+     build or deployment is later cancelled or fails
+Selecting components
+  Found components: roc-golem:ai-tool, roc-golem:canary-release,
+       roc-golem:counter, roc-golem:streaming-agent
+  Selected components and layers:
+    roc-golem:ai-tool:         roc-golem:ai-tool
+    roc-golem:canary-release:  roc-golem:canary-release
+    roc-golem:counter:         roc-golem:counter
+    roc-golem:streaming-agent: roc-golem:streaming-agent
+Building components
+  Building roc-golem:ai-tool
+    Executing external command './tooling/build.sh ai_tool' in directory /
+         home/thesparq/roc-golem
+build.sh | ==> Verifying build toolchain...
+build.sh | ==============================================================
+build.sh |  [Phase: App Build] Building Roc Golem Agent: ai_tool
+build.sh | ==============================================================
+build.sh | ==> Compiling Roc application to WebAssembly core module (/home/
+     thesparq/roc-golem/build/ai_tool_core.wasm)...
+build.sh | ── ● duplicate definition ──────────────────────── examples/
+     ai_tool/main.roc:3:1
+build.sh | 
+build.sh | The name Json is being redeclared here:
+build.sh | 
+build.sh | import pf.Json exposing [escape]
+build.sh | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+build.sh | 
+build.sh | In this scope, Json was already defined in examples/ai_tool/
+     main.roc:1:1:
+build.sh | 
+build.sh | app [agent] { pf: platform "../../platform/main.roc" }
+build.sh | ^
+build.sh | 
+build.sh | ── ● duplicate definition ─────────────────────────────── platform/
+     main.roc:93:1
+build.sh | 
+build.sh | The name Json is being redeclared here:
+build.sh | 
+build.sh | import Json exposing [encode, decode, decode_or, escape]
+build.sh | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+build.sh | 
+build.sh | In this scope, Json was already defined in platform/main.roc:1:1:
+build.sh | 
+build.sh | platform "golem"
+build.sh | ^
+build.sh | 
+build.sh | ── ● module header deprecated ─────────────────────────── platform/
+     Golem.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     # --- Agent Builders ---
+build.sh |     Agent,
+build.sh |     ErasedAgent,
+build.sh |     Spec,
+build.sh |     agent,
+build.sh |     agentWith,
+build.sh |     simpleAgent,
+build.sh |     ephemeral,
+build.sh |     simpleEphemeral,
+build.sh |     define,
+build.sh |     defineEphemeral,
+build.sh |     defineAgent,
+build.sh |     build,
+build.sh |     bundle,
+build.sh |     bundle2,
+build.sh |     bundleAll,
+build.sh |     erase,
+build.sh | 
+build.sh |     # --- Method & Handler Registration ---
+build.sh |     Method,
+build.sh |     Handler,
+build.sh |     method,
+build.sh |     register,
+build.sh |     registerReadOnly,
+build.sh |     registerEphemeral,
+build.sh |     registerTyped,
+build.sh |     registerReadOnlyTyped,
+build.sh |     registerEphemeralTyped,
+build.sh |     registerEffectful,
+build.sh |     registerEffectfulTyped,
+build.sh |     withHttpMount,
+build.sh | 
+build.sh |     # --- Tool Helpers ---
+build.sh |     Tool,
+build.sh |     StatelessTool,
+build.sh |     tool,
+build.sh |     toolJson,
+build.sh |     statefulTool,
+build.sh |     statelessTool,
+build.sh |     statelessToolJson,
+build.sh |     statelessToTool,
+build.sh |     withTools,
+build.sh |     withToolHandler,
+build.sh |     withStatelessToolHandler,
+build.sh |     withEffectfulToolHandler,
+build.sh |     withEffectfulStatelessToolHandler,
+build.sh |     param,
+build.sh |     optionalParam,
+build.sh |     numberParam,
+build.sh |     boolParam,
+build.sh |     typedParam,
+build.sh |     dispatchTool,
+build.sh |     dispatchMessage,
+build.sh |     dispatchStatelessTool,
+build.sh | 
+build.sh |     # --- Response Primitives ---
+build.sh |     reply,
+build.sh |     readOnly,
+build.sh |     stay,
+build.sh |     fail,
+build.sh |     replyJson,
+build.sh |     readOnlyJson,
+build.sh | 
+build.sh |     # --- Logging ---
+build.sh |     logTrace,
+build.sh |     logDebug,
+build.sh |     logInfo,
+build.sh |     logWarn,
+build.sh |     logError,
+build.sh | 
+build.sh |     # --- Worker Identity ---
+build.sh |     workerId,
+build.sh | 
+build.sh |     # --- RPC ---
+build.sh |     rpc,
+build.sh |     rpcInstance,
+build.sh |     rpcSchedule,
+build.sh |     rpcScheduleInstance,
+build.sh |     rpcFireAndForget,
+build.sh |     rpcFireAndForgetInstance,
+build.sh |     rpcTyped,
+build.sh |     rpcTypedInstance,
+build.sh |     rpcScheduleTyped,
+build.sh |     rpcScheduleTypedInstance,
+build.sh |     rpcFireAndForgetTyped,
+build.sh |     rpcFireAndForgetTypedInstance,
+build.sh |     rpcBytes,
+build.sh |     rpcBytesInstance,
+build.sh |     rpcScheduleBytes,
+build.sh |     rpcScheduleBytesInstance,
+build.sh |     rpcFireAndForgetBytes,
+build.sh |     rpcFireAndForgetBytesInstance,
+build.sh | 
+build.sh |     # --- HTTP ---
+build.sh |     http,
+build.sh |     httpRequest,
+build.sh |     httpRequestBytes,
+build.sh |     httpStreamOpen,
+build.sh |     httpStreamReadChunk,
+build.sh |     httpStreamClose,
+build.sh | 
+build.sh |     # --- Storage: Filesystem ---
+build.sh |     readFile,
+build.sh |     writeFile,
+build.sh |     readFileBytes,
+build.sh |     writeFileBytes,
+build.sh |     appendFileBytes,
+build.sh | 
+build.sh |     # --- Storage: Key-Value ---
+build.sh |     kvGet,
+build.sh |     kvSet,
+build.sh |     kvGetBytes,
+build.sh |     kvSetBytes,
+build.sh | 
+build.sh |     # --- Storage: Blobstore ---
+build.sh |     blobGet,
+build.sh |     blobPut,
+build.sh |     blobGetBytes,
+build.sh |     blobPutBytes,
+build.sh | 
+build.sh |     # --- Secrets ---
+build.sh |     getSecretHandle,
+build.sh |     revealSecret,
+build.sh |     wrapSecretHandle,
+build.sh |     unwrapSecretHandle,
+build.sh | 
+build.sh |     # --- Database ---
+build.sh |     dbExecute,
+build.sh |     dbExecuteParams,
+build.sh |     dbQuery,
+build.sh |     dbQueryParams,
+build.sh | 
+build.sh |     # --- WebSocket ---
+build.sh |     websocketConnect,
+build.sh |     websocketSend,
+build.sh |     websocketReceive,
+build.sh |     websocketClose,
+build.sh | 
+build.sh |     # --- Concurrency & Time ---
+build.sh |     sleep,
+build.sh |     now,
+build.sh | 
+build.sh |     # --- Golem Primitives ---
+build.sh |     setPersistence,
+build.sh |     generateIdempotencyKey,
+build.sh |     getOplogIndex,
+build.sh |     oplogCommit,
+build.sh |     getIdempotenceMode,
+build.sh |     setIdempotenceMode,
+build.sh |     revertAgent,
+build.sh |     createPromise,
+build.sh |     completePromise,
+build.sh |     getPromise,
+build.sh |     createWebhook,
+build.sh | 
+build.sh |     # --- Observability ---
+build.sh |     configGet,
+build.sh |     traceId,
+build.sh |     spanId,
+build.sh |     traceHeaders,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ────────────────────────────
+     platform/Json.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     encode,
+build.sh |     decode,
+build.sh |     decode_or,
+build.sh |     escape,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ─────────────────────────── platform/
+     Types.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     Result,
+build.sh |     Metadata,
+build.sh |     MethodDeclaration,
+build.sh |     AgentMode,
+build.sh |     ToolDefinition,
+build.sh |     ToolParameter,
+build.sh |     ToolCall,
+build.sh |     ToolResult,
+build.sh |     PersistenceMode,
+build.sh |     LogLevel,
+build.sh |     SecretHandle,
+build.sh |     wrapSecretHandle,
+build.sh |     unwrapSecretHandle,
+build.sh |     SecretHeader,
+build.sh |     HttpRequest,
+build.sh |     HttpMount,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | 0 errors and 5 warnings found in 11.8s while successfully building:
+build.sh | 
+build.sh |     /home/thesparq/roc-golem/build/ai_tool_core.wasm
+build.sh | ==> Componentizing WASM module into Golem Component Model (/home/
+     thesparq/roc-golem/build/ai_tool_agent.wasm)...
+build.sh | ==> Validating Component Model compatibility...
+build.sh | ============================================================
+build.sh |  App build finished successfully!
+build.sh |  Component: /home/thesparq/roc-golem/build/ai_tool_agent.wasm
+build.sh |  Size:      556K
+build.sh |  Deploy:    golem component add --component-name ai_tool /home/
+     thesparq/roc-golem/build/ai_tool_agent.wasm
+build.sh | ============================================================
+  Adding metadata to roc-golem:ai-tool
+  Building roc-golem:canary-release
+    Executing external command './tooling/build.sh canary_release' in
+         directory /home/thesparq/roc-golem
+build.sh | ==> Verifying build toolchain...
+build.sh | ==============================================================
+build.sh |  [Phase: App Build] Building Roc Golem Agent: canary_release
+build.sh | ==============================================================
+build.sh | ==> Compiling Roc application to WebAssembly core module (/home/
+     thesparq/roc-golem/build/canary_release_core.wasm)...
+build.sh | ── ● module header deprecated ─ examples/canary_release/
+     DiagnosticsWorker.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     agent,
+build.sh |     runDiagnostics,
+build.sh |     handleRunDiagnostics,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ─ examples/canary_release/
+     ReleaseCoordinator.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     agent,
+build.sh |     startCanary,
+build.sh |     approveGate,
+build.sh |     emergencyRollback,
+build.sh |     scheduleRollback,
+build.sh |     fireRollback,
+build.sh |     statusMethod,
+build.sh |     dashboardMethod,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● duplicate definition ─────────────────────────────── platform/
+     main.roc:93:1
+build.sh | 
+build.sh | The name Json is being redeclared here:
+build.sh | 
+build.sh | import Json exposing [encode, decode, decode_or, escape]
+build.sh | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+build.sh | 
+build.sh | In this scope, Json was already defined in platform/main.roc:1:1:
+build.sh | 
+build.sh | platform "golem"
+build.sh | ^
+build.sh | 
+build.sh | ── ● module header deprecated ──────────── examples/canary_release/
+     Types.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     Result,
+build.sh |     State,
+build.sh |     StartInput,
+build.sh |     StartOutput,
+build.sh |     DecisionInput,
+build.sh |     RollbackInput,
+build.sh |     ScheduleRollbackInput,
+build.sh |     Status,
+build.sh |     LogBatch,
+build.sh |     DiagnosticReport,
+build.sh |     encodeStartInput,
+build.sh |     decodeStartInput,
+build.sh |     encodeStartOutput,
+build.sh |     decodeStartOutput,
+build.sh |     encodeDecisionInput,
+build.sh |     decodeDecisionInput,
+build.sh |     encodeRollbackInput,
+build.sh |     decodeRollbackInput,
+build.sh |     encodeScheduleRollbackInput,
+build.sh |     decodeScheduleRollbackInput,
+build.sh |     encodeStatus,
+build.sh |     decodeStatus,
+build.sh |     encodeLogBatch,
+build.sh |     decodeLogBatch,
+build.sh |     encodeDiagnosticReport,
+build.sh |     decodeDiagnosticReport,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ─────────────────────────── platform/
+     Golem.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     # --- Agent Builders ---
+build.sh |     Agent,
+build.sh |     ErasedAgent,
+build.sh |     Spec,
+build.sh |     agent,
+build.sh |     agentWith,
+build.sh |     simpleAgent,
+build.sh |     ephemeral,
+build.sh |     simpleEphemeral,
+build.sh |     define,
+build.sh |     defineEphemeral,
+build.sh |     defineAgent,
+build.sh |     build,
+build.sh |     bundle,
+build.sh |     bundle2,
+build.sh |     bundleAll,
+build.sh |     erase,
+build.sh | 
+build.sh |     # --- Method & Handler Registration ---
+build.sh |     Method,
+build.sh |     Handler,
+build.sh |     method,
+build.sh |     register,
+build.sh |     registerReadOnly,
+build.sh |     registerEphemeral,
+build.sh |     registerTyped,
+build.sh |     registerReadOnlyTyped,
+build.sh |     registerEphemeralTyped,
+build.sh |     registerEffectful,
+build.sh |     registerEffectfulTyped,
+build.sh |     withHttpMount,
+build.sh | 
+build.sh |     # --- Tool Helpers ---
+build.sh |     Tool,
+build.sh |     StatelessTool,
+build.sh |     tool,
+build.sh |     toolJson,
+build.sh |     statefulTool,
+build.sh |     statelessTool,
+build.sh |     statelessToolJson,
+build.sh |     statelessToTool,
+build.sh |     withTools,
+build.sh |     withToolHandler,
+build.sh |     withStatelessToolHandler,
+build.sh |     withEffectfulToolHandler,
+build.sh |     withEffectfulStatelessToolHandler,
+build.sh |     param,
+build.sh |     optionalParam,
+build.sh |     numberParam,
+build.sh |     boolParam,
+build.sh |     typedParam,
+build.sh |     dispatchTool,
+build.sh |     dispatchMessage,
+build.sh |     dispatchStatelessTool,
+build.sh | 
+build.sh |     # --- Response Primitives ---
+build.sh |     reply,
+build.sh |     readOnly,
+build.sh |     stay,
+build.sh |     fail,
+build.sh |     replyJson,
+build.sh |     readOnlyJson,
+build.sh | 
+build.sh |     # --- Logging ---
+build.sh |     logTrace,
+build.sh |     logDebug,
+build.sh |     logInfo,
+build.sh |     logWarn,
+build.sh |     logError,
+build.sh | 
+build.sh |     # --- Worker Identity ---
+build.sh |     workerId,
+build.sh | 
+build.sh |     # --- RPC ---
+build.sh |     rpc,
+build.sh |     rpcInstance,
+build.sh |     rpcSchedule,
+build.sh |     rpcScheduleInstance,
+build.sh |     rpcFireAndForget,
+build.sh |     rpcFireAndForgetInstance,
+build.sh |     rpcTyped,
+build.sh |     rpcTypedInstance,
+build.sh |     rpcScheduleTyped,
+build.sh |     rpcScheduleTypedInstance,
+build.sh |     rpcFireAndForgetTyped,
+build.sh |     rpcFireAndForgetTypedInstance,
+build.sh |     rpcBytes,
+build.sh |     rpcBytesInstance,
+build.sh |     rpcScheduleBytes,
+build.sh |     rpcScheduleBytesInstance,
+build.sh |     rpcFireAndForgetBytes,
+build.sh |     rpcFireAndForgetBytesInstance,
+build.sh | 
+build.sh |     # --- HTTP ---
+build.sh |     http,
+build.sh |     httpRequest,
+build.sh |     httpRequestBytes,
+build.sh |     httpStreamOpen,
+build.sh |     httpStreamReadChunk,
+build.sh |     httpStreamClose,
+build.sh | 
+build.sh |     # --- Storage: Filesystem ---
+build.sh |     readFile,
+build.sh |     writeFile,
+build.sh |     readFileBytes,
+build.sh |     writeFileBytes,
+build.sh |     appendFileBytes,
+build.sh | 
+build.sh |     # --- Storage: Key-Value ---
+build.sh |     kvGet,
+build.sh |     kvSet,
+build.sh |     kvGetBytes,
+build.sh |     kvSetBytes,
+build.sh | 
+build.sh |     # --- Storage: Blobstore ---
+build.sh |     blobGet,
+build.sh |     blobPut,
+build.sh |     blobGetBytes,
+build.sh |     blobPutBytes,
+build.sh | 
+build.sh |     # --- Secrets ---
+build.sh |     getSecretHandle,
+build.sh |     revealSecret,
+build.sh |     wrapSecretHandle,
+build.sh |     unwrapSecretHandle,
+build.sh | 
+build.sh |     # --- Database ---
+build.sh |     dbExecute,
+build.sh |     dbExecuteParams,
+build.sh |     dbQuery,
+build.sh |     dbQueryParams,
+build.sh | 
+build.sh |     # --- WebSocket ---
+build.sh |     websocketConnect,
+build.sh |     websocketSend,
+build.sh |     websocketReceive,
+build.sh |     websocketClose,
+build.sh | 
+build.sh |     # --- Concurrency & Time ---
+build.sh |     sleep,
+build.sh |     now,
+build.sh | 
+build.sh |     # --- Golem Primitives ---
+build.sh |     setPersistence,
+build.sh |     generateIdempotencyKey,
+build.sh |     getOplogIndex,
+build.sh |     oplogCommit,
+build.sh |     getIdempotenceMode,
+build.sh |     setIdempotenceMode,
+build.sh |     revertAgent,
+build.sh |     createPromise,
+build.sh |     completePromise,
+build.sh |     getPromise,
+build.sh |     createWebhook,
+build.sh | 
+build.sh |     # --- Observability ---
+build.sh |     configGet,
+build.sh |     traceId,
+build.sh |     spanId,
+build.sh |     traceHeaders,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ────────────────────────────
+     platform/Json.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     encode,
+build.sh |     decode,
+build.sh |     decode_or,
+build.sh |     escape,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ─────────────────────────── platform/
+     Types.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     Result,
+build.sh |     Metadata,
+build.sh |     MethodDeclaration,
+build.sh |     AgentMode,
+build.sh |     ToolDefinition,
+build.sh |     ToolParameter,
+build.sh |     ToolCall,
+build.sh |     ToolResult,
+build.sh |     PersistenceMode,
+build.sh |     LogLevel,
+build.sh |     SecretHandle,
+build.sh |     wrapSecretHandle,
+build.sh |     unwrapSecretHandle,
+build.sh |     SecretHeader,
+build.sh |     HttpRequest,
+build.sh |     HttpMount,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | 0 errors and 7 warnings found in 52.3s while successfully building:
+build.sh | 
+build.sh |     /home/thesparq/roc-golem/build/canary_release_core.wasm
+build.sh | ==> Componentizing WASM module into Golem Component Model (/home/
+     thesparq/roc-golem/build/canary_release_agent.wasm)...
+build.sh | ==> Validating Component Model compatibility...
+build.sh | ============================================================
+build.sh |  App build finished successfully!
+build.sh |  Component: /home/thesparq/roc-golem/build/
+     canary_release_agent.wasm
+build.sh |  Size:      860K
+build.sh |  Deploy:    golem component add --component-name canary_release /
+     home/thesparq/roc-golem/build/canary_release_agent.wasm
+build.sh | ============================================================
+  Adding metadata to roc-golem:canary-release
+  Building roc-golem:counter
+    Executing external command './tooling/build.sh counter' in directory /
+         home/thesparq/roc-golem
+build.sh | ==> Verifying build toolchain...
+build.sh | ==============================================================
+build.sh |  [Phase: App Build] Building Roc Golem Agent: counter
+build.sh | ==============================================================
+build.sh | ==> Compiling Roc application to WebAssembly core module (/home/
+     thesparq/roc-golem/build/counter_core.wasm)...
+build.sh | ── ● duplicate definition ─────────────────────────────── platform/
+     main.roc:93:1
+build.sh | 
+build.sh | The name Json is being redeclared here:
+build.sh | 
+build.sh | import Json exposing [encode, decode, decode_or, escape]
+build.sh | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+build.sh | 
+build.sh | In this scope, Json was already defined in platform/main.roc:1:1:
+build.sh | 
+build.sh | platform "golem"
+build.sh | ^
+build.sh | 
+build.sh | ── ● module header deprecated ─────────────────────────── platform/
+     Golem.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     # --- Agent Builders ---
+build.sh |     Agent,
+build.sh |     ErasedAgent,
+build.sh |     Spec,
+build.sh |     agent,
+build.sh |     agentWith,
+build.sh |     simpleAgent,
+build.sh |     ephemeral,
+build.sh |     simpleEphemeral,
+build.sh |     define,
+build.sh |     defineEphemeral,
+build.sh |     defineAgent,
+build.sh |     build,
+build.sh |     bundle,
+build.sh |     bundle2,
+build.sh |     bundleAll,
+build.sh |     erase,
+build.sh | 
+build.sh |     # --- Method & Handler Registration ---
+build.sh |     Method,
+build.sh |     Handler,
+build.sh |     method,
+build.sh |     register,
+build.sh |     registerReadOnly,
+build.sh |     registerEphemeral,
+build.sh |     registerTyped,
+build.sh |     registerReadOnlyTyped,
+build.sh |     registerEphemeralTyped,
+build.sh |     registerEffectful,
+build.sh |     registerEffectfulTyped,
+build.sh |     withHttpMount,
+build.sh | 
+build.sh |     # --- Tool Helpers ---
+build.sh |     Tool,
+build.sh |     StatelessTool,
+build.sh |     tool,
+build.sh |     toolJson,
+build.sh |     statefulTool,
+build.sh |     statelessTool,
+build.sh |     statelessToolJson,
+build.sh |     statelessToTool,
+build.sh |     withTools,
+build.sh |     withToolHandler,
+build.sh |     withStatelessToolHandler,
+build.sh |     withEffectfulToolHandler,
+build.sh |     withEffectfulStatelessToolHandler,
+build.sh |     param,
+build.sh |     optionalParam,
+build.sh |     numberParam,
+build.sh |     boolParam,
+build.sh |     typedParam,
+build.sh |     dispatchTool,
+build.sh |     dispatchMessage,
+build.sh |     dispatchStatelessTool,
+build.sh | 
+build.sh |     # --- Response Primitives ---
+build.sh |     reply,
+build.sh |     readOnly,
+build.sh |     stay,
+build.sh |     fail,
+build.sh |     replyJson,
+build.sh |     readOnlyJson,
+build.sh | 
+build.sh |     # --- Logging ---
+build.sh |     logTrace,
+build.sh |     logDebug,
+build.sh |     logInfo,
+build.sh |     logWarn,
+build.sh |     logError,
+build.sh | 
+build.sh |     # --- Worker Identity ---
+build.sh |     workerId,
+build.sh | 
+build.sh |     # --- RPC ---
+build.sh |     rpc,
+build.sh |     rpcInstance,
+build.sh |     rpcSchedule,
+build.sh |     rpcScheduleInstance,
+build.sh |     rpcFireAndForget,
+build.sh |     rpcFireAndForgetInstance,
+build.sh |     rpcTyped,
+build.sh |     rpcTypedInstance,
+build.sh |     rpcScheduleTyped,
+build.sh |     rpcScheduleTypedInstance,
+build.sh |     rpcFireAndForgetTyped,
+build.sh |     rpcFireAndForgetTypedInstance,
+build.sh |     rpcBytes,
+build.sh |     rpcBytesInstance,
+build.sh |     rpcScheduleBytes,
+build.sh |     rpcScheduleBytesInstance,
+build.sh |     rpcFireAndForgetBytes,
+build.sh |     rpcFireAndForgetBytesInstance,
+build.sh | 
+build.sh |     # --- HTTP ---
+build.sh |     http,
+build.sh |     httpRequest,
+build.sh |     httpRequestBytes,
+build.sh |     httpStreamOpen,
+build.sh |     httpStreamReadChunk,
+build.sh |     httpStreamClose,
+build.sh | 
+build.sh |     # --- Storage: Filesystem ---
+build.sh |     readFile,
+build.sh |     writeFile,
+build.sh |     readFileBytes,
+build.sh |     writeFileBytes,
+build.sh |     appendFileBytes,
+build.sh | 
+build.sh |     # --- Storage: Key-Value ---
+build.sh |     kvGet,
+build.sh |     kvSet,
+build.sh |     kvGetBytes,
+build.sh |     kvSetBytes,
+build.sh | 
+build.sh |     # --- Storage: Blobstore ---
+build.sh |     blobGet,
+build.sh |     blobPut,
+build.sh |     blobGetBytes,
+build.sh |     blobPutBytes,
+build.sh | 
+build.sh |     # --- Secrets ---
+build.sh |     getSecretHandle,
+build.sh |     revealSecret,
+build.sh |     wrapSecretHandle,
+build.sh |     unwrapSecretHandle,
+build.sh | 
+build.sh |     # --- Database ---
+build.sh |     dbExecute,
+build.sh |     dbExecuteParams,
+build.sh |     dbQuery,
+build.sh |     dbQueryParams,
+build.sh | 
+build.sh |     # --- WebSocket ---
+build.sh |     websocketConnect,
+build.sh |     websocketSend,
+build.sh |     websocketReceive,
+build.sh |     websocketClose,
+build.sh | 
+build.sh |     # --- Concurrency & Time ---
+build.sh |     sleep,
+build.sh |     now,
+build.sh | 
+build.sh |     # --- Golem Primitives ---
+build.sh |     setPersistence,
+build.sh |     generateIdempotencyKey,
+build.sh |     getOplogIndex,
+build.sh |     oplogCommit,
+build.sh |     getIdempotenceMode,
+build.sh |     setIdempotenceMode,
+build.sh |     revertAgent,
+build.sh |     createPromise,
+build.sh |     completePromise,
+build.sh |     getPromise,
+build.sh |     createWebhook,
+build.sh | 
+build.sh |     # --- Observability ---
+build.sh |     configGet,
+build.sh |     traceId,
+build.sh |     spanId,
+build.sh |     traceHeaders,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ────────────────────────────
+     platform/Json.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     encode,
+build.sh |     decode,
+build.sh |     decode_or,
+build.sh |     escape,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ─────────────────────────── platform/
+     Types.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     Result,
+build.sh |     Metadata,
+build.sh |     MethodDeclaration,
+build.sh |     AgentMode,
+build.sh |     ToolDefinition,
+build.sh |     ToolParameter,
+build.sh |     ToolCall,
+build.sh |     ToolResult,
+build.sh |     PersistenceMode,
+build.sh |     LogLevel,
+build.sh |     SecretHandle,
+build.sh |     wrapSecretHandle,
+build.sh |     unwrapSecretHandle,
+build.sh |     SecretHeader,
+build.sh |     HttpRequest,
+build.sh |     HttpMount,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | 0 errors and 4 warnings found in 16.2s while successfully building:
+build.sh | 
+build.sh |     /home/thesparq/roc-golem/build/counter_core.wasm
+build.sh | ==> Componentizing WASM module into Golem Component Model (/home/
+     thesparq/roc-golem/build/counter_agent.wasm)...
+build.sh | ==> Validating Component Model compatibility...
+build.sh | ============================================================
+build.sh |  App build finished successfully!
+build.sh |  Component: /home/thesparq/roc-golem/build/counter_agent.wasm
+build.sh |  Size:      552K
+build.sh |  Deploy:    golem component add --component-name counter /home/
+     thesparq/roc-golem/build/counter_agent.wasm
+build.sh | ============================================================
+  Adding metadata to roc-golem:counter
+  Building roc-golem:streaming-agent
+    Executing external command './tooling/build.sh streaming_agent' in
+         directory /home/thesparq/roc-golem
+build.sh | ==> Verifying build toolchain...
+build.sh | ==============================================================
+build.sh |  [Phase: App Build] Building Roc Golem Agent: streaming_agent
+build.sh | ==============================================================
+build.sh | ==> Compiling Roc application to WebAssembly core module (/home/
+     thesparq/roc-golem/build/streaming_agent_core.wasm)...
+build.sh | ── ● duplicate definition ─────────────────────────────── platform/
+     main.roc:93:1
+build.sh | 
+build.sh | The name Json is being redeclared here:
+build.sh | 
+build.sh | import Json exposing [encode, decode, decode_or, escape]
+build.sh | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+build.sh | 
+build.sh | In this scope, Json was already defined in platform/main.roc:1:1:
+build.sh | 
+build.sh | platform "golem"
+build.sh | ^
+build.sh | 
+build.sh | ── ● module header deprecated ─────────────────────────── platform/
+     Golem.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     # --- Agent Builders ---
+build.sh |     Agent,
+build.sh |     ErasedAgent,
+build.sh |     Spec,
+build.sh |     agent,
+build.sh |     agentWith,
+build.sh |     simpleAgent,
+build.sh |     ephemeral,
+build.sh |     simpleEphemeral,
+build.sh |     define,
+build.sh |     defineEphemeral,
+build.sh |     defineAgent,
+build.sh |     build,
+build.sh |     bundle,
+build.sh |     bundle2,
+build.sh |     bundleAll,
+build.sh |     erase,
+build.sh | 
+build.sh |     # --- Method & Handler Registration ---
+build.sh |     Method,
+build.sh |     Handler,
+build.sh |     method,
+build.sh |     register,
+build.sh |     registerReadOnly,
+build.sh |     registerEphemeral,
+build.sh |     registerTyped,
+build.sh |     registerReadOnlyTyped,
+build.sh |     registerEphemeralTyped,
+build.sh |     registerEffectful,
+build.sh |     registerEffectfulTyped,
+build.sh |     withHttpMount,
+build.sh | 
+build.sh |     # --- Tool Helpers ---
+build.sh |     Tool,
+build.sh |     StatelessTool,
+build.sh |     tool,
+build.sh |     toolJson,
+build.sh |     statefulTool,
+build.sh |     statelessTool,
+build.sh |     statelessToolJson,
+build.sh |     statelessToTool,
+build.sh |     withTools,
+build.sh |     withToolHandler,
+build.sh |     withStatelessToolHandler,
+build.sh |     withEffectfulToolHandler,
+build.sh |     withEffectfulStatelessToolHandler,
+build.sh |     param,
+build.sh |     optionalParam,
+build.sh |     numberParam,
+build.sh |     boolParam,
+build.sh |     typedParam,
+build.sh |     dispatchTool,
+build.sh |     dispatchMessage,
+build.sh |     dispatchStatelessTool,
+build.sh | 
+build.sh |     # --- Response Primitives ---
+build.sh |     reply,
+build.sh |     readOnly,
+build.sh |     stay,
+build.sh |     fail,
+build.sh |     replyJson,
+build.sh |     readOnlyJson,
+build.sh | 
+build.sh |     # --- Logging ---
+build.sh |     logTrace,
+build.sh |     logDebug,
+build.sh |     logInfo,
+build.sh |     logWarn,
+build.sh |     logError,
+build.sh | 
+build.sh |     # --- Worker Identity ---
+build.sh |     workerId,
+build.sh | 
+build.sh |     # --- RPC ---
+build.sh |     rpc,
+build.sh |     rpcInstance,
+build.sh |     rpcSchedule,
+build.sh |     rpcScheduleInstance,
+build.sh |     rpcFireAndForget,
+build.sh |     rpcFireAndForgetInstance,
+build.sh |     rpcTyped,
+build.sh |     rpcTypedInstance,
+build.sh |     rpcScheduleTyped,
+build.sh |     rpcScheduleTypedInstance,
+build.sh |     rpcFireAndForgetTyped,
+build.sh |     rpcFireAndForgetTypedInstance,
+build.sh |     rpcBytes,
+build.sh |     rpcBytesInstance,
+build.sh |     rpcScheduleBytes,
+build.sh |     rpcScheduleBytesInstance,
+build.sh |     rpcFireAndForgetBytes,
+build.sh |     rpcFireAndForgetBytesInstance,
+build.sh | 
+build.sh |     # --- HTTP ---
+build.sh |     http,
+build.sh |     httpRequest,
+build.sh |     httpRequestBytes,
+build.sh |     httpStreamOpen,
+build.sh |     httpStreamReadChunk,
+build.sh |     httpStreamClose,
+build.sh | 
+build.sh |     # --- Storage: Filesystem ---
+build.sh |     readFile,
+build.sh |     writeFile,
+build.sh |     readFileBytes,
+build.sh |     writeFileBytes,
+build.sh |     appendFileBytes,
+build.sh | 
+build.sh |     # --- Storage: Key-Value ---
+build.sh |     kvGet,
+build.sh |     kvSet,
+build.sh |     kvGetBytes,
+build.sh |     kvSetBytes,
+build.sh | 
+build.sh |     # --- Storage: Blobstore ---
+build.sh |     blobGet,
+build.sh |     blobPut,
+build.sh |     blobGetBytes,
+build.sh |     blobPutBytes,
+build.sh | 
+build.sh |     # --- Secrets ---
+build.sh |     getSecretHandle,
+build.sh |     revealSecret,
+build.sh |     wrapSecretHandle,
+build.sh |     unwrapSecretHandle,
+build.sh | 
+build.sh |     # --- Database ---
+build.sh |     dbExecute,
+build.sh |     dbExecuteParams,
+build.sh |     dbQuery,
+build.sh |     dbQueryParams,
+build.sh | 
+build.sh |     # --- WebSocket ---
+build.sh |     websocketConnect,
+build.sh |     websocketSend,
+build.sh |     websocketReceive,
+build.sh |     websocketClose,
+build.sh | 
+build.sh |     # --- Concurrency & Time ---
+build.sh |     sleep,
+build.sh |     now,
+build.sh | 
+build.sh |     # --- Golem Primitives ---
+build.sh |     setPersistence,
+build.sh |     generateIdempotencyKey,
+build.sh |     getOplogIndex,
+build.sh |     oplogCommit,
+build.sh |     getIdempotenceMode,
+build.sh |     setIdempotenceMode,
+build.sh |     revertAgent,
+build.sh |     createPromise,
+build.sh |     completePromise,
+build.sh |     getPromise,
+build.sh |     createWebhook,
+build.sh | 
+build.sh |     # --- Observability ---
+build.sh |     configGet,
+build.sh |     traceId,
+build.sh |     spanId,
+build.sh |     traceHeaders,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ────────────────────────────
+     platform/Json.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     encode,
+build.sh |     decode,
+build.sh |     decode_or,
+build.sh |     escape,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | ── ● module header deprecated ─────────────────────────── platform/
+     Types.roc:1:1
+build.sh | 
+build.sh | The module header is deprecated.
+build.sh | 
+build.sh | module [
+build.sh |     Result,
+build.sh |     Metadata,
+build.sh |     MethodDeclaration,
+build.sh |     AgentMode,
+build.sh |     ToolDefinition,
+build.sh |     ToolParameter,
+build.sh |     ToolCall,
+build.sh |     ToolResult,
+build.sh |     PersistenceMode,
+build.sh |     LogLevel,
+build.sh |     SecretHandle,
+build.sh |     wrapSecretHandle,
+build.sh |     unwrapSecretHandle,
+build.sh |     SecretHeader,
+build.sh |     HttpRequest,
+build.sh |     HttpMount,
+build.sh | ]
+build.sh | 
+build.sh | Type modules (headerless files with a top-level type matching the
+     filename) are
+build.sh | now the preferred way to define modules.
+build.sh | 
+build.sh | Remove the module header and ensure your file defines a type that
+     matches the
+build.sh | filename.
+build.sh | 
+build.sh | 0 errors and 4 warnings found in 19.0s while successfully building:
+build.sh | 
+build.sh |     /home/thesparq/roc-golem/build/streaming_agent_core.wasm
+build.sh | ==> Componentizing WASM module into Golem Component Model (/home/
+     thesparq/roc-golem/build/streaming_agent_agent.wasm)...
+build.sh | ==> Validating Component Model compatibility...
+build.sh | ============================================================
+build.sh |  App build finished successfully!
+build.sh |  Component: /home/thesparq/roc-golem/build/
+     streaming_agent_agent.wasm
+build.sh |  Size:      588K
+build.sh |  Deploy:    golem component add --component-name streaming_agent /
+     home/thesparq/roc-golem/build/streaming_agent_agent.wasm
+build.sh | ============================================================
+  Adding metadata to roc-golem:streaming-agent
+Preparing deployment
+  Extracting roc-golem:ai-tool agent types and tools from golem-temp/
+       final-wasm/roc-golem:ai-tool.wasm
+  Extracting roc-golem:canary-release agent types and tools from golem-temp/
+       final-wasm/roc-golem:canary-release.wasm
+  Extracting roc-golem:counter agent types and tools from golem-temp/
+       final-wasm/roc-golem:counter.wasm
+  Extracting roc-golem:streaming-agent agent types and tools from golem-temp/
+       final-wasm/roc-golem:streaming-agent.wasm
+  Calculating hash for component roc-golem:ai-tool binary
+  Calculating hash for component roc-golem:canary-release binary
+  Calculating hash for component roc-golem:counter binary
+  Calculating hash for component roc-golem:streaming-agent binary
+  Diffing 
+    Comparing staging area with current deployment (tool publications
+         excluded): SAME
+    Diffing with staging area and current deployment
+      @@ -0,0 +1,403 @@
+      +components:
+      +  roc-golem:ai-tool:
+      +    binaryHash:
+           3fae0307c3c9459d1fda08e5322b2087365c551711798cc6e179f10a1fdece6e
+      +    agents:
+      +      ai-tool-agent:
+      +        constructor: ai-tool-agent()
+      +        sourceLanguage: roc
+      +        mode: Durable
+      +        snapshotting:
+      +          type: Disabled
+      +        initialPermissions:
+      +          lowerBound:
+      +            positive:
+      +            - 'filesystem(?agent) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : /**'
+      +            - 'network() @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'env(?agent) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'oplog(?agent) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'config(?agent) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'secret(?env) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'agent(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'environment(?env) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'component(?component) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'tool(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +            - 'kv(?env) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *.**'
+      +            - 'blob(?env) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *.**'
+      +            - 'rdbms(?env) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *.*.*'
+      +            - 'card(?account) @ initial@user/roc-golem/local/
+           roc-golem:ai-tool/ai-tool-agent : * : *'
+      +        methods:
+      +          calculator:
+      +            signature: 'calculator(expression: string) -> string'
+      +            description: Evaluates mathematical expressions safely
+      +            http:
+      +            - method: POST
+      +              path: /api/tools/ai-tool-agent/calculator
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          echo:
+      +            signature: 'echo(text: string) -> string'
+      +            description: Echoes back the input arguments
+      +            http:
+      +            - method: POST
+      +              path: /api/tools/ai-tool-agent/echo
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          handle-message:
+      +            signature: 'handle-message(message: string) -> string'
+      +            description: Handles text or JSON messages
+      +            http:
+      +            - method: POST
+      +              path: /api/ai-tool-agent/chat
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +  roc-golem:canary-release:
+      +    binaryHash:
+           d78bb7da4e912e7b6c3b1907f6a285c8a02562a283e55aeec49ac043686b7562
+      +    agents:
+      +      canary-release:
+      +        constructor: canary-release()
+      +        description: 'Canary rollout orchestrator: typed methods, a
+           gate, a live dashboard.'
+      +        sourceLanguage: roc
+      +        mode: Durable
+      +        snapshotting:
+      +          type: Disabled
+      +        initialPermissions:
+      +          lowerBound:
+      +            positive:
+      +            - 'filesystem(?agent) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : /**'
+      +            - 'network() @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'env(?agent) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'oplog(?agent) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'config(?agent) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'secret(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'agent(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'environment(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'component(?component) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'tool(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +            - 'kv(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *.**'
+      +            - 'blob(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *.**'
+      +            - 'rdbms(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *.*.*'
+      +            - 'card(?account) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/canary-release : * : *'
+      +        httpMount:
+      +          path: /canary/{id}
+      +          webhook: /webhooks
+      +          phantomAgent: false
+      +          cors:
+      +          - '*'
+      +        methods:
+      +          analyze-logs:
+      +            signature: 'analyze-logs(logs: string) -> string'
+      +            description: Scans log lines for panics and OOMs
+      +            http:
+      +            - method: POST
+      +              path: /api/tools/canary-release/analyze-logs
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          analyze_logs:
+      +            signature: 'analyze_logs(logs: string) -> string'
+      +            description: Scans log lines for panics and OOMs
+      +            http:
+      +            - method: POST
+      +              path: /api/tools/canary-release/analyze_logs
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          approve_gate:
+      +            signature: 'approve_gate(input: string) -> string'
+      +            description: Approves or rejects promotion of the canary
+           traffic weight.
+      +            promptHint: Call to advance canary to next rollout stage.
+      +            http:
+      +            - method: POST
+      +              path: /api/canary-release/approve_gate
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          dashboard:
+      +            signature: dashboard() -> string
+      +            description: Serves live HTML dashboard for the canary
+           release.
+      +            promptHint: Fetch live HTML dashboard.
+      +            http:
+      +            - method: GET
+      +              path: /api/canary-release/dashboard
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +            - method: GET
+      +              path: /dashboard.html
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          emergency_rollback:
+      +            signature: 'emergency_rollback(input: string) -> string'
+      +            description: Rolls the canary back to 0% of traffic.
+      +            promptHint: Call this to take the canary out of rotation
+           immediately.
+      +            http:
+      +            - method: POST
+      +              path: /api/canary-release/emergency_rollback
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          fire_rollback:
+      +            signature: 'fire_rollback(input: string) -> string'
+      +            description: Fires an immediate rollback asynchronously
+           without awaiting reply.
+      +            promptHint: Call to trigger rollback via fire-and-forget
+           RPC.
+      +            http:
+      +            - method: POST
+      +              path: /api/canary-release/fire_rollback
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          get_status:
+      +            signature: get_status() -> string
+      +            description: Returns the current rollout status.
+      +            promptHint: Query current canary status.
+      +            http:
+      +            - method: GET
+      +              path: /api/canary-release/get_status
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          handle-message:
+      +            signature: 'handle-message(message: string) -> string'
+      +            description: Handles text or JSON messages
+      +            http:
+      +            - method: POST
+      +              path: /api/canary-release/chat
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          schedule_rollback:
+      +            signature: 'schedule_rollback(input: string) -> string'
+      +            description: Schedules an emergency rollback after
+           delayMillis milliseconds.
+      +            promptHint: Call to schedule a delayed rollback.
+      +            http:
+      +            - method: POST
+      +              path: /api/canary-release/schedule_rollback
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          start_canary:
+      +            signature: 'start_canary(input: string) -> string'
+      +            description: Starts a new canary deployment for a given
+           service.
+      +            promptHint: Call this to initialize a canary with initial
+           traffic.
+      +            http:
+      +            - method: POST
+      +              path: /api/canary-release/start_canary
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +      diagnostics-worker:
+      +        constructor: diagnostics-worker()
+      +        description: Stateless diagnostics worker for parallel log
+           analysis.
+      +        sourceLanguage: roc
+      +        mode: Ephemeral
+      +        snapshotting:
+      +          type: Disabled
+      +        initialPermissions:
+      +          lowerBound:
+      +            positive:
+      +            - 'filesystem(?agent) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : /**'
+      +            - 'network() @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'env(?agent) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'oplog(?agent) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'config(?agent) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'secret(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'agent(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'environment(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'component(?component) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'tool(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +            - 'kv(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *.**'
+      +            - 'blob(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *.**'
+      +            - 'rdbms(?env) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *.*.*'
+      +            - 'card(?account) @ initial@user/roc-golem/local/
+           roc-golem:canary-release/diagnostics-worker : * : *'
+      +        methods:
+      +          handle-message:
+      +            signature: 'handle-message(message: string) -> string'
+      +            description: Handles text or JSON messages
+      +            http:
+      +            - method: POST
+      +              path: /api/diagnostics-worker/chat
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          run_diagnostics:
+      +            signature: 'run_diagnostics(input: string) -> string'
+      +            description: Scans a log batch for panics and OOMs without
+           holding state.
+      +            promptHint: Call this to inspect container logs before
+           promoting a canary.
+      +            http:
+      +            - method: POST
+      +              path: /api/diagnostics-worker/run_diagnostics
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +  roc-golem:counter:
+      +    binaryHash:
+           3abe0837f1536d5f3da15b6a60d5a3f92d209309901a6fc651ecaae443873fc2
+      +    agents:
+      +      counter-agent:
+      +        constructor: counter-agent()
+      +        sourceLanguage: roc
+      +        mode: Durable
+      +        snapshotting:
+      +          type: Disabled
+      +        initialPermissions:
+      +          lowerBound:
+      +            positive:
+      +            - 'filesystem(?agent) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : /**'
+      +            - 'network() @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'env(?agent) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'oplog(?agent) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'config(?agent) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'secret(?env) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'agent(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'environment(?env) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'component(?component) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'tool(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +            - 'kv(?env) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *.**'
+      +            - 'blob(?env) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *.**'
+      +            - 'rdbms(?env) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *.*.*'
+      +            - 'card(?account) @ initial@user/roc-golem/local/
+           roc-golem:counter/counter-agent : * : *'
+      +        methods:
+      +          get-count:
+      +            signature: get-count() -> string
+      +            description: Returns current counter value
+      +            http:
+      +            - method: POST
+      +              path: /api/tools/counter-agent/get-count
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          get_count:
+      +            signature: get_count() -> string
+      +            description: Returns current counter value
+      +            http:
+      +            - method: POST
+      +              path: /api/tools/counter-agent/get_count
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          handle-message:
+      +            signature: 'handle-message(message: string) -> string'
+      +            description: Handles text or JSON messages
+      +            http:
+      +            - method: POST
+      +              path: /api/counter-agent/chat
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +  roc-golem:streaming-agent:
+      +    binaryHash:
+           ec3cbb44451adc0e13b297500b1582a48c6d8475c2e3b87f99006f8f0fd732e9
+      +    agents:
+      +      streaming-agent:
+      +        constructor: streaming-agent()
+      +        sourceLanguage: roc
+      +        mode: Durable
+      +        snapshotting:
+      +          type: Disabled
+      +        initialPermissions:
+      +          lowerBound:
+      +            positive:
+      +            - 'filesystem(?agent) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : /**'
+      +            - 'network() @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'env(?agent) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'oplog(?agent) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'config(?agent) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'secret(?env) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'agent(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'environment(?env) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'component(?component) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'tool(?env/*/*) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +            - 'kv(?env) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *.**'
+      +            - 'blob(?env) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *.**'
+      +            - 'rdbms(?env) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *.*.*'
+      +            - 'card(?account) @ initial@user/roc-golem/local/
+           roc-golem:streaming-agent/streaming-agent : * : *'
+      +        methods:
+      +          handle-message:
+      +            signature: 'handle-message(message: string) -> string'
+      +            description: Handles text or JSON messages
+      +            http:
+      +            - method: POST
+      +              path: /api/streaming-agent/chat
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          stream-message:
+      +            signature: 'stream-message(content: string) -> string'
+      +            description: Streams message via WebSocket
+      +            http:
+      +            - method: POST
+      +              path: /api/tools/streaming-agent/stream-message
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +          stream_message:
+      +            signature: 'stream_message(content: string) -> string'
+      +            description: Streams message via WebSocket
+      +            http:
+      +            - method: POST
+      +              path: /api/tools/streaming-agent/stream_message
+      +              routeMode: Rest
+      +              cors:
+      +              - '*'
+      +remoteTools:
+      +  bash:
+      +    hash:
+           555958ae09e308a099531724491f5410474618f79ed6b4f80b42b6234db7285c
+      +    releaseId: 01a1de64-2d79-7193-ae13-bcbd21fb60e7
+      +    version: 0.3.3
+      +    sourceDigest:
+           5e6d6f6f7d7ae0b837c73945eba609ea2db297e23b7a3f9e112988052f3d1729
+      +    ownerAccount: builtin-tool-owner@golem.cloud
+      +    metadataVersion: 0.1.0
+      +    metadataDigest:
+           ce67e8b520a0670e34d443bd72a13b4049605b9086af21bb970e511f3e139a9c
+      +    provision:
+      +      config:
+           <masked-secret:6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf
+           36f0c9c3c279>
+      +      env: {}
+      +      plugins: []
+      +      files: []
+      +    bindings:
+      +      ai-tool-agent:
+      +        parameters:
+           <masked-secret:6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf
+           36f0c9c3c279>
+      +        configKeysReadable:
+      +          kind: all
+      +        secretKeysReadable:
+      +          kind: all
+      +        secretKeysRevealable:
+      +          kind: all
+      +        filesystemAccess: allowed
+      +      canary-release:
+      +        parameters:
+           <masked-secret:6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf
+           36f0c9c3c279>
+      +        configKeysReadable:
+      +          kind: all
+      +        secretKeysReadable:
+      +          kind: all
+      +        secretKeysRevealable:
+      +          kind: all
+      +        filesystemAccess: allowed
+      +      counter-agent:
+      +        parameters:
+           <masked-secret:6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf
+           36f0c9c3c279>
+      +        configKeysReadable:
+      +          kind: all
+      +        secretKeysReadable:
+      +          kind: all
+      +        secretKeysRevealable:
+      +          kind: all
+      +        filesystemAccess: allowed
+      +      diagnostics-worker:
+      +        parameters:
+           <masked-secret:6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf
+           36f0c9c3c279>
+      +        configKeysReadable:
+      +          kind: all
+      +        secretKeysReadable:
+      +          kind: all
+      +        secretKeysRevealable:
+      +          kind: all
+      +        filesystemAccess: allowed
+      +      streaming-agent:
+      +        parameters:
+           <masked-secret:6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf
+           36f0c9c3c279>
+      +        configKeysReadable:
+      +          kind: all
+      +        secretKeysReadable:
+      +          kind: all
+      +        secretKeysRevealable:
+      +          kind: all
+      +        filesystemAccess: allowed
+  Planning 
+    Planned changes to be applied to the environment:
+      
+      Component changes:
+        - create component roc-golem:ai-tool
+        - create component roc-golem:canary-release
+        - create component roc-golem:counter
+        - create component roc-golem:streaming-agent
+      
+      Remote tool changes:
+        - create remote tool bash
+      
+    Deployment version v1.2.0-1-gb2c454b-dirty
+
+Auto confirming 
+> The above plan will be applied to the following environment:
+>     Application Name: roc-golem
+>     Environment Name: local
+>     Server          : local - builtin (http://localhost:9881/)
+> 
+> Do you want to continue the deployment?
+Applying changes to the staging area
+  Creating component roc-golem:ai-tool
+    Created component revision: roc-golem:ai-tool 0
+  Creating component roc-golem:canary-release
+    Created component revision: roc-golem:canary-release 0
+  Creating component roc-golem:counter
+    Created component revision: roc-golem:counter 0
+  Creating component roc-golem:streaming-agent
+    Created component revision: roc-golem:streaming-agent 0
+Deploying staged changes to the environment
+Deployed all changes
+  Created new deployment
+  
+  Application:         roc-golem
+  Environment:         local
+  Environment ID:      01a1de64-3101-7270-8e07-d63713cfcccb
+  Deployment Revision: 0
+  Deployment Version:  v1.2.0-1-gb2c454b-dirty
+  Hash:
+       13049eca0e997fdb6d138780d7fc332e9527c5055cb2bb2da6fbcff30b8a48dc
+  Deploy Revision:     0
+
+Summary 
+  Finished deploying [OK]
+[0;32m[1m[PASS][0m Checklist #3 PASSED: All components and remote tools deployed cleanly
+
+[0;34m[1m============================================================[0m
+[0;34m[1m Suite 1: Counter Agent Verification[0m
+[0;34m[1m============================================================[0m
+[0;36m[1m[TEST-RUNTIME][0m Creating counter agent instance...
+Selected app: roc-golem, env: local, server: local - builtin (http://
+     localhost:9881/)
+Creating new agent roc-golem:counter/counter-agent()
+
+  Created new agent counter-agent()
+  
+  Component name: roc-golem:counter
+  Agent ID:       counter-agent()
+[0;36m[1m[TEST-RUNTIME][0m First call (Turn 1: increment) (Checklist #5)...
+[0;32m[1m[PASS][0m Checklist #5 PASSED: First call incremented count to 1
+[0;36m[1m[TEST-RUNTIME][0m Multi-turn state persistence across calls (Checklist #6)...
+[0;32m[1m[PASS][0m Checklist #6 PASSED: State preserved across multiple turns (count = 3)
+[0;36m[1m[TEST-RUNTIME][0m Testing golem ssh command execution against counter agent...
+[0;32m[1m[PASS][0m golem ssh PASSED: Interactive tool execution successful via bound bash tool
+[0;36m[1m[TEST-RUNTIME][0m Simulating worker crash and recovery (Checklist #7)...
+[0;32m[1m[PASS][0m Checklist #7 PASSED: Durable state recovered across worker crash simulation (count = 3)
+[0;36m[1m[TEST-RUNTIME][0m Testing complete Golem Server shutdown and durable restart...
+[0;36m[1m[TEST-RUNTIME][0m Restarting Golem Server with existing state (no --clean)...
+[0;32m[1m[PASS][0m Golem server successfully restarted.
+[0;32m[1m[PASS][0m Server restart durability PASSED: Worker state preserved across full server restart (count = 3)
+[0;36m[1m[TEST-RUNTIME][0m Verifying read-only bypass & state stability (Checklist #8 & #9)...
+[0;32m[1m[PASS][0m Checklist #8 & #9 PASSED: Read-only bypass preserves state without corruption
+
+[0;34m[1m============================================================[0m
+[0;34m[1m Suite 2: Canary Release Multi-Agent Suite Verification[0m
+[0;34m[1m============================================================[0m
+[0;36m[1m[TEST-RUNTIME][0m Discovering agent types in bundled component (Checklist #4)...
+[0;32m[1m[PASS][0m Checklist #4 PASSED: Discovered bundled agents 'canary-release' and 'diagnostics-worker'
+[0;36m[1m[TEST-RUNTIME][0m Creating canary coordinator and diagnostics worker agents...
+Selected app: roc-golem, env: local, server: local - builtin (http://
+     localhost:9881/)
+Creating new agent roc-golem:canary-release/diagnostics-worker()
+     [f850b958-7cf4-4664-95f7-c0d0c268997a]
+
+  Created new agent diagnostics-worker()[f850b958-7cf4-4664-95f7-c0d0c268997a]
+  
+  Component name: roc-golem:canary-release
+  Agent ID:       diagnostics-worker()[f850b958-7cf4-4664-95f7-c0d0c268997a]
+Selected app: roc-golem, env: local, server: local - builtin (http://
+     localhost:9881/)
+Creating new agent roc-golem:canary-release/canary-release()
+
+  Created new agent canary-release()
+  
+  Component name: roc-golem:canary-release
+  Agent ID:       canary-release()
+[0;36m[1m[TEST-RUNTIME][0m Starting canary rollout with typed method & webhook allocation (Checklist #36 & #15)...
+[0;32m[1m[PASS][0m Checklist #36 & #15 PASSED: start_canary called diagnostics-worker via RPC and initiated rollout with webhook promise URL and 20% weight
+[0;36m[1m[TEST-RUNTIME][0m Testing inter-agent RPC call and wait with fault detection (Checklist #15)...
+[0;32m[1m[PASS][0m Checklist #15 PASSED: Remote RPC to diagnostics-worker returned diagnostic report with fault detection
+[0;36m[1m[TEST-RUNTIME][0m Querying live HTML dashboard (Checklist #41)...
+[0;32m[1m[PASS][0m Checklist #41 PASSED: Live HTML dashboard rendered Release Guardian state
+[0;36m[1m[TEST-RUNTIME][0m Approving promotion gate to 100% (Checklist #38)...
+[0;32m[1m[PASS][0m Checklist #38 PASSED: approve_gate promoted canary to 100% traffic weight
+[0;36m[1m[TEST-RUNTIME][0m Testing scheduled RPC invocation (Checklist #17)...
+[0;36m[1m[TEST-RUNTIME][0m Waiting 3 seconds for scheduled invocation to fire...
+[0;32m[1m[PASS][0m Checklist #17 PASSED: Scheduled RPC invocation executed on schedule after 2s delay
+[0;36m[1m[TEST-RUNTIME][0m Testing fire-and-forget RPC invocation (Checklist #16)...
+[0;32m[1m[PASS][0m Checklist #16 PASSED: Fire-and-forget RPC delivered and executed asynchronously
+[0;36m[1m[TEST-RUNTIME][0m Invoking stateless analyze_logs tool (Checklist #12)...
+[0;32m[1m[PASS][0m Checklist #12 PASSED: analyze_logs tool detected 3 faults (2 panics, 1 OOM)
+[0;36m[1m[TEST-RUNTIME][0m Spawning ephemeral diagnostics-worker and scanning logs directly (Checklist #10)...
+[0;32m[1m[PASS][0m Checklist #10 PASSED: Ephemeral diagnostics worker ran log analysis with zero persistent state
+
+[0;34m[1m============================================================[0m
+[0;34m[1m Suite 3: AI Tool Agent Verification[0m
+[0;34m[1m============================================================[0m
+[0;36m[1m[TEST-RUNTIME][0m Creating and initializing AI Tool agent...
+Selected app: roc-golem, env: local, server: local - builtin (http://
+     localhost:9881/)
+Creating new agent roc-golem:ai-tool/ai-tool-agent()
+
+  Created new agent ai-tool-agent()
+  
+  Component name: roc-golem:ai-tool
+  Agent ID:       ai-tool-agent()
+[0;36m[1m[TEST-RUNTIME][0m Invoking calculator tool (Checklist #11)...
+[0;32m[1m[PASS][0m Checklist #11 PASSED: Calculator tool executed and returned typed result 42
+[0;36m[1m[TEST-RUNTIME][0m Invoking echo tool with quotes and special characters (Checklist #44)...
+[0;32m[1m[PASS][0m Checklist #44 PASSED: Echo tool handled quotes and escaping cleanly
+
+[0;34m[1m============================================================[0m
+[0;34m[1m Suite 4: Streaming Agent Verification[0m
+[0;34m[1m============================================================[0m
+[0;36m[1m[TEST-RUNTIME][0m Creating streaming agent...
+Selected app: roc-golem, env: local, server: local - builtin (http://
+     localhost:9881/)
+Creating new agent roc-golem:streaming-agent/streaming-agent()
+
+  Created new agent streaming-agent()
+  
+  Component name: roc-golem:streaming-agent
+  Agent ID:       streaming-agent()
+[0;36m[1m[TEST-RUNTIME][0m Invoking connect message (Checklist #37)...
+[0;32m[1m[PASS][0m Checklist #37 PASSED: Streaming agent established WebSocket connection handle
+[0;36m[1m[TEST-RUNTIME][0m Invoking stream_message tool (Checklist #45)...
+[0;32m[1m[PASS][0m Checklist #45 PASSED: stream_message tool verified active streaming channel
+
+[0;32m[1m============================================================[0m
+[0;32m[1m Layer 4 Runtime Verification Succeeded![0m
+[0;32m[1m 100% Passing Across All 4 Real Roc Golem Cloud Agents[0m
+[0;32m[1m Full Golem Cloud v1.6.3 & golem ssh Verified![0m
+[0;32m[1m============================================================[0m
+[1mVerified Feature Checklist Items:[0m
+  [0;32m✔[0m #3  Deploy application to local Golem Cloud server (v1.6.3)
+  [0;32m✔[0m #4  Multi-agent component discovery ('canary-release' + 'diagnostics-worker')
+  [0;32m✔[0m #5  First call on new worker initializes and mutates state (count=1)
+  [0;32m✔[0m #6  State preserved across multiple successive turns (count=3)
+  [0;32m✔[0m #7  State recovered durably across worker crash simulation
+  [0;32m✔[0m --  Worker state preserved durably across full server shutdown & restart
+  [0;32m✔[0m --  Interactive golem ssh execution verified via bound bash tool
+  [0;32m✔[0m #8  Read-only bypass preserves state without corruption
+  [0;32m✔[0m #9  Zero serialization overhead on read-only queries
+  [0;32m✔[0m #10 Stateless ephemeral worker lifecycle ('diagnostics-worker')
+  [0;32m✔[0m #11 AI Agent tool declaration & execution ('calculator' => 42)
+  [0;32m✔[0m #12 Stateless tool call scanning logs for panics and OOMs ('analyze_logs')
+  [0;32m✔[0m #15 Inter-agent RPC call and wait with fault detection ('start_canary' -> 'diagnostics-worker')
+  [0;32m✔[0m #16 Fire-and-forget asynchronous RPC rollback ('fire_rollback')
+  [0;32m✔[0m #17 Scheduled RPC invocation execution on delay ('schedule_rollback')
+  [0;32m✔[0m #36 Canary start with durable promise & webhook allocation ('start_canary')
+  [0;32m✔[0m #37 WebSocket streaming connection lifecycle ('connect')
+  [0;32m✔[0m #38 Human-in-the-loop promotion gate ('approve_gate' => 100%)
+  [0;32m✔[0m #41 Live HTML dashboard serving for canary status ('dashboard')
+  [0;32m✔[0m #44 Multi-turn AI Agent tool execution with JSON escaping ('echo')
+  [0;32m✔[0m #45 Real-time streaming tool call dispatch ('stream_message')
+[0;32m[1m============================================================[0m
+[0;36m[1m[TEST-RUNTIME][0m Stopping Golem server (PID: 2206998)...
