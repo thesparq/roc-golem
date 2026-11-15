@@ -24,7 +24,7 @@ The simplest, zero-boilerplate way to define a durable agent in Roc:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.1/XGi4H5L-eqFfJ-jZLjjgbxyCqueoqNN3RsEYbMeUN7A.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.1/kkxgt917ueo-FU73mGOOmrMaCZYXI_Xk0Uv8nHhD8ZQ.tar.zst",
 }
 
 import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]

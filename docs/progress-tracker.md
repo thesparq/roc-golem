@@ -16,7 +16,7 @@ Status: **v1.2.1 Released & 100% Verified on Golem Cloud 1.6.3.** All 4 verifica
   - Fixed `rocFxRpcSchedule` and `rocFxRpcScheduleBytes` in `host/src/lib.rs` to match on `schedule_invocation` and propagate errors via `RocResult::err` instead of discarding.
   - Implemented live inter-agent RPC call and wait with fault detection (`canary-release` calling `diagnostics-worker` via `rpcTyped`), scheduled invocation (`schedule_rollback` on delay), and fire-and-forget RPC (`fire_rollback` to `diagnostics-worker`).
   - Executed Layer 4 live runtime test suite (`./tooling/test_runtime.sh`): 100% pass across all 4 suites and checklist rows #15, #16, and #17 on native Golem Cloud 1.6.3 server. Saved live test log to `docs/demo/v1.2.1-live-test.log`.
-  - Re-packaged platform release `v1.2.1` with BLAKE3 checksums (`XGi4H5L-eqFfJ-jZLjjgbxyCqueoqNN3RsEYbMeUN7A.tar.zst`).
+  - Re-packaged platform release `v1.2.1` with BLAKE3 checksums (`kkxgt917ueo-FU73mGOOmrMaCZYXI_Xk0Uv8nHhD8ZQ.tar.zst`).
   - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.2.1.tar.zst`): 100% pass.
   - Updated `README.md`, `CHANGELOG.md`, `golem.yaml`, `.agents/skills/roc-golem.md`, and default tags to `v1.2.1`.
 
