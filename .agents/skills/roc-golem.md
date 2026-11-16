@@ -24,7 +24,7 @@ The simplest, zero-boilerplate way to define a durable agent in Roc:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.1/R_vqlBFvierawpLae6SLv2hk7RGk3-POnPTztiG2PTY.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.1/roc-golem-v1.4.1__vTYxFnYV2NPJTlpiw0sa17XykG3lt4HctD9jFbVeVa4.tar.zst",
 }
 
 import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]
@@ -127,6 +127,8 @@ agent = Golem.agent({
 > **Dynamic HTTP Webhook Endpoints (`withAgentHttpMount`)**: Golem Cloud requires agents to have an active HTTP API deployment or `httpMount` before calling `createWebhook` on durable promises. Pipeline chaining `|> withAgentHttpMount({ pathPrefix, corsOrigins, webhookSuffix })` attaches this cleanly to `Agent(state)` containers without dropping down to low-level builder pipelines.
 >
 > **Direct Platform Types**: In `v1.4.1+`, `HttpMount`, `HttpRequest`, `SecretHeader`, `SecretHandle`, `ToolDefinition`, `ToolParameter`, `ToolCall`, and `ToolResult` are exported directly by `pf.Golem`, so there is no need to import `pf.Types`.
+>
+> **Roc Package Hash Delimiter (`__`)**: When platform tarballs use `<prefix>__<hash>.tar.zst`, the Roc compiler package resolver treats `__` as a prefix delimiter, verifies the downloaded payload against `<hash>`, and indexes the local cache under `~/.cache/roc/packages/<hash>/` (and `.deps.json`). In `v1.4.1+`, all release hashes are guaranteed free of accidental internal `__` substrings.
 
 ---
 

@@ -33,21 +33,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" Output Dir:  {}", out_dir.display());
     println!("============================================================");
 
-    // Build deterministic in-memory tarball
-    let tar_bytes = create_reproducible_tar(&root_dir, &platform_dir, &build_dir)?;
+    // Build deterministic in-memory tarball with nonce avoidance loop to guarantee
+    // no BLAKE3 base64url hash contains "__" (which Roc's package resolver interprets
+    // as a prefix delimiter).
+    let mut nonce = 0u32;
+    let (tar_bytes, zst_bytes, zst_hash, br_bytes, br_hash, gz_bytes, gz_hash) = loop {
+        let tb = create_reproducible_tar(&root_dir, &platform_dir, &build_dir, nonce)?;
+        let zb = compress_zstd(&tb)?;
+        let zh = compute_blake3_base64url(&zb);
+        let bb = compress_brotli(&tb)?;
+        let bh = compute_blake3_base64url(&bb);
+        let gb = compress_gzip(&tb)?;
+        let gh = compute_blake3_base64url(&gb);
+
+        if !zh.contains("__") && !bh.contains("__") && !gh.contains("__") {
+            if nonce > 0 {
+                println!(
+                    "==> Nonce {} selected: all hashes free of '__' delimiter",
+                    nonce
+                );
+            }
+            break (tb, zb, zh, bb, bh, gb, gh);
+        }
+        println!(
+            "==> Hash contains '__' delimiter (zst: {}, br: {}, gz: {}), incrementing nonce to prevent Roc delimiter confusion...",
+            zh.contains("__"),
+            bh.contains("__"),
+            gh.contains("__")
+        );
+        nonce += 1;
+    };
+
     println!(
         "==> Created reproducible tar archive ({} bytes)",
         tar_bytes.len()
     );
 
     // 1. Zstandard (.tar.zst)
-    let zst_bytes = compress_zstd(&tar_bytes)?;
-    let zst_hash = compute_blake3_base64url(&zst_bytes);
     let zst_filename = format!("{}.tar.zst", zst_hash);
     let zst_path = out_dir.join(&zst_filename);
     fs::write(&zst_path, &zst_bytes)?;
-    let named_zst = out_dir.join(format!("roc-golem-{}.tar.zst", tag));
+
+    let named_zst_filename = format!("roc-golem-{}.tar.zst", tag);
+    let named_zst = out_dir.join(&named_zst_filename);
     fs::copy(&zst_path, &named_zst)?;
+
+    let prefixed_zst_filename = format!("roc-golem-{}__{}.tar.zst", tag, zst_hash);
+    let prefixed_zst = out_dir.join(&prefixed_zst_filename);
+    fs::copy(&zst_path, &prefixed_zst)?;
+
     println!(
         "==> Packaged Zstandard: {} ({} bytes)",
         zst_filename,
@@ -55,13 +89,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // 2. Brotli (.tar.br)
-    let br_bytes = compress_brotli(&tar_bytes)?;
-    let br_hash = compute_blake3_base64url(&br_bytes);
     let br_filename = format!("{}.tar.br", br_hash);
     let br_path = out_dir.join(&br_filename);
     fs::write(&br_path, &br_bytes)?;
-    let named_br = out_dir.join(format!("roc-golem-{}.tar.br", tag));
+
+    let named_br_filename = format!("roc-golem-{}.tar.br", tag);
+    let named_br = out_dir.join(&named_br_filename);
     fs::copy(&br_path, &named_br)?;
+
+    let prefixed_br_filename = format!("roc-golem-{}__{}.tar.br", tag, br_hash);
+    let prefixed_br = out_dir.join(&prefixed_br_filename);
+    fs::copy(&br_path, &prefixed_br)?;
+
     println!(
         "==> Packaged Brotli:    {} ({} bytes)",
         br_filename,
@@ -69,13 +108,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // 3. Gzip (.tar.gz)
-    let gz_bytes = compress_gzip(&tar_bytes)?;
-    let gz_hash = compute_blake3_base64url(&gz_bytes);
     let gz_filename = format!("{}.tar.gz", gz_hash);
     let gz_path = out_dir.join(&gz_filename);
     fs::write(&gz_path, &gz_bytes)?;
-    let named_gz = out_dir.join(format!("roc-golem-{}.tar.gz", tag));
+
+    let named_gz_filename = format!("roc-golem-{}.tar.gz", tag);
+    let named_gz = out_dir.join(&named_gz_filename);
     fs::copy(&gz_path, &named_gz)?;
+
+    let prefixed_gz_filename = format!("roc-golem-{}__{}.tar.gz", tag, gz_hash);
+    let prefixed_gz = out_dir.join(&prefixed_gz_filename);
+    fs::copy(&gz_path, &prefixed_gz)?;
+
     println!(
         "==> Packaged Gzip:      {} ({} bytes)",
         gz_filename,
@@ -86,8 +130,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut checksums = String::new();
     for (name, bytes) in [
         (&zst_filename, &zst_bytes),
+        (&prefixed_zst_filename, &zst_bytes),
+        (&named_zst_filename, &zst_bytes),
         (&br_filename, &br_bytes),
+        (&prefixed_br_filename, &br_bytes),
+        (&named_br_filename, &br_bytes),
         (&gz_filename, &gz_bytes),
+        (&prefixed_gz_filename, &gz_bytes),
+        (&named_gz_filename, &gz_bytes),
     ] {
         let mut sha = Sha256::new();
         sha.update(bytes);
@@ -97,7 +147,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let checksums_path = out_dir.join("checksums.txt");
     fs::write(&checksums_path, checksums)?;
 
-    // Generate Release URL & Markdown Snippet
+    // Generate Release URLs & Markdown Snippet
+    let zst_prefixed_url = format!(
+        "https://github.com/{}/releases/download/{}/{}",
+        repo, tag, prefixed_zst_filename
+    );
     let zst_url = format!(
         "https://github.com/{}/releases/download/{}/{}",
         repo, tag, zst_filename
@@ -116,7 +170,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 To use this release of `roc-golem` in your Roc application, copy and paste this platform URL into your `main.roc` app header:
 
-### Recommended (`.tar.zst`):
+### Recommended: Prefixed with Roc `__` Delimiter (`.tar.zst`):
+```roc
+app [agent] {{
+    pf: platform "{zst_prefixed_url}",
+}}
+```
+
+### Alternative: Content-Addressed Bare Hash (`.tar.zst`):
 ```roc
 app [agent] {{
     pf: platform "{zst_url}",
@@ -138,11 +199,11 @@ app [agent] {{
 ```
 
 ### Included Platform Artifacts
-- `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`, `platform/Json.roc`
+- `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`, `platform/Json.roc`, `platform/Parse.roc`
 - Precompiled `targets/wasm32/libroc_golem_host.a` (static library for Wasm32 Golem Cloud host)
 - Precompiled `targets/wasm32/libc.a` (WASI libc static library)
 - Precompiled `libhost.a` (root compatibility static library)
-- Integrity Hash: BLAKE3 (base64url unpadded)
+- Integrity Hash: BLAKE3 (base64url unpadded, guaranteed free of accidental `__` delimiter)
 "#
     );
 
@@ -195,6 +256,7 @@ fn create_reproducible_tar(
     root_dir: &Path,
     platform_dir: &Path,
     build_dir: &Path,
+    nonce: u32,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut tar_builder = tar::Builder::new(Vec::new());
 
@@ -275,6 +337,18 @@ fn create_reproducible_tar(
         header.set_gid(0);
         header.set_cksum();
         tar_builder.append_data(&mut header, archive_name, &mut file)?;
+    }
+
+    if nonce > 0 {
+        let nonce_bytes = format!("nonce: {}\n", nonce).into_bytes();
+        let mut header = tar::Header::new_gnu();
+        header.set_size(nonce_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_mtime(0);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_cksum();
+        tar_builder.append_data(&mut header, ".hash_nonce", &nonce_bytes[..])?;
     }
 
     tar_builder.finish()?;

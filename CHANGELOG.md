@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Dynamic HTTP Webhook Endpoints (`withAgentHttpMount`)**: Added `withAgentHttpMount : Agent(state), HttpMount -> Agent(state)` in `platform/Golem.roc` to attach dynamic HTTP API deployment mounts and webhook endpoints to `Agent` containers (e.g. from `Golem.agent`, `Golem.agentWith`, `Golem.ephemeral`) cleanly satisfying Golem host requirements for `createWebhook`.
 - **Direct Type Exposure in `pf.Golem`**: Re-exported `HttpMount`, `HttpRequest`, `SecretHeader`, `SecretHandle`, `ToolDefinition`, `ToolParameter`, `ToolCall`, and `ToolResult` directly from `pf.Golem` module header exports so developers do not need to import both `pf.Golem` and `pf.Types`.
+- **Roc Package Delimiter Safety & Prefixed Releases**: Added a nonce avoidance loop in `tooling/pack_platform` guaranteeing all release BLAKE3 hashes are strictly free of `__` delimiters (which Roc's package resolver treats as a prefix delimiter). Platform packaging now produces both canonical bare hash archives (`{hash}.tar.zst`) and human-readable prefixed archives (`roc-golem-{tag}__{hash}.tar.zst`) that Roc cleanly indexes under `<hash>` in `~/.cache/roc/packages/`.
 
 ## [1.4.0] — 2026-11-16
 

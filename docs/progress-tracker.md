@@ -17,7 +17,7 @@ Status: **v1.4.1 Released & 100% Verified.** All 4 verification layers passing c
   - Resolved namespace redeclaration rules in `platform/Golem.roc` by aliasing re-exported types from `Types.` while keeping non-exported types in `import Types exposing [...]`.
   - Updated `tests/effectful_agent.roc` with Test 5 (HTTP mount validation) and Test 6 (direct type imports), bringing test count to 10.
   - All 145 Roc tests passing across 8 suites; all 56 host tests passing; `roc fmt` and `cargo fmt` / `clippy` 100% clean.
-  - Packaged platform release `v1.4.1` with BLAKE3 checksums (`R_vqlBFvierawpLae6SLv2hk7RGk3-POnPTztiG2PTY.tar.zst`).
+  - Resolved **Roc Package Hash Delimiter Parsing (`__`)**: Added nonce avoidance loop to `tooling/pack_platform` guaranteeing all generated BLAKE3 hashes are strictly free of `__` delimiters. Packaged both canonical bare hash (`vTYxFnYV2NPJTlpiw0sa17XykG3lt4HctD9jFbVeVa4.tar.zst`) and human-readable prefixed release (`roc-golem-v1.4.1__vTYxFnYV2NPJTlpiw0sa17XykG3lt4HctD9jFbVeVa4.tar.zst`) conforming to Roc's package cache indexer.
   - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.4.1.tar.zst`): 100% pass.
 
 - **Effectful High-Level Agent & Tool API (v1.4.0 - 2026-11-16)**:

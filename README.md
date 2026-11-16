@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.1/R_vqlBFvierawpLae6SLv2hk7RGk3-POnPTztiG2PTY.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.1/roc-golem-v1.4.1__vTYxFnYV2NPJTlpiw0sa17XykG3lt4HctD9jFbVeVa4.tar.zst",
 }
 ```
 
@@ -66,8 +66,11 @@ agent = Golem.agent({
 ```
 
 > [!TIP]
-> You can also use the canonical named archive URL:
-> `https://github.com/thesparq/roc-golem/releases/download/v1.4.1/roc-golem-v1.4.1.tar.zst`
+> **Roc Package Hash Delimiter Parsing (`__`)**:
+> Roc platform tarball URLs can use `<prefix>__<hash>.tar.zst`. The Roc compiler package resolver treats `__` as a prefix delimiter: it verifies integrity against `<hash>` and indexes the local cache under `~/.cache/roc/packages/<hash>/` (and `.deps.json`).
+> 
+> You can use either the prefixed URL above or the content-addressed bare hash URL:
+> `https://github.com/thesparq/roc-golem/releases/download/v1.4.1/vTYxFnYV2NPJTlpiw0sa17XykG3lt4HctD9jFbVeVa4.tar.zst`
 
 > **Developer Experience (DX) Features**:
 > - **Unified Tools**: Tool schema (`ToolDefinition`) and execution logic are defined together. Tool ID forwarding, JSON envelope wrapping, and dispatch are automatic.
