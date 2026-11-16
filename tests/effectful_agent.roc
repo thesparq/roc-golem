@@ -21,6 +21,7 @@ import pf.Golem exposing [
 	SecretHandle,
 	wrapSecretHandle,
 	withAgentHttpMount,
+	encodeHttpRequest,
 ]
 import pf.Effect exposing [Effect, map]
 
@@ -217,6 +218,26 @@ expect {
 	req.url == "https://api.booking.example.com"
 		and secHeader.name == "Authorization"
 			and req.method == "POST"
+}
+
+# Test 7: Verify encodeHttpRequest serializes headers as a JSON object
+expect {
+	req : HttpRequest
+	req = {
+		url: "https://api.openai.com/v1/chat/completions",
+		method: "POST",
+		headers: [
+			{ name: "Content-Type", value: "application/json" },
+			{ name: "Authorization", value: "Bearer sk-test-key" },
+		],
+		body: "{\"model\":\"gpt-4\"}",
+		secretHeaders: [],
+	}
+	encoded = encodeHttpRequest(req)
+	expectedHeaders = "\"headers\":{\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer sk-test-key\"}"
+	Str.contains(encoded, expectedHeaders)
+		and Str.contains(encoded, "\"method\":\"POST\"")
+			and Str.contains(encoded, "\"secretHeaders\":[]")
 }
 
 main = bookingAgent

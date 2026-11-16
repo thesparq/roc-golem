@@ -11,7 +11,7 @@ version:
   git:
     tagPattern: "v*"
     hashFallback: true
-    staticFallback: "v1.4.1"
+    staticFallback: "v1.4.2"
 
 environments:
   local:

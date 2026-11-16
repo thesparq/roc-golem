@@ -2,14 +2,23 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Production Stable — Dynamic HTTP Webhook Mounts & Direct Type Re-exports (v1.4.1 Release, 2026-11-16)
+### Current Phase: Production Stable — Outbound HTTP Headers Serialization Alignment (v1.4.2 Release, 2026-11-16)
 
-Goal: Expose `withAgentHttpMount` on `Agent(state)` containers for dynamic webhook endpoints (`host.wit`) and re-export common platform types (`HttpMount`, `HttpRequest`, `SecretHeader`, etc.) from `pf.Golem`.
+Goal: Align guest HTTP header serialization (`encodeHttpRequest` in `platform/Golem.roc`) with host expectations (JSON object map) and provide defensive dual-format parsing in the host runtime (`host/src/lib.rs`).
 
-Status: **v1.4.1 Released & 100% Verified.** All 4 verification layers passing clean: 56 host unit tests, 145 Roc tests across 8 suites, consumer package smoke test, and release packaging.
+Status: **v1.4.2 Released & 100% Verified.** All 4 verification layers passing clean: 58 host unit tests, 146 Roc tests across 8 suites, consumer package smoke test, and release packaging.
 
 
 ## Done
+
+- **Outbound HTTP Headers Serialization Alignment (v1.4.2 - 2026-11-16)**:
+  - Fixed outbound HTTP headers serialization format mismatch: updated `encodeHttpRequest : HttpRequest -> Str` in `platform/Golem.roc` to format `headers` as a JSON object map (`"headers": {"Header": "Value"}`) instead of an array of `{name, value}` objects.
+  - Exported `encodeHttpRequest : HttpRequest -> Str` directly in `platform/Golem.roc`.
+  - Added defensive dual-format headers parsing in `host/src/lib.rs` (`perform_wasi_http_request`): supports both JSON object maps and JSON arrays of `{"name": "...", "value": "..."}` objects as fallback for precompiled guest binaries.
+  - Added host unit tests (`test_http_request_headers_object_map` and `test_http_request_headers_array_fallback`) in `host/src/lib.rs` (58 unit tests passing).
+  - Added guest serialization test in `tests/effectful_agent.roc` (146 Roc tests passing across 8 suites).
+  - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.4.2.tar.zst`): 100% pass.
+  - Generated v1.4.2 release packages (`roc-golem-v1.4.2__yZx-BvxRbj5gwqOakBkiTTinQsa5DumTiiVO6kYp4rk.tar.zst`).
 
 - **Dynamic HTTP Webhook Mounts & Direct Type Re-exports (v1.4.1 - 2026-11-16)**:
   - Added `withAgentHttpMount : Agent(state), HttpMount -> Agent(state)` to attach dynamic HTTP API deployments and webhook endpoints to agent containers created via `Golem.agent`, `Golem.agentWith`, or `Golem.ephemeral`, satisfying Golem host requirements for `createWebhook`.

@@ -114,6 +114,7 @@ module [
 	http,
 	httpRequest,
 	httpRequestBytes,
+	encodeHttpRequest,
 	httpStreamOpen,
 	httpStreamReadChunk,
 	httpStreamClose,
@@ -1607,9 +1608,9 @@ http = |reqJson|
 
 encodeHttpRequest : HttpRequest -> Str
 encodeHttpRequest = |req| {
-	headersList =
+	headersObj =
 		req.headers
-			|> List.map(|h| "{\"name\":\"${escape(h.name)}\",\"value\":\"${escape(h.value)}\"}")
+			|> List.map(|h| "\"${escape(h.name)}\":\"${escape(h.value)}\"")
 			|> Str.join_with(",")
 	secretHeadersList =
 		req.secretHeaders
@@ -1620,7 +1621,7 @@ encodeHttpRequest = |req| {
 				},
 			)
 			|> Str.join_with(",")
-	"{\"url\":\"${escape(req.url)}\",\"method\":\"${escape(req.method)}\",\"headers\":[${headersList}],\"body\":\"${escape(req.body)}\",\"secretHeaders\":[${secretHeadersList}]}"
+	"{\"url\":\"${escape(req.url)}\",\"method\":\"${escape(req.method)}\",\"headers\":{${headersObj}},\"body\":\"${escape(req.body)}\",\"secretHeaders\":[${secretHeadersList}]}"
 }
 
 ## Perform an outgoing HTTP request using a typed HttpRequest record.

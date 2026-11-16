@@ -79,6 +79,15 @@ fn perform_wasi_http_request(req_str: &str, body_slice: &[u8]) -> Result<(u16, V
                 builder = builder.header(k.as_str(), s);
             }
         }
+    } else if let Some(headers_arr) = val.get("headers").and_then(|h| h.as_array()) {
+        for h in headers_arr {
+            if let (Some(k), Some(v)) = (
+                h.get("name").and_then(|n| n.as_str()),
+                h.get("value").and_then(|v| v.as_str()),
+            ) {
+                builder = builder.header(k, v);
+            }
+        }
     }
 
     if let Some(headers_arr) = val.get("secretHeaders").and_then(|h| h.as_array()) {
@@ -1880,8 +1889,26 @@ pub unsafe extern "C" fn rocFxHttpRequest(
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut injected_headers: Vec<(String, String)> = Vec::new();
+        let mut standard_headers: Vec<(String, String)> = Vec::new();
 
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(req_str) {
+            if let Some(headers_obj) = val.get("headers").and_then(|h| h.as_object()) {
+                for (k, v) in headers_obj {
+                    if let Some(s) = v.as_str() {
+                        standard_headers.push((k.clone(), s.to_string()));
+                    }
+                }
+            } else if let Some(headers_arr) = val.get("headers").and_then(|h| h.as_array()) {
+                for h in headers_arr {
+                    if let (Some(k), Some(v)) = (
+                        h.get("name").and_then(|n| n.as_str()),
+                        h.get("value").and_then(|v| v.as_str()),
+                    ) {
+                        standard_headers.push((k.to_string(), v.to_string()));
+                    }
+                }
+            }
+
             if let Some(headers) = val.get("secretHeaders").and_then(|h| h.as_array()) {
                 for h in headers {
                     let name = h
@@ -1900,6 +1927,7 @@ pub unsafe extern "C" fn rocFxHttpRequest(
 
         let resp_payload = serde_json::json!({
             "status": 200,
+            "headers_count": standard_headers.len(),
             "injected_headers_count": injected_headers.len(),
         })
         .to_string();
@@ -4001,6 +4029,52 @@ mod tests {
                 .expect("http request failed")
         };
         assert!(http_res.as_str().contains("\"injected_headers_count\":1"));
+    }
+
+    #[test]
+    fn test_http_request_headers_object_map() {
+        let req_json = serde_json::json!({
+            "url": "https://api.openai.com/v1/chat/completions",
+            "method": "POST",
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer sk-test-token"
+            },
+            "body": "{\"model\": \"gpt-4\"}"
+        })
+        .to_string();
+        let roc_req = RocStr::from_str(&req_json);
+        let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let res = unsafe {
+            rocFxHttpRequest(&roc_req, out.as_mut_ptr());
+            out.assume_init()
+                .into_result()
+                .expect("http request failed")
+        };
+        assert!(res.as_str().contains("\"headers_count\":2"));
+    }
+
+    #[test]
+    fn test_http_request_headers_array_fallback() {
+        let req_json = serde_json::json!({
+            "url": "https://api.openai.com/v1/chat/completions",
+            "method": "POST",
+            "headers": [
+                { "name": "Content-Type", "value": "application/json" },
+                { "name": "Authorization", "value": "Bearer sk-test-token" }
+            ],
+            "body": "{\"model\": \"gpt-4\"}"
+        })
+        .to_string();
+        let roc_req = RocStr::from_str(&req_json);
+        let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
+        let res = unsafe {
+            rocFxHttpRequest(&roc_req, out.as_mut_ptr());
+            out.assume_init()
+                .into_result()
+                .expect("http request failed")
+        };
+        assert!(res.as_str().contains("\"headers_count\":2"));
     }
 
     #[test]

@@ -24,7 +24,7 @@ The simplest, zero-boilerplate way to define a durable agent in Roc:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.1/roc-golem-v1.4.1__vTYxFnYV2NPJTlpiw0sa17XykG3lt4HctD9jFbVeVa4.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.2/roc-golem-v1.4.2__yZx-BvxRbj5gwqOakBkiTTinQsa5DumTiiVO6kYp4rk.tar.zst",
 }
 
 import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]
@@ -325,8 +325,7 @@ The host parses `path_prefix` into literal segments and `{var}` path variables (
 Use `Golem.httpRequest` with the strongly-typed `HttpRequest` record:
 
 ```roc
-import pf.Golem exposing [httpRequest]
-import pf.Types exposing [HttpRequest]
+import pf.Golem exposing [httpRequest, HttpRequest]
 
 req : HttpRequest
 req = {
@@ -339,6 +338,9 @@ req = {
 
 Effect.map(httpRequest(req), |res| ...)
 ```
+
+> [!NOTE]
+> **Outbound Headers Serialization (v1.4.2+)**: `encodeHttpRequest` serializes `headers` into a standard JSON object map (`{"Header": "Value"}`). The Golem host runtime defensively supports both JSON object maps and JSON arrays of `{"name": "...", "value": "..."}` objects.
 
 ---
 
@@ -468,7 +470,7 @@ temperature = parseF64Or(tempStr, 0.7.F64)
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v1.4.1 thesparq/roc-golem
+   ./tooling/build.sh package v1.4.2 thesparq/roc-golem
    ```
 
 4. **Build & Deploy Agent**:

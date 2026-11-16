@@ -4,6 +4,16 @@ All notable changes to roc-golem are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] — 2026-11-16
+
+### Fixed
+- **Outbound HTTP Headers JSON Serialization**: Fixed a serialization format mismatch where `encodeHttpRequest` in `platform/Golem.roc` serialized `headers` as a JSON array of `{"name": "...", "value": "..."}` objects, while the host runtime expected a JSON object map (`{"Header": "Value"}`). Consequently, headers were silently dropped by the WASI HTTP builder. `encodeHttpRequest` now correctly serializes headers as a JSON object map.
+- **Defensive Outbound HTTP Headers Parsing in Host**: Updated `perform_wasi_http_request` in `host/src/lib.rs` to support both JSON key-value maps and JSON arrays of `{"name": "...", "value": "..."}` objects as a defensive fallback, ensuring complete backward compatibility with older compiled guest components.
+
+### Added
+- **Export of `encodeHttpRequest`**: Exported `encodeHttpRequest : HttpRequest -> Str` directly in `platform/Golem.roc` under the HTTP primitives section.
+- **Test Coverage**: Added host unit tests (`test_http_request_headers_object_map` and `test_http_request_headers_array_fallback`) in `host/src/lib.rs`, and guest serialization validation in `tests/effectful_agent.roc`.
+
 ## [1.4.1] — 2026-11-16
 
 ### Added
