@@ -6,6 +6,7 @@ platform "golem"
 		Golem,
 		Types,
 		Json,
+		Parse,
 		Effect,
 	]
 	packages {}
@@ -90,6 +91,7 @@ import Types exposing [
 ]
 import Golem
 import Effect
+import Parse
 import Json exposing [encode, decode, decode_or, escape]
 
 ## Entry point for agent initialization called by Rust Host

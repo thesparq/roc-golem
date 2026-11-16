@@ -24,7 +24,7 @@ The simplest, zero-boilerplate way to define a durable agent in Roc:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.1/kkxgt917ueo-FU73mGOOmrMaCZYXI_Xk0Uv8nHhD8ZQ.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.3.0/L7bmHONemxVIiDtXGUlLuJwKIAwjEJZq6-LNYZ7kEEA.tar.zst",
 }
 
 import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]
@@ -168,27 +168,37 @@ handleProcess = |input|
 
 ---
 
-### 4. Multi-Agent Bundling in One Wasm Component (`bundleAll` & `bundle2`)
+### 4. Multi-Agent Bundling in One Wasm Component (`bundle2`–`bundle5`, `bundleWith`)
 
-Combine multiple agents with completely different state types into a single WebAssembly component using `bundleAll` and `erase` (or `bundle2`):
+Combine multiple agents with completely different state types into a single WebAssembly component using distinct typed combinators (`bundle2`, `bundle3`, `bundle4`, `bundle5`) or pipeline chaining (`bundleWith`):
 
 ```roc
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [bundleAll, erase]
-import ReleaseCoordinator
-import DiagnosticsWorker
+import pf.Golem exposing [bundle3, bundleWith]
+import BookingCoordinator
+import PricingWorker
 import AuditWorker
 
-agent = bundleAll([
-    erase(ReleaseCoordinator.agent),
-    erase(DiagnosticsWorker.agent),
-    erase(AuditWorker.agent),
-])
+# Bundling via distinct typed combinator:
+agent = bundle3(
+    BookingCoordinator.agent,
+    PricingWorker.agent,
+    AuditWorker.agent,
+)
+
+# Or via pipeline chaining:
+agent =
+    BookingCoordinator.agent
+        |> bundleWith(PricingWorker.agent)
+        |> bundleWith(AuditWorker.agent)
 ```
 
+> [!IMPORTANT]
+> **Compiler Monomorphization Safeguard**: Avoid placing multiple erased agents in a `List(Agent({}))` literal (such as `bundleAll([erase(a), erase(b), erase(c)])`) if they share similar closure signatures. Placing erased agents into a homogeneous list forces Roc's lambda-set solver into a recursive unification loop, which can cause severe build slowdowns or compiler timeouts. Always prefer `bundle2`–`bundle5` or `bundleWith`.
+
 - Golem worker instances are created for a specific agent type (`golem agent new '<agent-type>()'`).
-- Dispatch automatically routes initialization and method invocations to the designated agent.
+- Dispatch automatically routes initialization, methods, and tool calls to the designated agent by metadata name.
 
 ---
 
@@ -349,6 +359,32 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
 
 ---
 
+## Standardized Numerical Parsing (`pf.Parse` & `pf.Golem`)
+
+`roc-golem` provides comprehensive numeric parsing functions with ASCII digit extraction, overflow bounds checks, whitespace trimming, and optional sign (`+`, `-`) handling:
+
+```roc
+import pf.Golem exposing [
+    parseU64, parseU32, parseU16, parseU8, parseU64Or,
+    parseI64, parseI32, parseI16, parseI8, parseI64Or,
+    parseF64, parseF64Or,
+]
+
+# Parsing unsigned numbers with explicit overflow detection:
+countRes = parseU64("18446744073709551615") # Ok(18446744073709551615.U64)
+overflowRes = parseU64("18446744073709551616") # Err(Overflow)
+invalidRes = parseU64("not_a_number") # Err(InvalidNumStr)
+
+# Signed integer parsing with sign preservation:
+balanceRes = parseI64("-10500") # Ok(-10500.I64)
+
+# Fallback helpers for configuration & query parameters:
+port = parseU64Or(configStr, 8080.U64)
+temperature = parseF64Or(tempStr, 0.7.F64)
+```
+
+---
+
 ## Build & Testing Verification
 
 1. **Pre-compile Platform Host**:
@@ -364,7 +400,7 @@ To ensure API tokens, cryptographic keys, and database passwords never reside in
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v1.2.1 thesparq/roc-golem
+   ./tooling/build.sh package v1.3.0 thesparq/roc-golem
    ```
 
 4. **Build & Deploy Agent**:

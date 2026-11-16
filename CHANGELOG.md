@@ -4,6 +4,14 @@ All notable changes to roc-golem are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-11-16
+
+### Added
+- **Multi-Agent Distinct Bundling Combinators**: Added `bundle3`, `bundle4`, `bundle5`, and `bundleWith` pipeline chaining combinator in `platform/Golem.roc` to prevent Roc compiler monomorphization explosion when bundling multiple agents sharing identical closure signatures.
+- **Standardized Numerical Parsing Module (`pf.Parse` & `pf.Golem`)**: Added bounds-checked integer parsing (`parseU64`, `parseU32`, `parseU16`, `parseU8`, `parseI64`, `parseI32`, `parseI16`, `parseI8`), float parsing (`parseF64`), and safe fallback helpers (`parseU64Or`, `parseU32Or`, `parseI64Or`, `parseI32Or`, `parseF64Or`) with overflow detection, ASCII digit parsing, whitespace trimming, and optional sign (`+`, `-`) handling.
+- **Test Suites**: Added `tests/parse_numbers.roc` (62 tests) and `tests/multi_agent_bundle.roc` (9 tests).
+- **Architecture Specification**: Added design and root-cause analysis specification in `docs/specs/19-multi-agent-bundling-and-numeric-parsing.md`.
+
 ## [1.2.1] — 2026-11-15
 
 ### Added

@@ -14,6 +14,10 @@ module [
 	build,
 	bundle,
 	bundle2,
+	bundle3,
+	bundle4,
+	bundle5,
+	bundleWith,
 	bundleAll,
 	erase,
 
@@ -159,7 +163,25 @@ module [
 	traceId,
 	spanId,
 	traceHeaders,
+
+	# --- Numerical Parsing ---
+	parseU64,
+	parseU32,
+	parseU16,
+	parseU8,
+	parseU64Or,
+	parseU32Or,
+	parseI64,
+	parseI32,
+	parseI16,
+	parseI8,
+	parseI64Or,
+	parseI32Or,
+	parseF64,
+	parseF64Or,
 ]
+
+import Parse
 
 import Types exposing [
 	Result,
@@ -1174,22 +1196,66 @@ build = |spec| {
 	{ agents: [erased] }
 }
 
-## Bundle multiple agents into a single Wasm component
+## Bundle 2 distinct typed agents into a single Wasm component.
+## Each argument is specialized independently to avoid closure monomorphization collisions.
+bundle2 : Agent(s1), Agent(s2) -> Agent({})
+bundle2 = |a, b| {
+	agents: List.concat(a.agents, b.agents),
+}
+
+## Bundle 3 distinct typed agents into a single Wasm component.
+## Each argument is specialized independently to avoid closure monomorphization collisions.
+bundle3 : Agent(s1), Agent(s2), Agent(s3) -> Agent({})
+bundle3 = |a, b, c| {
+	agents: List.concat(a.agents, List.concat(b.agents, c.agents)),
+}
+
+## Bundle 4 distinct typed agents into a single Wasm component.
+bundle4 : Agent(s1), Agent(s2), Agent(s3), Agent(s4) -> Agent({})
+bundle4 = |a, b, c, d| {
+	agents: List.concat(a.agents, List.concat(b.agents, List.concat(c.agents, d.agents))),
+}
+
+## Bundle 5 distinct typed agents into a single Wasm component.
+bundle5 : Agent(s1), Agent(s2), Agent(s3), Agent(s4), Agent(s5) -> Agent({})
+bundle5 = |a, b, c, d, e| {
+	agents: List.concat(
+		a.agents,
+		List.concat(
+			b.agents,
+			List.concat(
+				c.agents,
+				List.concat(d.agents, e.agents),
+			),
+		),
+	),
+}
+
+## Pipeline-friendly combinator for chaining multiple agents:
+## `coordinator |> Golem.bundleWith(pricingWorker) |> Golem.bundleWith(auditWorker)`
+bundleWith : Agent(s1), Agent(s2) -> Agent({})
+bundleWith = |a, b| {
+	agents: List.concat(a.agents, b.agents),
+}
+
+## Bundle multiple agents from a list into a single Wasm component.
+## Note: For heterogeneous agents, prefer `bundle2`, `bundle3`, `bundle4`, `bundle5`,
+## or pipeline chaining via `bundleWith` to avoid homogeneous list closure specialization.
 bundle : List(Agent({})) -> Agent({})
 bundle = |agentList| {
 	flattened = List.join_map(agentList, |a| a.agents)
 	{ agents: flattened }
 }
 
-## Synonym for bundle
+## Synonym for bundle.
+## Note: For heterogeneous agents, prefer `bundle2`–`bundle5` or `bundleWith`.
 bundleAll : List(Agent({})) -> Agent({})
 bundleAll = bundle
 
-bundle2 : Agent(_), Agent(_) -> Agent({})
-bundle2 = |a, b| {
-	{ agents: List.concat(a.agents, b.agents) }
-}
-
+## Erase an agent's phantom state type parameter to `Agent({})`.
+## Note: Avoid placing multiple erased agents in a `List(...)` literal if they share
+## identical closure signatures, as this can trigger recursive monomorphization loops.
+## Use `bundle2`–`bundle5` or `bundleWith` instead.
 erase : Agent(_) -> Agent({})
 erase = |a| { agents: a.agents }
 
@@ -1684,3 +1750,32 @@ httpStreamReadChunk = |handle, maxBytes|
 httpStreamClose : U32 -> Effect.Effect(Result({}, Str))
 httpStreamClose = |handle|
 	Effect.httpStreamClose(handle)
+
+## --- Numerical Parsing Re-exports ---
+parseU64 = Parse.parseU64
+
+parseU32 = Parse.parseU32
+
+parseU16 = Parse.parseU16
+
+parseU8 = Parse.parseU8
+
+parseU64Or = Parse.parseU64Or
+
+parseU32Or = Parse.parseU32Or
+
+parseI64 = Parse.parseI64
+
+parseI32 = Parse.parseI32
+
+parseI16 = Parse.parseI16
+
+parseI8 = Parse.parseI8
+
+parseI64Or = Parse.parseI64Or
+
+parseI32Or = Parse.parseI32Or
+
+parseF64 = Parse.parseF64
+
+parseF64Or = Parse.parseF64Or

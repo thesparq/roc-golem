@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.2.1/kkxgt917ueo-FU73mGOOmrMaCZYXI_Xk0Uv8nHhD8ZQ.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.3.0/L7bmHONemxVIiDtXGUlLuJwKIAwjEJZq6-LNYZ7kEEA.tar.zst",
 }
 
 import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
@@ -66,7 +66,7 @@ agent = Golem.agent({
 
 > [!TIP]
 > You can also use the canonical named archive URL:
-> `https://github.com/thesparq/roc-golem/releases/download/v1.2.1/roc-golem-v1.2.1.tar.zst`
+> `https://github.com/thesparq/roc-golem/releases/download/v1.3.0/roc-golem-v1.3.0.tar.zst`
 
 > **Developer Experience (DX) Features**:
 > - **Unified Tools**: Tool schema (`ToolDefinition`) and execution logic are defined together. Tool ID forwarding, JSON envelope wrapping, and dispatch are automatic.
@@ -80,23 +80,56 @@ For local platform development, you can point to the local path:
 app [agent] { pf: platform "../../platform/main.roc" }
 ```
 
-### 🤝 Multi-Agent Bundling & Zero-Serialization (v0.7.0+)
+### 🤝 Multi-Agent Bundling & Zero-Serialization (v1.2.1+)
 
-Combine multiple stateful or stateless (ephemeral) agents with distinct `State` types into a single WebAssembly component using `bundle2` or `bundleAll`:
+Combine multiple stateful or stateless (ephemeral) agents with distinct `State` types into a single WebAssembly component using distinct typed combinators (`bundle2`, `bundle3`, `bundle4`, `bundle5`) or pipeline chaining (`bundleWith`):
 
 ```roc
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [bundleAll, erase]
-import ReleaseCoordinator
-import DiagnosticsWorker
+import pf.Golem exposing [bundle3, bundleWith]
+import BookingCoordinator
+import PricingWorker
 import AuditWorker
 
-agent = bundleAll([
-    erase(ReleaseCoordinator.agent),
-    erase(DiagnosticsWorker.agent),
-    erase(AuditWorker.agent),
-])
+# Multi-agent bundling via distinct typed combinator:
+agent = bundle3(
+    BookingCoordinator.agent,
+    PricingWorker.agent,
+    AuditWorker.agent,
+)
+
+# Or via pipeline chaining:
+agent =
+    BookingCoordinator.agent
+        |> bundleWith(PricingWorker.agent)
+        |> bundleWith(AuditWorker.agent)
+```
+
+> [!TIP]
+> **Compiler Performance Tip**: Avoid constructing homogeneous `List(Agent({}))` literals with `erase` (such as `bundleAll([erase(a), erase(b), erase(c)])`) if the agents share identical closure signatures. Placing them in a homogeneous list causes Roc's lambda-set solver to recursively unify identical closure environments, leading to exponential build times. `bundle2`–`bundle5` and `bundleWith` specialize each agent independently, compiling multi-agent bundles in seconds.
+
+### 🔢 Standardized Numerical Parsing (`pf.Parse` & `pf.Golem`)
+
+`roc-golem` provides robust, bounds-checked numerical parsing with ASCII digit extraction, overflow detection, leading/trailing whitespace trimming, and optional sign (`+`, `-`) handling. Available via `import pf.Parse exposing [...]` or directly re-exported from `pf.Golem`:
+
+- **Unsigned Integers**: `parseU64`, `parseU32`, `parseU16`, `parseU8` &mdash; returns `Result(U*, [InvalidNumStr, Overflow])`.
+- **Signed Integers**: `parseI64`, `parseI32`, `parseI16`, `parseI8` &mdash; returns `Result(I*, [InvalidNumStr, Overflow])`.
+- **Floating Point**: `parseF64` &mdash; returns `Result(F64, [InvalidNumStr])`.
+- **Safe Fallback Helpers**: `parseU64Or(str, default)`, `parseU32Or`, `parseI64Or`, `parseI32Or`, `parseF64Or`.
+
+```roc
+import pf.Golem exposing [parseU64, parseI64, parseF64, parseU64Or]
+
+# Robust error handling
+match parseU64("18446744073709551615") {
+    Ok(val) => "Parsed: ${Str.inspect(val)}"
+    Err(Overflow) => "Value exceeds U64 bounds"
+    Err(InvalidNumStr) => "Not a valid unsigned integer"
+}
+
+# Safe defaults
+port = parseU64Or(configPortStr, 8080.U64)
 ```
 
 > [!NOTE]
@@ -180,6 +213,7 @@ roc-golem/
 │   ├── Types.roc               # Core data types (Metadata, ToolDefinition, ToolCall)
 │   ├── Effect.roc              # Low-level host effect declarations
 │   ├── Json.roc                # JSON serialization and decoding utilities
+│   ├── Parse.roc               # Bounds-checked numeric parsing & overflow detection
 │   └── targets/
 │       └── wasm32/
 │           └── libroc_golem_host.a # Pre-compiled host static library for wasm32
@@ -255,15 +289,15 @@ golem worker invoke "streaming/stream-worker-1" \
 ### Automatic GitHub Release (Recommended)
 1. Push a version tag to Git:
    ```bash
-   git tag v1.2.1
-   git push origin v1.2.1
+   git tag v1.3.0
+   git push origin v1.3.0
    ```
 2. GitHub Actions automatically builds the host, validates all agents, packages the `.tar.zst`, `.tar.br`, `.tar.gz` bundles with BLAKE3 hashes, and creates the GitHub release with ready-to-copy Roc code snippets!
 
 ### Local Release Packaging
 You can generate release tarballs locally at any time:
 ```bash
-./tooling/build.sh package v1.2.1 thesparq/roc-golem
+./tooling/build.sh package v1.3.0 thesparq/roc-golem
 ```
 Artifacts and `release_notes.md` will be placed in `dist/`.
 
