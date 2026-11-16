@@ -24,7 +24,7 @@ The simplest, zero-boilerplate way to define a durable agent in Roc:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.3.0/L7bmHONemxVIiDtXGUlLuJwKIAwjEJZq6-LNYZ7kEEA.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.0/yKtxbDE__Cg9sbRHpV4bC6tLQC9GdSXND4whgrknFqY.tar.zst",
 }
 
 import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]
@@ -64,7 +64,62 @@ agent = Golem.agent({
 
 ---
 
-### 2. Stateful Durable Agent (Builder Pattern)
+### 2. Effectful Tools & Host Effects in High-Level Agents (`v1.4.0+`)
+
+High-level `Golem.agent`, `Golem.agentWith`, and `Golem.ephemeral` natively support host effects (`now`, `rpcSchedule`, `httpRequest`, `getSecretHandle`, etc.) inside `onMessage` and tools:
+
+```roc
+import pf.Golem exposing [
+    Agent, Tool, agent, reply, readOnly, tool, effectfulTool,
+    runEffect!, now, param,
+]
+import pf.Effect exposing [map]
+
+# Pure and effectful tools freely mix in the same tool list:
+statusTool : Tool(State)
+statusTool = tool({
+    name: "status",
+    description: "Returns agent status",
+    params: [],
+    execute: |st, _| Ok("Active bookings: ${Str.inspect(st.count)}"),
+})
+
+# Effectful tool returning an Effect that automatically runs on the host:
+bookTool : Tool(State)
+bookTool = effectfulTool({
+    name: "book",
+    description: "Records a booking with host timestamp",
+    params: [param("guest", "Guest name")],
+    execute: |st, guest|
+        map(now, |ts|
+            Ok({
+                state: { count: st.count + 1.U64, lastUpdated: ts },
+                stateChanged: True,
+                output: "Booked for ${guest} at ${Str.inspect(ts)}",
+            })
+        ),
+})
+
+# onMessage can directly execute host effects using runEffect!:
+agent : Agent(State)
+agent = Golem.agent({
+    name: "booking-coordinator",
+    initial: { count: 0.U64, lastUpdated: 0.U64 },
+    tools: [statusTool, bookTool],
+    onMessage: |state, msg|
+        match msg {
+            "sync_now" => {
+                currentTime = runEffect!(now)
+                reply({ count: state.count, lastUpdated: currentTime }, "Synced at ${Str.inspect(currentTime)}")
+            }
+            _ => readOnly(state, "ok"),
+        },
+})
+```
+
+---
+
+### 3. Stateful Durable Agent (Builder Pattern)
 
 For advanced scenarios requiring custom serialization codecs, use `define`, `register`, and `registerReadOnly` with phantom-typed `Method(input, output)`:
 
@@ -134,7 +189,7 @@ handleStartEffectful = |state, input|
 
 ---
 
-### 3. Stateless Ephemeral Worker
+### 4. Stateless Ephemeral Worker
 
 For stateless tasks (log analysis, computation, formatting), use `defineEphemeral` and `registerEphemeral` (or `ephemeral`):
 
@@ -168,7 +223,7 @@ handleProcess = |input|
 
 ---
 
-### 4. Multi-Agent Bundling in One Wasm Component (`bundle2`–`bundle5`, `bundleWith`)
+### 5. Multi-Agent Bundling in One Wasm Component (`bundle2`–`bundle5`, `bundleWith`)
 
 Combine multiple agents with completely different state types into a single WebAssembly component using distinct typed combinators (`bundle2`, `bundle3`, `bundle4`, `bundle5`) or pipeline chaining (`bundleWith`):
 
@@ -400,7 +455,7 @@ temperature = parseF64Or(tempStr, 0.7.F64)
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v1.3.0 thesparq/roc-golem
+   ./tooling/build.sh package v1.4.0 thesparq/roc-golem
    ```
 
 4. **Build & Deploy Agent**:

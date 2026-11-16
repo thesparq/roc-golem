@@ -4,6 +4,16 @@ All notable changes to roc-golem are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-11-16
+
+### Added
+- **Effectful High-Level Agent & Tool API**: Enabled host effects (`now`, `rpcSchedule`, `httpRequest`, `getSecretHandle`, etc.) inside `Golem.agent`, `Golem.agentWith`, `Golem.ephemeral`, and `Tool(state)` closures without compiler type mismatches.
+- **Effectful Tool Constructors**: Added `effectfulTool`, `effectfulToolJson`, `effectfulStatelessTool`, and `effectfulStatelessToolJson` allowing tools to return `Effect.Effect(Result(...))` with automatic host execution.
+- **Host Effect Execution Primitive (`runEffect!`)**: Added `runEffect! : Effect.Effect(a) => a` in `platform/Golem.roc`, allowing agent authors to execute host effects directly within `onMessage` or custom tool handlers.
+- **Pure Tool Backward Compatibility**: Pure tool constructors (`tool`, `toolJson`, `statefulTool`, `statelessTool`, `statelessToolJson`) remain 100% supported and seamlessly unify with effectful tools in heterogeneous tool lists.
+- **Test Suite**: Added `tests/effectful_agent.roc` covering canonical agent construction with mixed pure/effectful tools and effectful `onMessage`.
+- **Architecture Specification**: Added design specification in `docs/specs/20-effectful-high-level-agent-api.md`.
+
 ## [1.3.0] — 2026-11-16
 
 ### Added

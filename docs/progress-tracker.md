@@ -2,14 +2,27 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Production Stable — Multi-Agent Bundling & v1.3.0 Release (2026-11-16)
+### Current Phase: Production Stable — Effectful High-Level Agent & Tool API & v1.4.0 Release (2026-11-16)
 
-Goal: Distinct typed bundling combinators (bundle2–bundle5, bundleWith) eliminating Roc monomorphization collisions, standardized numeric parsing (Parse module), reproducible packaging, and verification.
+Goal: Seamless host effect execution (`runEffect!`, `effectfulTool`, `effectfulStatelessTool`) in high-level agent APIs (`Golem.agent`, `Golem.agentWith`, `Golem.ephemeral`) eliminating type arrow mismatches between pure (`->`) and effectful (`=>`) closures.
 
-Status: **v1.3.0 Released & 100% Verified.** All 4 verification layers passing clean: 56 host unit tests, 133 Roc tests across 6 suites, consumer package smoke test, and release packaging.
+Status: **v1.4.0 Released & 100% Verified.** All 4 verification layers passing clean: 56 host unit tests, 143 Roc tests across 8 suites, consumer package smoke test, and release packaging.
 
 
 ## Done
+
+- **Effectful High-Level Agent & Tool API (2026-11-16)**:
+  - Addressed high-level API pure restriction: upgraded `Tool(state)` and `StatelessTool` to support effectful fat-arrow closures (`=>`), allowing agent authors to call host effects (`now`, `rpcSchedule`, `httpRequest`, `getSecretHandle`, etc.) inside tools.
+  - Added constructors `effectfulTool`, `effectfulToolJson`, `effectfulStatelessTool`, and `effectfulStatelessToolJson` to `platform/Golem.roc`.
+  - Added `runEffect! : Effect.Effect(a) => a` in `platform/Golem.roc` for direct host effect execution inside `onMessage` or custom handlers.
+  - Ensured 100% backward compatibility for all pure tools (`tool`, `toolJson`, `statefulTool`, `statelessTool`, `statelessToolJson`) which freely co-exist in heterogeneous tool lists.
+  - Authored comprehensive test suite `tests/effectful_agent.roc` (8 tests passing).
+  - All test suites passing: 56 host tests, 143 Roc tests across 8 test suites (`json_roundtrip.roc`, `spec_builder.roc`, `bundle.roc`, `dx_primitives.roc`, `parse_numbers.roc`, `multi_agent_bundle.roc`, `envelope.roc`, `effectful_agent.roc`).
+  - Formatted codebase (`cargo fmt --check` and `roc fmt --check` 100% clean).
+  - Packaged platform release `v1.4.0` with BLAKE3 checksums (`yKtxbDE__Cg9sbRHpV4bC6tLQC9GdSXND4whgrknFqY.tar.zst`).
+  - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.4.0.tar.zst`): 100% pass.
+  - Created architecture spec in `docs/specs/20-effectful-high-level-agent-api.md`.
+  - Updated documentation across `README.md`, `CHANGELOG.md`, `golem.yaml`, `tooling/build.sh`, `.github/workflows/release.yaml`, and skill files.
 
 - **Multi-Agent Distinct Bundling Combinators & Standardized Numeric Parsing (2026-11-16)**:
   - Addressed Roc compiler lambda-set monomorphization explosion when bundling multiple agents sharing identical closure signatures: added `bundle2`, `bundle3`, `bundle4`, `bundle5` and pipeline chaining `bundleWith` in `platform/Golem.roc`. Tested with 3, 4, and 5 agents in `tests/multi_agent_bundle.roc` (9 tests passing in ~460ms).

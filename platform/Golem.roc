@@ -44,6 +44,10 @@ module [
 	statelessTool,
 	statelessToolJson,
 	statelessToTool,
+	effectfulTool,
+	effectfulToolJson,
+	effectfulStatelessTool,
+	effectfulStatelessToolJson,
 	withTools,
 	withToolHandler,
 	withStatelessToolHandler,
@@ -54,9 +58,12 @@ module [
 	numberParam,
 	boolParam,
 	typedParam,
-	dispatchTool,
-	dispatchMessage,
-	dispatchStatelessTool,
+	dispatchTool!,
+	dispatchMessage!,
+	dispatchStatelessTool!,
+
+	# --- Host Effect Primitives ---
+	runEffect!,
 
 	# --- Response Primitives ---
 	reply,
@@ -251,16 +258,16 @@ Agent(state) : {
 	agents : List(ErasedAgent),
 }
 
-## Unified tool declaration with execution logic
+## Unified tool declaration with execution logic (supports pure and effectful tools)
 Tool(state) : {
 	definition : ToolDefinition,
-	execute : state, Str -> Result({ state : state, stateChanged : Bool, output : Str }, Str),
+	execute : state, Str => Result({ state : state, stateChanged : Bool, output : Str }, Str),
 }
 
-## Stateless tool declaration
+## Stateless tool declaration (supports pure and effectful stateless tools)
 StatelessTool : {
 	definition : ToolDefinition,
-	execute : Str -> Result(Str, Str),
+	execute : Str => Result(Str, Str),
 }
 
 ## Construct a read-only tool that queries state
@@ -320,7 +327,7 @@ statefulTool = |cfg| {
 		description: cfg.description,
 		parameters: cfg.params,
 	},
-	execute: cfg.execute,
+	execute: |st, args| (cfg.execute)(st, args),
 }
 
 ## Construct a stateless tool
@@ -337,7 +344,7 @@ statelessTool = |cfg| {
 		description: cfg.description,
 		parameters: cfg.params,
 	},
-	execute: cfg.execute,
+	execute: |args| (cfg.execute)(args),
 }
 
 ## Construct a stateless tool that returns JSON
@@ -371,6 +378,95 @@ statelessToTool = |st| {
 			Ok(output) => Ok({ state, stateChanged: False, output })
 			Err(err) => Err(err)
 		},
+}
+
+## Construct a stateful tool whose execute function returns an Effect
+effectfulTool :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : state, Str -> Effect.Effect(Result({ state : state, stateChanged : Bool, output : Str }, Str)),
+	} -> Tool(state)
+effectfulTool = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: |st, args| {
+		eff = (cfg.execute)(st, args)
+		Effect.run!(eff)
+	},
+}
+
+## Construct a stateful tool returning JSON whose execute function returns an Effect
+effectfulToolJson :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : state, Str -> Effect.Effect(Result({ state : state, stateChanged : Bool, output : a }, Str)),
+	} -> Tool(state)
+		where [a.Json.Encodable([])]
+effectfulToolJson = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: |st, args| {
+		eff = (cfg.execute)(st, args)
+		match Effect.run!(eff) {
+			Ok({ state, stateChanged, output }) =>
+				Ok({ state, stateChanged, output: Json.to_str(output) })
+			Err(err) => Err(err)
+		}
+	},
+}
+
+## Construct a stateless tool whose execute function returns an Effect
+effectfulStatelessTool :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : Str -> Effect.Effect(Result(Str, Str)),
+	} -> StatelessTool
+effectfulStatelessTool = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: |args| {
+		eff = (cfg.execute)(args)
+		Effect.run!(eff)
+	},
+}
+
+## Construct a stateless tool returning JSON whose execute function returns an Effect
+effectfulStatelessToolJson :
+	{
+		name : Str,
+		description : Str,
+		params : List(ToolParameter),
+		execute : Str -> Effect.Effect(Result(a, Str)),
+	} -> StatelessTool
+		where [a.Json.Encodable([])]
+effectfulStatelessToolJson = |cfg| {
+	definition: {
+		name: cfg.name,
+		description: cfg.description,
+		parameters: cfg.params,
+	},
+	execute: |args| {
+		eff = (cfg.execute)(args)
+		match Effect.run!(eff) {
+			Ok(val) => Ok(Json.to_str(val))
+			Err(err) => Err(err)
+		}
+	},
 }
 
 ## Shorthand constructor for required string tool parameter
@@ -467,10 +563,10 @@ findStatelessTool = |toolList, targetName|
 			}
 	}
 
-## Pure dispatcher for tool invocations
-dispatchTool :
-	List(Tool(state)), state, ToolCall, (state -> Str) -> Result({ nextStateJson : Str, stateChanged : Bool, result : ToolResult }, Str)
-dispatchTool = |tools, st, call, serializeState|
+## Dispatcher for tool invocations (pure or effectful)
+dispatchTool! :
+	List(Tool(state)), state, ToolCall, (state -> Str) => Result({ nextStateJson : Str, stateChanged : Bool, result : ToolResult }, Str)
+dispatchTool! = |tools, st, call, serializeState|
 	match findTool(tools, call.name) {
 		Err(_) =>
 			Ok({
@@ -514,10 +610,10 @@ dispatchTool = |tools, st, call, serializeState|
 			}
 	}
 
-## Pure dispatcher for message invocations
-dispatchMessage :
-	(state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str)), state, Str, (state -> Str) -> Result({ nextStateJson : Str, stateChanged : Bool, response : Str }, Str)
-dispatchMessage = |onMessage, st, msgStr, serializeState|
+## Dispatcher for message invocations (pure or effectful)
+dispatchMessage! :
+	(state, Str => Result({ state : state, stateChanged : Bool, response : Str }, Str)), state, Str, (state -> Str) => Result({ nextStateJson : Str, stateChanged : Bool, response : Str }, Str)
+dispatchMessage! = |onMessage, st, msgStr, serializeState|
 	match onMessage(st, msgStr) {
 		Ok(res) => {
 			nextStateJson =
@@ -535,10 +631,10 @@ dispatchMessage = |onMessage, st, msgStr, serializeState|
 		Err(err) => Err(err)
 	}
 
-## Pure dispatcher for stateless tool invocations
-dispatchStatelessTool :
-	List(StatelessTool), ToolCall -> Result({ nextStateJson : Str, stateChanged : Bool, result : ToolResult }, Str)
-dispatchStatelessTool = |tools, call|
+## Dispatcher for stateless tool invocations (pure or effectful)
+dispatchStatelessTool! :
+	List(StatelessTool), ToolCall => Result({ nextStateJson : Str, stateChanged : Bool, result : ToolResult }, Str)
+dispatchStatelessTool! = |tools, call|
 	match findStatelessTool(tools, call.name) {
 		Err(_) =>
 			Ok({
@@ -582,7 +678,7 @@ agentWith :
 		version : Str,
 		description : Str,
 		initial : state,
-		onMessage : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str),
+		onMessage : state, Str => Result({ state : state, stateChanged : Bool, response : Str }, Str),
 		tools : List(Tool(state)),
 		serializeState : state -> Str,
 		deserializeState : Str -> Result(state, Str),
@@ -658,12 +754,12 @@ agentWith = |cfg| {
 		handleToolCall: |stateJson, call|
 			match (cfg.deserializeState)(stateJson) {
 				Err(e) => Err("Failed to deserialize state: ${e}")
-				Ok(st) => dispatchTool(cfg.tools, st, call, cfg.serializeState)
+				Ok(st) => dispatchTool!(cfg.tools, st, call, cfg.serializeState)
 			},
 		handleMessage: |stateJson, msgStr|
 			match (cfg.deserializeState)(stateJson) {
 				Err(e) => Err("Failed to deserialize state: ${e}")
-				Ok(st) => dispatchMessage(cfg.onMessage, st, msgStr, cfg.serializeState)
+				Ok(st) => dispatchMessage!(cfg.onMessage, st, msgStr, cfg.serializeState)
 			},
 	}
 	{ agents: [erased] }
@@ -674,7 +770,7 @@ agent :
 	{
 		name : Str,
 		initial : state,
-		onMessage : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str),
+		onMessage : state, Str => Result({ state : state, stateChanged : Bool, response : Str }, Str),
 		tools : List(Tool(state)),
 	} -> Agent(state)
 		where [state.Json.Encodable([]), state.Json.Parseable([InvalidJson(Str), ..errs])]
@@ -700,7 +796,7 @@ simpleAgent :
 	{
 		name : Str,
 		initial : state,
-		onMessage : state, Str -> Result({ state : state, stateChanged : Bool, response : Str }, Str),
+		onMessage : state, Str => Result({ state : state, stateChanged : Bool, response : Str }, Str),
 	} -> Agent(state)
 		where [state.Json.Encodable([]), state.Json.Parseable([InvalidJson(Str), ..errs])]
 simpleAgent = |cfg|
@@ -715,7 +811,7 @@ simpleAgent = |cfg|
 ephemeral :
 	{
 		name : Str,
-		onMessage : Str -> Result(Str, Str),
+		onMessage : Str => Result(Str, Str),
 		tools : List(StatelessTool),
 	} -> Agent({})
 ephemeral = |cfg| {
@@ -745,7 +841,7 @@ ephemeral = |cfg| {
 					}
 			},
 		handleToolCall: |_stateJson, call|
-			dispatchStatelessTool(cfg.tools, call),
+			dispatchStatelessTool!(cfg.tools, call),
 		handleMessage: |_stateJson, msgStr|
 			match (cfg.onMessage)(msgStr) {
 				Ok(response) => Ok({ nextStateJson: "", stateChanged: False, response })
@@ -759,7 +855,7 @@ ephemeral = |cfg| {
 simpleEphemeral :
 	{
 		name : Str,
-		onMessage : Str -> Result(Str, Str),
+		onMessage : Str => Result(Str, Str),
 	} -> Agent({})
 simpleEphemeral = |cfg|
 	ephemeral({
@@ -1779,3 +1875,7 @@ parseI32Or = Parse.parseI32Or
 parseF64 = Parse.parseF64
 
 parseF64Or = Parse.parseF64Or
+
+## Execute a Golem host effect inside an effectful function (closure with fat arrow `=>`)
+runEffect! : Effect.Effect(a) => a
+runEffect! = |eff| Effect.run!(eff)

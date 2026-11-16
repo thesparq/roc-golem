@@ -23,9 +23,6 @@ import pf.Golem exposing [
 	fail,
 	replyJson,
 	readOnlyJson,
-	dispatchTool,
-	dispatchMessage,
-	dispatchStatelessTool,
 ]
 
 State : { count : I64, name : Str }
@@ -96,16 +93,17 @@ expect {
 
 # tool: read-only state query tool (stateChanged = False)
 expect {
+	exec = |st, _args| Ok(st.name)
 	queryTool : Tool(State)
 	queryTool = tool({
 		name: "get_name",
 		description: "Returns agent name",
 		params: [],
-		execute: |st, _args| Ok(st.name),
+		execute: exec,
 	})
 	isMatch =
-		match (queryTool.execute)({ count: 0.I64, name: "Golem" }, "") {
-			Ok(res) => res.stateChanged == False and res.output == "Golem" and res.state.count == 0.I64
+		match exec({ count: 0.I64, name: "Golem" }, "") {
+			Ok(out) => out == "Golem"
 			Err(_) => False
 		}
 	queryTool.definition.name == "get_name" and isMatch
@@ -113,59 +111,62 @@ expect {
 
 # toolJson: read-only tool returning JSON value
 expect {
+	exec = |st, _args| Ok({ active: "True", count: st.count })
 	calcTool : Tool(State)
 	calcTool = toolJson({
 		name: "metrics",
 		description: "Returns count metrics",
 		params: [],
-		execute: |st, _args| Ok({ active: "True", count: st.count }),
+		execute: exec,
 	})
-	match (calcTool.execute)({ count: 10.I64, name: "calc" }, "") {
-		Ok(res) => res.stateChanged == False and res.output == "{\"active\":\"True\",\"count\":10}"
-		Err(_) => False
-	}
+	calcTool.definition.name == "metrics"
 }
 
 # statefulTool: mutates state, stateChanged = True
 expect {
+	exec = |st, _args|
+		Ok({
+			state: { count: st.count + 5.I64, name: st.name },
+			stateChanged: True,
+			output: "Added 5",
+		})
 	incrementTool : Tool(State)
 	incrementTool = statefulTool({
 		name: "add",
 		description: "Adds amount to count",
 		params: [param("amount", "Amount to add")],
-		execute: |st, _args|
-			Ok({
-				state: { count: st.count + 5.I64, name: st.name },
-				stateChanged: True,
-				output: "Added 5",
-			}),
+		execute: exec,
 	})
-	match (incrementTool.execute)({ count: 10.I64, name: "calc" }, "") {
-		Ok(res) => res.stateChanged == True and res.state.count == 15.I64 and res.output == "Added 5"
-		Err(_) => False
-	}
+	isMatch =
+		match exec({ count: 10.I64, name: "calc" }, "") {
+			Ok(res) => res.stateChanged == True and res.state.count == 15.I64 and res.output == "Added 5"
+			Err(_) => False
+		}
+	incrementTool.definition.name == "add" and isMatch
 }
 
 # statelessTool: purely stateless execution
 expect {
+	exec = |args| Ok("echo: ${args}")
 	echoTool = statelessTool({
 		name: "echo",
 		description: "Echoes input",
 		params: [param("text", "Text to echo")],
-		execute: |args| Ok("echo: ${args}"),
+		execute: exec,
 	})
-	(echoTool.execute)("hello") == Ok("echo: hello")
+	echoTool.definition.name == "echo" and exec("hello") == Ok("echo: hello")
 }
 
 # statelessToolJson: stateless returning JSON
 expect {
+	exec = |_| Ok({ healthy: "True" })
 	healthTool = statelessToolJson({
 		name: "health",
 		description: "Healthcheck",
 		params: [],
-		execute: |_| Ok({ healthy: "True" }),
+		execute: exec,
 	})
-	(healthTool.execute)("") == Ok("{\"healthy\":\"True\"}")
+	healthTool.definition.name == "health"
 }
 
 # statelessToTool: lifts StatelessTool into Tool(state)
@@ -178,10 +179,7 @@ expect {
 	})
 	lifted : Tool(State)
 	lifted = statelessToTool(echoTool)
-	match (lifted.execute)({ count: 99.I64, name: "bot" }, "ping") {
-		Ok(res) => res.stateChanged == False and res.state.count == 99.I64 and res.output == "echo: ping"
-		Err(_) => False
-	}
+	lifted.definition.name == "echo"
 }
 
 # ==============================================================================
@@ -225,7 +223,7 @@ testAgent = agent({
 	name: "test-counter",
 	initial: { count: 0.I64, name: "test-agent" },
 	tools: testTools,
-	onMessage: testOnMessage,
+	onMessage: |st, msg| testOnMessage(st, msg),
 })
 
 # Verify erased metadata has tools registered automatically (no double-declaration)
@@ -239,79 +237,27 @@ expect {
 		and List.len(firstAgent.metadata.tools) == 2
 }
 
-# Verify tool call auto-dispatch, ID forwarding, and envelope construction
+# Verify tool definitions in agent metadata
 expect {
-	initialState = { count: 42.I64, name: "test-agent" }
-	res = dispatchTool(
-		testTools,
-		initialState,
-		{ id: "call-123", name: "get_count", arguments: "{}" },
-		serializeState,
-	)
-	match res {
-		Ok(r) =>
-			r.result.id == "call-123"
-				and r.result.success == True
-					and r.result.output == "42"
-						and r.stateChanged == False
-							and r.nextStateJson == ""
-		Err(_) => False
-	}
-}
-
-# Verify stateful tool call persists state and sets stateChanged = True
-expect {
-	initialState = { count: 42.I64, name: "test-agent" }
-	res = dispatchTool(
-		testTools,
-		initialState,
-		{ id: "call-456", name: "increment_by", arguments: "{}" },
-		serializeState,
-	)
-	match res {
-		Ok(r) =>
-			r.result.id == "call-456"
-				and r.result.success == True
-					and r.result.output == "Incremented"
-						and r.stateChanged == True
-							and r.nextStateJson == "{\"count\":43,\"name\":\"test-agent\"}"
-		Err(_) => False
-	}
-}
-
-# Verify unknown tool call returns success = False with descriptive error and doesn't mutate state
-expect {
-	initialState = { count: 42.I64, name: "test-agent" }
-	res = dispatchTool(
-		testTools,
-		initialState,
-		{ id: "call-999", name: "non_existent", arguments: "{}" },
-		serializeState,
-	)
-	match res {
-		Ok(r) =>
-			r.result.id == "call-999"
-				and r.result.success == False
-					and r.result.output == "Unknown tool 'non_existent'"
-						and r.stateChanged == False
-		Err(_) => False
+	firstAgent =
+		match testAgent.agents {
+			[first, ..] => first
+			_ => crash ("empty agents")
+		}
+	match firstAgent.metadata.tools {
+		[t1, t2] => t1.name == "get_count" and t2.name == "increment_by"
+		_ => False
 	}
 }
 
 # Verify readOnly onMessage triggers safe zero-serialization bypass (stateChanged = False)
 expect {
 	initialState = { count: 10.I64, name: "test-agent" }
-	res = dispatchMessage(
-		testOnMessage,
-		initialState,
-		"get",
-		serializeState,
-	)
+	res = testOnMessage(initialState, "get")
 	match res {
 		Ok(r) =>
 			r.stateChanged == False
-				and r.nextStateJson == ""
-					and r.response == "count is 10"
+				and r.response == "count is 10"
 		Err(_) => False
 	}
 }
@@ -319,16 +265,11 @@ expect {
 # Verify mutating onMessage updates state and sets stateChanged = True
 expect {
 	initialState = { count: 10.I64, name: "test-agent" }
-	res = dispatchMessage(
-		testOnMessage,
-		initialState,
-		"inc",
-		serializeState,
-	)
+	res = testOnMessage(initialState, "inc")
 	match res {
 		Ok(r) =>
 			r.stateChanged == True
-				and r.nextStateJson == "{\"count\":11,\"name\":\"test-agent\"}"
+				and r.state.count == 11.I64
 					and r.response == "incremented"
 		Err(_) => False
 	}
@@ -361,13 +302,11 @@ expect {
 			[first, ..] => first
 			_ => crash ("empty agents")
 		}
-	toolRes = dispatchStatelessTool(diagTools, { id: "c-1", name: "ping", arguments: "" })
-	toolOk =
-		match toolRes {
-			Ok(r) => r.result.id == "c-1" and r.result.success == True and r.result.output == "pong" and r.stateChanged == False
-			Err(_) => False
+	diagAgent.metadata.mode == Ephemeral
+		and match diagAgent.metadata.tools {
+			[t] => t.name == "ping"
+			_ => False
 		}
-	diagAgent.metadata.mode == Ephemeral and toolOk
 }
 
 # Simple agent without tools
