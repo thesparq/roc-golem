@@ -24,7 +24,7 @@ The simplest, zero-boilerplate way to define a durable agent in Roc:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.0/yKtxbDE__Cg9sbRHpV4bC6tLQC9GdSXND4whgrknFqY.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.1/R_vqlBFvierawpLae6SLv2hk7RGk3-POnPTztiG2PTY.tar.zst",
 }
 
 import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]
@@ -115,7 +115,18 @@ agent = Golem.agent({
             _ => readOnly(state, "ok"),
         },
 })
+    # Attach dynamic HTTP API mount for durable webhooks (v1.4.1+)
+    |> withAgentHttpMount({
+        pathPrefix: "/booking/{id}",
+        corsOrigins: ["*"],
+        webhookSuffix: "webhooks",
+    })
 ```
+
+> [!NOTE]
+> **Dynamic HTTP Webhook Endpoints (`withAgentHttpMount`)**: Golem Cloud requires agents to have an active HTTP API deployment or `httpMount` before calling `createWebhook` on durable promises. Pipeline chaining `|> withAgentHttpMount({ pathPrefix, corsOrigins, webhookSuffix })` attaches this cleanly to `Agent(state)` containers without dropping down to low-level builder pipelines.
+>
+> **Direct Platform Types**: In `v1.4.1+`, `HttpMount`, `HttpRequest`, `SecretHeader`, `SecretHandle`, `ToolDefinition`, `ToolParameter`, `ToolCall`, and `ToolResult` are exported directly by `pf.Golem`, so there is no need to import `pf.Types`.
 
 ---
 
@@ -455,7 +466,7 @@ temperature = parseF64Or(tempStr, 0.7.F64)
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v1.4.0 thesparq/roc-golem
+   ./tooling/build.sh package v1.4.1 thesparq/roc-golem
    ```
 
 4. **Build & Deploy Agent**:

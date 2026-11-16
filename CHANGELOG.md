@@ -4,6 +4,12 @@ All notable changes to roc-golem are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-11-16
+
+### Added
+- **Dynamic HTTP Webhook Endpoints (`withAgentHttpMount`)**: Added `withAgentHttpMount : Agent(state), HttpMount -> Agent(state)` in `platform/Golem.roc` to attach dynamic HTTP API deployment mounts and webhook endpoints to `Agent` containers (e.g. from `Golem.agent`, `Golem.agentWith`, `Golem.ephemeral`) cleanly satisfying Golem host requirements for `createWebhook`.
+- **Direct Type Exposure in `pf.Golem`**: Re-exported `HttpMount`, `HttpRequest`, `SecretHeader`, `SecretHandle`, `ToolDefinition`, `ToolParameter`, `ToolCall`, and `ToolResult` directly from `pf.Golem` module header exports so developers do not need to import both `pf.Golem` and `pf.Types`.
+
 ## [1.4.0] — 2026-11-16
 
 ### Added

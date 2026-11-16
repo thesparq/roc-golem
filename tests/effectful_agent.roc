@@ -1,6 +1,5 @@
 app [main] { pf: platform "../platform/main.roc" }
 
-import pf.Types exposing [Result, ToolCall]
 import pf.Golem exposing [
 	Agent,
 	Tool,
@@ -16,9 +15,14 @@ import pf.Golem exposing [
 	readOnly,
 	runEffect!,
 	now,
+	HttpMount,
+	HttpRequest,
+	SecretHeader,
+	SecretHandle,
+	wrapSecretHandle,
+	withAgentHttpMount,
 ]
 import pf.Effect exposing [Effect, map]
-import pf.Json
 
 BookingState : {
 	activeCount : U64,
@@ -87,6 +91,11 @@ bookingAgent = Golem.agent({
 				readOnly(state, "Unknown command")
 		},
 })
+	|> withAgentHttpMount({
+		pathPrefix: "/booking/{id}",
+		corsOrigins: ["*"],
+		webhookSuffix: "webhooks",
+	})
 
 # --- 4. Stateless effectful tool for ephemeral agent ---
 lookupTimeTool : StatelessTool
@@ -173,6 +182,41 @@ expect {
 
 expect {
 	(erasedEphemeral.init)("{}") == Ok("{}")
+}
+
+# Test 5: Verify withAgentHttpMount attaches dynamic HTTP mount to Agent container
+expect {
+	match erasedBooking.metadata.httpMount {
+		Some(mount) =>
+			mount.pathPrefix == "/booking/{id}"
+				and mount.webhookSuffix == "webhooks"
+					and mount.corsOrigins == ["*"]
+
+		None => False
+	}
+}
+
+# Test 6: Verify HttpRequest and SecretHeader exposed directly from pf.Golem
+expect {
+	secHeader : SecretHeader
+	secHeader = {
+		name: "Authorization",
+		prefix: "Bearer ",
+		handle: wrapSecretHandle(101.U32),
+	}
+	req : HttpRequest
+	req = {
+		url: "https://api.booking.example.com",
+		method: "POST",
+		headers: [
+			{ name: "Content-Type", value: "application/json" },
+		],
+		body: "{}",
+		secretHeaders: [secHeader],
+	}
+	req.url == "https://api.booking.example.com"
+		and secHeader.name == "Authorization"
+			and req.method == "POST"
 }
 
 main = bookingAgent

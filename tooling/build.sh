@@ -168,7 +168,7 @@ build_app() {
 }
 
 package_platform() {
-    local TAG="${1:-v1.4.0}"
+    local TAG="${1:-v1.4.1}"
     local REPO="${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
 
     if [[ ! -f "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a" || ! -f "$PRECOMPILED_HOST_A" ]]; then
@@ -201,7 +201,7 @@ case "$COMMAND" in
         ;;
     package)
         shift || true
-        package_platform "${1:-v1.4.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        package_platform "${1:-v1.4.1}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     release)
         shift || true
@@ -210,7 +210,7 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "canary_release"
-        package_platform "${1:-v1.4.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        package_platform "${1:-v1.4.1}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     counter|ai_tool|streaming_agent|canary_release)
         build_app "$COMMAND"
@@ -221,7 +221,7 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "canary_release"
-        package_platform "v1.4.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
+        package_platform "v1.4.1" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)
         if [[ -f "$COMMAND" ]]; then

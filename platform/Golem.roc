@@ -34,10 +34,15 @@ module [
 	registerEffectful,
 	registerEffectfulTyped,
 	withHttpMount,
+	withAgentHttpMount,
 
 	# --- Tool Helpers ---
 	Tool,
 	StatelessTool,
+	ToolDefinition,
+	ToolParameter,
+	ToolCall,
+	ToolResult,
 	tool,
 	toolJson,
 	statefulTool,
@@ -104,6 +109,8 @@ module [
 	rpcFireAndForgetBytesInstance,
 
 	# --- HTTP ---
+	HttpMount,
+	HttpRequest,
 	http,
 	httpRequest,
 	httpRequestBytes,
@@ -131,6 +138,8 @@ module [
 	blobPutBytes,
 
 	# --- Secrets ---
+	SecretHandle,
+	SecretHeader,
 	getSecretHandle,
 	revealSecret,
 	wrapSecretHandle,
@@ -195,18 +204,27 @@ import Types exposing [
 	Metadata,
 	MethodDeclaration,
 	AgentMode,
-	ToolDefinition,
-	ToolParameter,
-	ToolCall,
-	ToolResult,
 	PersistenceMode,
-	SecretHandle,
-	SecretHeader,
-	HttpRequest,
-	HttpMount,
 ]
 import Effect
 import Json as PlatformJson exposing [escape]
+
+## Type aliases re-exported from Types module for single-import developer experience
+HttpMount : Types.HttpMount
+
+HttpRequest : Types.HttpRequest
+
+SecretHeader : Types.SecretHeader
+
+SecretHandle : Types.SecretHandle
+
+ToolDefinition : Types.ToolDefinition
+
+ToolParameter : Types.ToolParameter
+
+ToolCall : Types.ToolCall
+
+ToolResult : Types.ToolResult
 
 ## Phantom-typed Method declaration
 Method(input, output) : {
@@ -911,6 +929,18 @@ defineEphemeral = |meta| {
 ## Attach HTTP mount configuration to agent spec
 withHttpMount : Spec(state), HttpMount -> Spec(state)
 withHttpMount = |spec, mount| { ..spec, httpMount: Some(mount) }
+
+## Attach HTTP mount configuration to an Agent container (e.g. from Golem.agent, agentWith, ephemeral)
+withAgentHttpMount : Agent(state), HttpMount -> Agent(state)
+withAgentHttpMount = |agentContainer, mount| {
+	agents: List.map(
+		agentContainer.agents,
+		|erased| {
+			..erased,
+			metadata: { ..erased.metadata, httpMount: Some(mount) },
+		},
+	),
+}
 
 ## Attach tool definitions to agent spec
 withTools : Spec(state), List(ToolDefinition) -> Spec(state)

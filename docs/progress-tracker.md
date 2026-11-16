@@ -2,16 +2,25 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Production Stable — Effectful High-Level Agent & Tool API & v1.4.0 Release (2026-11-16)
+### Current Phase: Production Stable — Dynamic HTTP Webhook Mounts & Direct Type Re-exports (v1.4.1 Release, 2026-11-16)
 
-Goal: Seamless host effect execution (`runEffect!`, `effectfulTool`, `effectfulStatelessTool`) in high-level agent APIs (`Golem.agent`, `Golem.agentWith`, `Golem.ephemeral`) eliminating type arrow mismatches between pure (`->`) and effectful (`=>`) closures.
+Goal: Expose `withAgentHttpMount` on `Agent(state)` containers for dynamic webhook endpoints (`host.wit`) and re-export common platform types (`HttpMount`, `HttpRequest`, `SecretHeader`, etc.) from `pf.Golem`.
 
-Status: **v1.4.0 Released & 100% Verified.** All 4 verification layers passing clean: 56 host unit tests, 143 Roc tests across 8 suites, consumer package smoke test, and release packaging.
+Status: **v1.4.1 Released & 100% Verified.** All 4 verification layers passing clean: 56 host unit tests, 145 Roc tests across 8 suites, consumer package smoke test, and release packaging.
 
 
 ## Done
 
-- **Effectful High-Level Agent & Tool API (2026-11-16)**:
+- **Dynamic HTTP Webhook Mounts & Direct Type Re-exports (v1.4.1 - 2026-11-16)**:
+  - Added `withAgentHttpMount : Agent(state), HttpMount -> Agent(state)` to attach dynamic HTTP API deployments and webhook endpoints to agent containers created via `Golem.agent`, `Golem.agentWith`, or `Golem.ephemeral`, satisfying Golem host requirements for `createWebhook`.
+  - Re-exported `HttpMount`, `HttpRequest`, `SecretHeader`, `SecretHandle`, `ToolDefinition`, `ToolParameter`, `ToolCall`, and `ToolResult` directly from `pf.Golem`'s module header exports, eliminating the need to import `pf.Types`.
+  - Resolved namespace redeclaration rules in `platform/Golem.roc` by aliasing re-exported types from `Types.` while keeping non-exported types in `import Types exposing [...]`.
+  - Updated `tests/effectful_agent.roc` with Test 5 (HTTP mount validation) and Test 6 (direct type imports), bringing test count to 10.
+  - All 145 Roc tests passing across 8 suites; all 56 host tests passing; `roc fmt` and `cargo fmt` / `clippy` 100% clean.
+  - Packaged platform release `v1.4.1` with BLAKE3 checksums (`R_vqlBFvierawpLae6SLv2hk7RGk3-POnPTztiG2PTY.tar.zst`).
+  - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.4.1.tar.zst`): 100% pass.
+
+- **Effectful High-Level Agent & Tool API (v1.4.0 - 2026-11-16)**:
   - Addressed high-level API pure restriction: upgraded `Tool(state)` and `StatelessTool` to support effectful fat-arrow closures (`=>`), allowing agent authors to call host effects (`now`, `rpcSchedule`, `httpRequest`, `getSecretHandle`, etc.) inside tools.
   - Added constructors `effectfulTool`, `effectfulToolJson`, `effectfulStatelessTool`, and `effectfulStatelessToolJson` to `platform/Golem.roc`.
   - Added `runEffect! : Effect.Effect(a) => a` in `platform/Golem.roc` for direct host effect execution inside `onMessage` or custom handlers.

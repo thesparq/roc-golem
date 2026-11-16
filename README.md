@@ -27,8 +27,9 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.0/yKtxbDE__Cg9sbRHpV4bC6tLQC9GdSXND4whgrknFqY.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.1/R_vqlBFvierawpLae6SLv2hk7RGk3-POnPTztiG2PTY.tar.zst",
 }
+```
 
 import pf.Golem exposing [Agent, agent, reply, readOnly, tool]
 
@@ -66,11 +67,13 @@ agent = Golem.agent({
 
 > [!TIP]
 > You can also use the canonical named archive URL:
-> `https://github.com/thesparq/roc-golem/releases/download/v1.4.0/roc-golem-v1.4.0.tar.zst`
+> `https://github.com/thesparq/roc-golem/releases/download/v1.4.1/roc-golem-v1.4.1.tar.zst`
 
 > **Developer Experience (DX) Features**:
 > - **Unified Tools**: Tool schema (`ToolDefinition`) and execution logic are defined together. Tool ID forwarding, JSON envelope wrapping, and dispatch are automatic.
 > - **Host Effects in High-Level API (v1.4.0+)**: Seamlessly invoke host effects (`runEffect!(now)`, `runEffect!(httpRequest(...))`, etc.) in `onMessage`, or construct effectful tools via `effectfulTool` / `effectfulStatelessTool`. Pure and effectful tools freely mix in the same tool list.
+> - **Dynamic HTTP Webhook Mounts (v1.4.1+)**: Cleanly attach dynamic HTTP API deployments and webhook endpoints to agent containers using `withAgentHttpMount` (`Agent(state), HttpMount -> Agent(state)`).
+> - **Direct Type Re-exports (v1.4.1+)**: All common types (`HttpMount`, `HttpRequest`, `SecretHeader`, `SecretHandle`, `ToolDefinition`, `ToolParameter`, `ToolCall`, `ToolResult`) are directly exposed from `pf.Golem` without needing companion `pf.Types` imports.
 > - **Expressive Response Primitives**: `reply` (state mutated, oplog commit), `readOnly` ($O(1)$ in-memory response, safe oplog bypass), `stay`, and `fail`.
 > - **Default Codecs**: Automatic JSON state serialization and deserialization without repetitive codec boilerplate.
 > - **Stateless Workers**: Write stateless workers via `Golem.ephemeral({ name, onMessage, tools })` with `{}` state and zero serialization overhead.
@@ -290,15 +293,15 @@ golem worker invoke "streaming/stream-worker-1" \
 ### Automatic GitHub Release (Recommended)
 1. Push a version tag to Git:
    ```bash
-   git tag v1.4.0
-   git push origin v1.4.0
+   git tag v1.4.1
+   git push origin v1.4.1
    ```
 2. GitHub Actions automatically builds the host, validates all agents, packages the `.tar.zst`, `.tar.br`, `.tar.gz` bundles with BLAKE3 hashes, and creates the GitHub release with ready-to-copy Roc code snippets!
 
 ### Local Release Packaging
 You can generate release tarballs locally at any time:
 ```bash
-./tooling/build.sh package v1.4.0 thesparq/roc-golem
+./tooling/build.sh package v1.4.1 thesparq/roc-golem
 ```
 Artifacts and `release_notes.md` will be placed in `dist/`.
 
