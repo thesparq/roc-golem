@@ -24,7 +24,7 @@ The simplest, zero-boilerplate way to define a durable agent in Roc:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.2/roc-golem-v1.4.2__yZx-BvxRbj5gwqOakBkiTTinQsa5DumTiiVO6kYp4rk.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.3/roc-golem-v1.4.3__2GmoYXoEV7NScPfqt02Eom1X6FSt6j4dcMN447hZefw.tar.zst",
 }
 
 import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]
@@ -340,7 +340,7 @@ Effect.map(httpRequest(req), |res| ...)
 ```
 
 > [!NOTE]
-> **Outbound Headers Serialization (v1.4.2+)**: `encodeHttpRequest` serializes `headers` into a standard JSON object map (`{"Header": "Value"}`). The Golem host runtime defensively supports both JSON object maps and JSON arrays of `{"name": "...", "value": "..."}` objects.
+> **Outbound HTTP C-ABI & Headers (v1.4.3+)**: `rocFxHttpRequest` host C-ABI signature places the composite `out` return buffer as the first parameter, matching Roc's standard `sret` calling convention. `encodeHttpRequest` serializes `headers` into a standard JSON object map (`{"Header": "Value"}`). The Golem host runtime defensively supports both JSON object maps and JSON arrays of `{"name": "...", "value": "..."}` objects.
 
 ---
 
@@ -470,7 +470,7 @@ temperature = parseF64Or(tempStr, 0.7.F64)
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v1.4.2 thesparq/roc-golem
+   ./tooling/build.sh package v1.4.3 thesparq/roc-golem
    ```
 
 4. **Build & Deploy Agent**:

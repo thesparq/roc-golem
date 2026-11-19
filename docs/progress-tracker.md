@@ -2,14 +2,22 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Production Stable — Outbound HTTP Headers Serialization Alignment (v1.4.2 Release, 2026-11-16)
+### Current Phase: Production Stable — Outbound HTTP Host C-ABI Return Buffer Order Fix (v1.4.3 Release, 2026-11-19)
 
-Goal: Align guest HTTP header serialization (`encodeHttpRequest` in `platform/Golem.roc`) with host expectations (JSON object map) and provide defensive dual-format parsing in the host runtime (`host/src/lib.rs`).
+Goal: Correct the parameter order in `rocFxHttpRequest` (`out` buffer as first argument, matching LLVM `sret` calling convention and `rocFxRpcInvoke`), eliminating WASM linear memory out-of-bounds faults upon string deallocation during outgoing HTTP requests.
 
-Status: **v1.4.2 Released & 100% Verified.** All 4 verification layers passing clean: 58 host unit tests, 146 Roc tests across 8 suites, consumer package smoke test, and release packaging.
+Status: **v1.4.3 Released & 100% Verified.** All 4 verification layers passing clean: 58 host unit tests, 146 Roc tests across 8 suites, consumer package smoke test, and release packaging.
 
 
 ## Done
+
+- **Outbound HTTP Host C-ABI Return Buffer Order Fix (v1.4.3 - 2026-11-19)**:
+  - Corrected `rocFxHttpRequest` parameter order in `host/src/lib.rs` to `(out: *mut RocResult<RocStr, RocStr>, req_json: *const RocStr)`, adhering to Roc's standard WASM C-ABI `sret` calling convention for composite return values.
+  - Updated host unit tests (`test_http_request_headers_object_map`, `test_http_request_headers_array_fallback`, mock secret header tests) to call `(out, req_json)`. All 58 unit tests passing.
+  - Rebuilt precompiled host libraries `platform/targets/wasm32/libroc_golem_host.a` and `platform/libhost.a`.
+  - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.4.3.tar.zst`): 100% pass.
+  - Rebuilt and verified `/home/thesparq/.t3/projects/reminders/build/reminders_agent.wasm` with `wasm-tools validate`.
+  - Generated v1.4.3 release packages (`roc-golem-v1.4.3__2GmoYXoEV7NScPfqt02Eom1X6FSt6j4dcMN447hZefw.tar.zst`).
 
 - **Outbound HTTP Headers Serialization Alignment (v1.4.2 - 2026-11-16)**:
   - Fixed outbound HTTP headers serialization format mismatch: updated `encodeHttpRequest : HttpRequest -> Str` in `platform/Golem.roc` to format `headers` as a JSON object map (`"headers": {"Header": "Value"}`) instead of an array of `{name, value}` objects.

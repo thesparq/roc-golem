@@ -4,6 +4,12 @@ All notable changes to roc-golem are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] — 2026-11-19
+
+### Fixed
+- **Outbound HTTP Host C-ABI Return Buffer Order**: Fixed a critical ABI memory corruption bug where `rocFxHttpRequest` in `host/src/lib.rs` inverted the parameter order (`req_json: *const RocStr, out: *mut RocResult<RocStr, RocStr>`). In Roc's standard WASM C-ABI (LLVM `sret` convention, matching `rocFxRpcInvoke`), functions returning composite types pass the output buffer pointer as argument 0 (`out: *mut RocResult<RocStr, RocStr>, req_json: *const RocStr`). The inverted arguments caused the host to overwrite caller stack/heap memory, triggering out-of-bounds memory traps (`0xf2d0c9fd`) upon string deallocation during outgoing HTTP requests (such as live LLM calls).
+- **Host Unit Test Alignment**: Updated `test_http_request_headers_object_map`, `test_http_request_headers_array_fallback`, and mock secret header tests in `host/src/lib.rs` to reflect the corrected `(out, req_json)` calling convention.
+
 ## [1.4.2] — 2026-11-16
 
 ### Fixed
