@@ -1863,8 +1863,8 @@ pub unsafe extern "C" fn rocFxRevealSecret(handle: u32, out: *mut RocResult<RocS
 
 #[no_mangle]
 pub unsafe extern "C" fn rocFxHttpRequest(
-    req_json: *const RocStr,
     out: *mut RocResult<RocStr, RocStr>,
+    req_json: *const RocStr,
 ) {
     let req_str = if req_json.is_null() {
         "{}"
@@ -4022,7 +4022,7 @@ mod tests {
         let roc_req = RocStr::from_str(&http_req_json);
         let mut http_out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let http_res = unsafe {
-            rocFxHttpRequest(&roc_req, http_out.as_mut_ptr());
+            rocFxHttpRequest(http_out.as_mut_ptr(), &roc_req);
             http_out
                 .assume_init()
                 .into_result()
@@ -4046,7 +4046,7 @@ mod tests {
         let roc_req = RocStr::from_str(&req_json);
         let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let res = unsafe {
-            rocFxHttpRequest(&roc_req, out.as_mut_ptr());
+            rocFxHttpRequest(out.as_mut_ptr(), &roc_req);
             out.assume_init()
                 .into_result()
                 .expect("http request failed")
@@ -4069,7 +4069,7 @@ mod tests {
         let roc_req = RocStr::from_str(&req_json);
         let mut out = MaybeUninit::<RocResult<RocStr, RocStr>>::uninit();
         let res = unsafe {
-            rocFxHttpRequest(&roc_req, out.as_mut_ptr());
+            rocFxHttpRequest(out.as_mut_ptr(), &roc_req);
             out.assume_init()
                 .into_result()
                 .expect("http request failed")
