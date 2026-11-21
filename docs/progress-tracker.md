@@ -17,7 +17,7 @@ Status: **v1.4.3 Released & 100% Verified.** All 4 verification layers passing c
   - Rebuilt precompiled host libraries `platform/targets/wasm32/libroc_golem_host.a` and `platform/libhost.a`.
   - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.4.3.tar.zst`): 100% pass.
   - Rebuilt and verified `/home/thesparq/.t3/projects/reminders/build/reminders_agent.wasm` with `wasm-tools validate`.
-  - Generated v1.4.3 release packages (`roc-golem-v1.4.3__2GmoYXoEV7NScPfqt02Eom1X6FSt6j4dcMN447hZefw.tar.zst`).
+  - Generated v1.4.3 release packages (`roc-golem-v1.4.3__b2x-70Ho8p_fzmT9VmD8c8NmtNiD3Gx7alCIjNBYVvw.tar.zst`).
 
 - **Outbound HTTP Headers Serialization Alignment (v1.4.2 - 2026-11-16)**:
   - Fixed outbound HTTP headers serialization format mismatch: updated `encodeHttpRequest : HttpRequest -> Str` in `platform/Golem.roc` to format `headers` as a JSON object map (`"headers": {"Header": "Value"}`) instead of an array of `{name, value}` objects.
