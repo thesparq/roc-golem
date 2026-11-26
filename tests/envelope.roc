@@ -24,7 +24,7 @@ format_tool_envelope : Str, Bool, Str -> Str
 format_tool_envelope = |next_state_json, success, output| {
 	escaped_state = escape_json_str(next_state_json)
 	escaped_output = escape_json_str(output)
-	success_str = if success "true" else "false"
+	success_str = if (success) "true" else "false"
 	"{\"state\":\"${escaped_state}\",\"success\":${success_str},\"output\":\"${escaped_output}\"}"
 }
 

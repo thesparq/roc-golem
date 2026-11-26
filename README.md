@@ -27,7 +27,7 @@ You can use the official pre-packaged platform release in your Roc application b
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.3/roc-golem-v1.4.3__b2x-70Ho8p_fzmT9VmD8c8NmtNiD3Gx7alCIjNBYVvw.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.5.0/roc-golem-v1.5.0__bu9YwysiCrb-2ThuRBX_g5WolwrZ-UGUPDeXkTvEuWU.tar.zst",
 }
 ```
 
@@ -70,9 +70,10 @@ agent = Golem.agent({
 > Roc platform tarball URLs can use `<prefix>__<hash>.tar.zst`. The Roc compiler package resolver treats `__` as a prefix delimiter: it verifies integrity against `<hash>` and indexes the local cache under `~/.cache/roc/packages/<hash>/` (and `.deps.json`).
 > 
 > You can use either the prefixed URL above or the content-addressed bare hash URL:
-> `https://github.com/thesparq/roc-golem/releases/download/v1.4.3/b2x-70Ho8p_fzmT9VmD8c8NmtNiD3Gx7alCIjNBYVvw.tar.zst`
+> `https://github.com/thesparq/roc-golem/releases/download/v1.5.0/bu9YwysiCrb-2ThuRBX_g5WolwrZ-UGUPDeXkTvEuWU.tar.zst`
 
 > **Developer Experience (DX) Features**:
+> - **Roc 0.1.0-RC2 & Type Modules (v1.5.0)**: Fully migrated to official Roc `0.1.0-RC2`. Eliminates reserved module and type name collisions with built-in `Json` by providing `platform/GolemJson.roc` (`pf.GolemJson`). Modernized all platform and example modules to headerless Type Modules (`TypeName := [].{ ... }`), eliminating all compiler deprecation warnings (0 errors, 0 warnings across platform, tests, and examples).
 > - **Unified Tools**: Tool schema (`ToolDefinition`) and execution logic are defined together. Tool ID forwarding, JSON envelope wrapping, and dispatch are automatic.
 > - **Host Effects in High-Level API (v1.4.0+)**: Seamlessly invoke host effects (`runEffect!(now)`, `runEffect!(httpRequest(...))`, etc.) in `onMessage`, or construct effectful tools via `effectfulTool` / `effectfulStatelessTool`. Pure and effectful tools freely mix in the same tool list.
 > - **Outbound HTTP C-ABI Alignment & JSON Object Headers (v1.4.3+)**: `rocFxHttpRequest` host C-ABI signature places the composite `out` return buffer as the first parameter, matching Roc's standard `sret` calling convention. `encodeHttpRequest` formats request `headers` as a JSON object map (`{"Header": "Value"}`), and the host runtime defensively parses both maps and `{name, value}` pair arrays.
@@ -220,7 +221,7 @@ roc-golem/
 │   ├── Golem.roc               # Idiomatic Roc Golem SDK (Agent, WebSocket, Timers, RPC, HTTP)
 │   ├── Types.roc               # Core data types (Metadata, ToolDefinition, ToolCall)
 │   ├── Effect.roc              # Low-level host effect declarations
-│   ├── Json.roc                # JSON serialization and decoding utilities
+│   ├── GolemJson.roc           # JSON serialization and decoding utilities
 │   ├── Parse.roc               # Bounds-checked numeric parsing & overflow detection
 │   └── targets/
 │       └── wasm32/
@@ -297,15 +298,15 @@ golem worker invoke "streaming/stream-worker-1" \
 ### Automatic GitHub Release (Recommended)
 1. Push a version tag to Git:
    ```bash
-   git tag v1.4.3
-   git push origin v1.4.3
+   git tag v1.5.0
+   git push origin v1.5.0
    ```
 2. GitHub Actions automatically builds the host, validates all agents, packages the `.tar.zst`, `.tar.br`, `.tar.gz` bundles with BLAKE3 hashes, and creates the GitHub release with ready-to-copy Roc code snippets!
 
 ### Local Release Packaging
 You can generate release tarballs locally at any time:
 ```bash
-./tooling/build.sh package v1.4.3 thesparq/roc-golem
+./tooling/build.sh package v1.5.0 thesparq/roc-golem
 ```
 Artifacts and `release_notes.md` will be placed in `dist/`.
 

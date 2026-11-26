@@ -3,73 +3,73 @@ platform "golem"
 		[State : state] for agent : Golem.Agent(state)
 	}
 	exposes [
-		Golem,
-		Types,
-		Json,
-		Parse,
 		Effect,
+		Golem,
+		GolemJson,
+		Parse,
+		Types,
 	]
 	packages {}
 	provides {
-		"main_init_for_host": main_init_for_host,
 		"main_handle_message_for_host": main_handle_message_for_host!,
 		"main_handle_tool_call_for_host": main_handle_tool_call_for_host!,
+		"main_init_for_host": main_init_for_host,
 		"main_metadata_for_host": main_metadata_for_host,
 	}
 	hosted {
-		"rocFxLog": Effect.rocFxLog!,
-		"rocFxGetWorkerId": Effect.rocFxGetWorkerId!,
-		"rocFxRpcInvoke": Effect.rocFxRpcInvoke!,
-		"rocFxRpcSchedule": Effect.rocFxRpcSchedule!,
-		"rocFxRpcFireAndForget": Effect.rocFxRpcFireAndForget!,
-		"rocFxSetPersistence": Effect.rocFxSetPersistence!,
-		"rocFxHttpRequest": Effect.rocFxHttpRequest!,
-		"rocFxWsConnect": Effect.rocFxWsConnect!,
-		"rocFxWsSend": Effect.rocFxWsSend!,
-		"rocFxWsReceive": Effect.rocFxWsReceive!,
-		"rocFxWsClose": Effect.rocFxWsClose!,
-		"rocFxSleepMillis": Effect.rocFxSleepMillis!,
-		"rocFxNowMillis": Effect.rocFxNowMillis!,
-		"rocFxReadFileBytes": Effect.rocFxReadFileBytes!,
-		"rocFxWriteFileBytes": Effect.rocFxWriteFileBytes!,
 		"rocFxAppendFileBytes": Effect.rocFxAppendFileBytes!,
-		"rocFxReadFile": Effect.rocFxReadFile!,
-		"rocFxWriteFile": Effect.rocFxWriteFile!,
-		"rocFxKvGetBytes": Effect.rocFxKvGetBytes!,
-		"rocFxKvSetBytes": Effect.rocFxKvSetBytes!,
-		"rocFxKvGet": Effect.rocFxKvGet!,
-		"rocFxKvSet": Effect.rocFxKvSet!,
-		"rocFxBlobGetBytes": Effect.rocFxBlobGetBytes!,
-		"rocFxBlobPutBytes": Effect.rocFxBlobPutBytes!,
 		"rocFxBlobGet": Effect.rocFxBlobGet!,
+		"rocFxBlobGetBytes": Effect.rocFxBlobGetBytes!,
 		"rocFxBlobPut": Effect.rocFxBlobPut!,
-		"rocFxHttpRequestBytes": Effect.rocFxHttpRequestBytes!,
-		"rocFxGetSecretHandle": Effect.rocFxGetSecretHandle!,
-		"rocFxRevealSecret": Effect.rocFxRevealSecret!,
-		"rocFxGenerateIdempotencyKey": Effect.rocFxGenerateIdempotencyKey!,
-		"rocFxGetOplogIndex": Effect.rocFxGetOplogIndex!,
-		"rocFxOplogCommit": Effect.rocFxOplogCommit!,
-		"rocFxCreatePromise": Effect.rocFxCreatePromise!,
+		"rocFxBlobPutBytes": Effect.rocFxBlobPutBytes!,
 		"rocFxCompletePromise": Effect.rocFxCompletePromise!,
-		"rocFxGetPromise": Effect.rocFxGetPromise!,
-		"rocFxCreateWebhook": Effect.rocFxCreateWebhook!,
 		"rocFxConfigGet": Effect.rocFxConfigGet!,
-		"rocFxTraceId": Effect.rocFxTraceId!,
-		"rocFxSpanId": Effect.rocFxSpanId!,
-		"rocFxTraceHeaders": Effect.rocFxTraceHeaders!,
-		"rocFxGetIdempotenceMode": Effect.rocFxGetIdempotenceMode!,
-		"rocFxSetIdempotenceMode": Effect.rocFxSetIdempotenceMode!,
-		"rocFxRevertAgent": Effect.rocFxRevertAgent!,
+		"rocFxCreatePromise": Effect.rocFxCreatePromise!,
+		"rocFxCreateWebhook": Effect.rocFxCreateWebhook!,
 		"rocFxDbExecute": Effect.rocFxDbExecute!,
 		"rocFxDbExecuteParams": Effect.rocFxDbExecuteParams!,
 		"rocFxDbQuery": Effect.rocFxDbQuery!,
 		"rocFxDbQueryParams": Effect.rocFxDbQueryParams!,
-		"rocFxRpcInvokeBytes": Effect.rocFxRpcInvokeBytes!,
-		"rocFxRpcScheduleBytes": Effect.rocFxRpcScheduleBytes!,
-		"rocFxRpcFireAndForgetBytes": Effect.rocFxRpcFireAndForgetBytes!,
+		"rocFxGenerateIdempotencyKey": Effect.rocFxGenerateIdempotencyKey!,
+		"rocFxGetIdempotenceMode": Effect.rocFxGetIdempotenceMode!,
+		"rocFxGetOplogIndex": Effect.rocFxGetOplogIndex!,
+		"rocFxGetPromise": Effect.rocFxGetPromise!,
+		"rocFxGetSecretHandle": Effect.rocFxGetSecretHandle!,
+		"rocFxGetWorkerId": Effect.rocFxGetWorkerId!,
+		"rocFxHttpRequest": Effect.rocFxHttpRequest!,
+		"rocFxHttpRequestBytes": Effect.rocFxHttpRequestBytes!,
+		"rocFxHttpStreamClose": Effect.rocFxHttpStreamClose!,
 		"rocFxHttpStreamOpen": Effect.rocFxHttpStreamOpen!,
 		"rocFxHttpStreamRead": Effect.rocFxHttpStreamRead!,
-		"rocFxHttpStreamClose": Effect.rocFxHttpStreamClose!,
+		"rocFxKvGet": Effect.rocFxKvGet!,
+		"rocFxKvGetBytes": Effect.rocFxKvGetBytes!,
+		"rocFxKvSet": Effect.rocFxKvSet!,
+		"rocFxKvSetBytes": Effect.rocFxKvSetBytes!,
+		"rocFxLog": Effect.rocFxLog!,
+		"rocFxNowMillis": Effect.rocFxNowMillis!,
+		"rocFxOplogCommit": Effect.rocFxOplogCommit!,
+		"rocFxReadFile": Effect.rocFxReadFile!,
+		"rocFxReadFileBytes": Effect.rocFxReadFileBytes!,
+		"rocFxRevealSecret": Effect.rocFxRevealSecret!,
+		"rocFxRevertAgent": Effect.rocFxRevertAgent!,
+		"rocFxRpcFireAndForget": Effect.rocFxRpcFireAndForget!,
+		"rocFxRpcFireAndForgetBytes": Effect.rocFxRpcFireAndForgetBytes!,
+		"rocFxRpcInvoke": Effect.rocFxRpcInvoke!,
+		"rocFxRpcInvokeBytes": Effect.rocFxRpcInvokeBytes!,
+		"rocFxRpcSchedule": Effect.rocFxRpcSchedule!,
+		"rocFxRpcScheduleBytes": Effect.rocFxRpcScheduleBytes!,
+		"rocFxSetIdempotenceMode": Effect.rocFxSetIdempotenceMode!,
+		"rocFxSetPersistence": Effect.rocFxSetPersistence!,
+		"rocFxSleepMillis": Effect.rocFxSleepMillis!,
+		"rocFxSpanId": Effect.rocFxSpanId!,
+		"rocFxTraceHeaders": Effect.rocFxTraceHeaders!,
+		"rocFxTraceId": Effect.rocFxTraceId!,
+		"rocFxWriteFile": Effect.rocFxWriteFile!,
+		"rocFxWriteFileBytes": Effect.rocFxWriteFileBytes!,
+		"rocFxWsClose": Effect.rocFxWsClose!,
+		"rocFxWsConnect": Effect.rocFxWsConnect!,
+		"rocFxWsReceive": Effect.rocFxWsReceive!,
+		"rocFxWsSend": Effect.rocFxWsSend!,
 	}
 	targets: {
 		inputs_dir: "targets/",
@@ -81,18 +81,18 @@ platform "golem"
 	}
 
 import Types exposing [
-	Result,
-	ToolDefinition,
-	ToolParameter,
-	ToolCall,
-	MethodDeclaration,
 	AgentMode,
 	HttpMount,
+	MethodDeclaration,
+	Result,
+	ToolCall,
+	ToolDefinition,
+	ToolParameter,
 ]
 import Golem
 import Effect
 import Parse
-import Json exposing [encode, decode, decode_or, escape]
+import GolemJson exposing [decode, decode_or, encode, escape]
 
 ## Entry point for agent initialization called by Rust Host
 main_init_for_host : Str -> Result(Str, Str)
@@ -107,7 +107,7 @@ main_init_for_host = |envelope_or_config| {
 				extract_json_field(envelope_or_config, "config") ?? envelope_or_config,
 			)
 		}
-	target_type = if Str.is_empty(agent_type) envelope_or_config else agent_type
+	target_type = if (Str.is_empty(agent_type)) envelope_or_config else agent_type
 	match find_agent_by_name(agent.agents, target_type) {
 		Err(err) => Err(err)
 		Ok(target_agent) => (target_agent.init)(config)
@@ -217,7 +217,7 @@ format_method_declaration = |m| {
 	name_escaped = escape_json_str(m.name)
 	desc_escaped = escape_json_str(m.description)
 	hint_escaped = escape_json_str(m.promptHint)
-	ro_str = if m.readOnly "true" else "false"
+	ro_str = if (m.readOnly) "true" else "false"
 	"{\"name\":\"${name_escaped}\",\"description\":\"${desc_escaped}\",\"prompt_hint\":\"${hint_escaped}\",\"read_only\":${ro_str}}"
 }
 
@@ -234,7 +234,7 @@ format_tool_definition = |tool| {
 
 format_tool_parameter : ToolParameter -> Str
 format_tool_parameter = |param| {
-	req_str = if param.required "true" else "false"
+	req_str = if (param.required) "true" else "false"
 	name_escaped = escape_json_str(param.name)
 	desc_escaped = escape_json_str(param.description)
 	type_escaped = escape_json_str(param.paramType)
@@ -261,7 +261,7 @@ format_tool_envelope : Str, Bool, Str -> Str
 format_tool_envelope = |next_state_json, success, output| {
 	escaped_state = escape_json_str(next_state_json)
 	escaped_output = escape_json_str(output)
-	success_str = if success "true" else "false"
+	success_str = if (success) "true" else "false"
 	"{\"state\":\"${escaped_state}\",\"success\":${success_str},\"output\":\"${escaped_output}\"}"
 }
 

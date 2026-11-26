@@ -199,7 +199,7 @@ app [agent] {{
 ```
 
 ### Included Platform Artifacts
-- `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`, `platform/Json.roc`, `platform/Parse.roc`
+- `platform/main.roc`, `platform/Golem.roc`, `platform/Types.roc`, `platform/Effect.roc`, `platform/GolemJson.roc`, `platform/Parse.roc`
 - Precompiled `targets/wasm32/libroc_golem_host.a` (static library for Wasm32 Golem Cloud host)
 - Precompiled `targets/wasm32/libc.a` (WASI libc static library)
 - Precompiled `libhost.a` (root compatibility static library)

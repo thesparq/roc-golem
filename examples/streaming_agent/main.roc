@@ -1,6 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [Agent, agent, reply, readOnly, toolJson, param]
+import pf.Golem exposing [Agent, agent, param, readOnly, reply, toolJson]
 
 # Agent State
 State : {
@@ -38,7 +38,7 @@ agent = Golem.agent({
 				)
 
 			"status" => {
-				statusStr = if state.connected "connected" else "disconnected"
+				statusStr = if (state.connected) "connected" else "disconnected"
 				readOnly(
 					state,
 					"WebSocket is ${statusStr}. Sent ${Str.inspect(state.sent)}, Received ${Str.inspect(state.received)}",

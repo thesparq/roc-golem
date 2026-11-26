@@ -4,6 +4,15 @@ All notable changes to roc-golem are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-11-26
+
+### Added
+- **Roc `0.1.0-RC2` Toolchain Migration**: Upgraded and pinned platform build toolchain, CI workflows, and release pipeline to official Roc release `0.1.0-RC2`.
+- **Platform JSON Module Renaming (`platform/GolemJson.roc`)**: Renamed `platform/Json.roc` to `platform/GolemJson.roc` (exposed as `pf.GolemJson`), completely resolving reserved module and type name collisions with Roc's builtin `Json` type.
+- **Type Modules Across Platform & Examples**: Modernized all platform files (`platform/Types.roc`, `platform/Parse.roc`, `platform/GolemJson.roc`, `platform/Golem.roc`) and multi-file examples (`examples/canary_release/ReleaseCoordinator.roc`, `examples/canary_release/DiagnosticsWorker.roc`, `examples/canary_release/Types.roc`) to headerless Type Modules (`TypeName := [].{ ... }`), completely eliminating deprecated module header warnings.
+- **Strict `Json.parse` Type Constraints**: Aligned `where` constraints in `GolemJson.roc` and `Golem.roc` to exact tag union `where [a.Json.Parseable([InvalidJson(Str)])]`, adhering to Roc 0.1's parser error signature.
+- **Package Consumer Verification**: Validated consumer smoke test (`tooling/test_consumer.sh`) on packaged `.tar.zst` archive with 0 errors and 0 warnings.
+
 ## [1.4.3] — 2026-11-19
 
 ### Fixed

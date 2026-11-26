@@ -140,3 +140,4 @@ All tests carry an explicit verification source tag:
 | 68 | Streaming agent note | Check `streaming_agent/main.roc` | Connect branch note added (`KI-54`) | **PASSED** (2026-11-13) [Code Review] |
 | 69 | Canary workerId target | Check `ReleaseCoordinator.roc` | Rolls back using `workerId` (`KI-55`) | **PASSED** (2026-11-13) [roc check] |
 | 70 | Housekeeping & Tooling | Check `.gitignore`, `build.sh`, `CHANGELOG.md` | Cleaned and validated (`KI-56`-`KI-63`) | **PASSED** (2026-11-13) [Build & Packaging Tooling] |
+| 71 | Roc 0.1.0-RC2 Toolchain Migration | Compile platform, examples, and tests with official Roc 0.1.0-RC2 | 0 errors and 0 warnings across all targets (Unit 21) | **PASSED** (2026-11-26) [roc check, roc test, build.sh] |

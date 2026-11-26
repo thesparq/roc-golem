@@ -3,13 +3,13 @@ app [main] { pf: platform "../platform/main.roc" }
 import pf.Types exposing [Result]
 import pf.Golem exposing [
 	Agent,
-	define,
 	build,
 	bundle,
 	bundle2,
+	define,
 	erase,
 ]
-import pf.Json
+import pf.GolemJson
 
 AlphaState : { name : Str }
 
@@ -22,8 +22,8 @@ agentA =
 	define(
 		{ name: "agent-alpha", version: "1.0.0", description: "Alpha agent" },
 		|_| Ok({ name: "alpha" }),
-		|st| Json.encode(st),
-		|raw| Json.decode(raw),
+		|st| GolemJson.encode(st),
+		|raw| GolemJson.decode(raw),
 	)
 		|> build
 
@@ -32,8 +32,8 @@ agentB =
 	define(
 		{ name: "agent-beta", version: "2.0.0", description: "Beta agent" },
 		|_| Ok({ score: 100.I64 }),
-		|st| Json.encode(st),
-		|raw| Json.decode(raw),
+		|st| GolemJson.encode(st),
+		|raw| GolemJson.decode(raw),
 	)
 		|> build
 
@@ -51,8 +51,8 @@ expect {
 		[a, b, ..] =>
 			a.metadata.name == "agent-alpha"
 				and a.metadata.version == "1.0.0"
-					and b.metadata.name == "agent-beta"
-						and b.metadata.version == "2.0.0"
+				and b.metadata.name == "agent-beta"
+				and b.metadata.version == "2.0.0"
 		_ => False
 	}
 }

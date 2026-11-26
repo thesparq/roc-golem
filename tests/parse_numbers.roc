@@ -1,23 +1,23 @@
 app [main] { pf: platform "../platform/main.roc" }
 
 import pf.Parse exposing [
-	parseU64,
-	parseU32,
-	parseU16,
-	parseU8,
-	parseU64Or,
-	parseU32Or,
-	parseI64,
-	parseI32,
-	parseI16,
-	parseI8,
-	parseI64Or,
-	parseI32Or,
 	parseF64,
 	parseF64Or,
+	parseI16,
+	parseI32,
+	parseI32Or,
+	parseI64,
+	parseI64Or,
+	parseI8,
+	parseU16,
+	parseU32,
+	parseU32Or,
+	parseU64,
+	parseU64Or,
+	parseU8,
 ]
-import pf.Golem exposing [Agent, define, build]
-import pf.Json
+import pf.Golem exposing [Agent, build, define]
+import pf.GolemJson
 
 State : { count : U64 }
 
@@ -118,8 +118,8 @@ agent =
 	define(
 		{ name: "test-parse-numbers", version: "0.1.0", description: "Test agent for numeric parsing" },
 		|_| Ok({ count: 0.U64 }),
-		|st| Json.encode(st),
-		|raw| Json.decode(raw),
+		|st| GolemJson.encode(st),
+		|raw| GolemJson.decode(raw),
 	)
 		|> build
 

@@ -10,7 +10,7 @@ PLATFORM_DIR="$ROOT_DIR/platform"
 PACK_DIR="$ROOT_DIR/tooling/pack_platform"
 PRECOMPILED_HOST_A="$BUILD_DIR/libhost.a"
 
-PINNED_ROC_VERSION="nightly-2026-09-29-7f11a82"
+PINNED_ROC_VERSION="0.1.0-RC2"
 
 mkdir -p "$BUILD_DIR"
 mkdir -p "$DIST_DIR"
@@ -49,8 +49,8 @@ verify_toolchain() {
 
     if ! command -v roc &> /dev/null; then
         echo "Error: 'roc' is required but not installed or not in PATH." >&2
-        echo "Download the pinned nightly ($PINNED_ROC_VERSION) from:" >&2
-        echo "  https://github.com/roc-lang/nightlies/releases/download/$PINNED_ROC_VERSION/roc_nightly-linux_x86_64-$PINNED_ROC_VERSION.tar.gz" >&2
+        echo "Download the pinned release ($PINNED_ROC_VERSION) from:" >&2
+        echo "  https://github.com/roc-lang/roc/releases/download/$PINNED_ROC_VERSION/roc-linux_x86_64-$PINNED_ROC_VERSION.tar.gz" >&2
         exit 1
     fi
 
@@ -60,8 +60,8 @@ verify_toolchain() {
         echo "Error: 'roc' version mismatch." >&2
         echo "  Expected: $PINNED_ROC_VERSION" >&2
         echo "  Found:    $ROC_VER" >&2
-        echo "Download the pinned nightly from:" >&2
-        echo "  https://github.com/roc-lang/nightlies/releases/download/$PINNED_ROC_VERSION/roc_nightly-linux_x86_64-$PINNED_ROC_VERSION.tar.gz" >&2
+        echo "Download the pinned release from:" >&2
+        echo "  https://github.com/roc-lang/roc/releases/download/$PINNED_ROC_VERSION/roc-linux_x86_64-$PINNED_ROC_VERSION.tar.gz" >&2
         exit 1
     fi
 }
@@ -168,7 +168,7 @@ build_app() {
 }
 
 package_platform() {
-    local TAG="${1:-v1.4.3}"
+    local TAG="${1:-v1.5.0}"
     local REPO="${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
 
     if [[ ! -f "$PLATFORM_DIR/targets/wasm32/libroc_golem_host.a" || ! -f "$PRECOMPILED_HOST_A" ]]; then
@@ -201,7 +201,7 @@ case "$COMMAND" in
         ;;
     package)
         shift || true
-        package_platform "${1:-v1.4.3}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        package_platform "${1:-v1.5.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     release)
         shift || true
@@ -210,7 +210,7 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "canary_release"
-        package_platform "${1:-v1.4.3}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
+        package_platform "${1:-v1.5.0}" "${2:-${GITHUB_REPOSITORY:-thesparq/roc-golem}}"
         ;;
     counter|ai_tool|streaming_agent|canary_release)
         build_app "$COMMAND"
@@ -221,7 +221,7 @@ case "$COMMAND" in
         build_app "ai_tool"
         build_app "streaming_agent"
         build_app "canary_release"
-        package_platform "v1.4.3" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
+        package_platform "v1.5.0" "${GITHUB_REPOSITORY:-thesparq/roc-golem}"
         ;;
     *)
         if [[ -f "$COMMAND" ]]; then

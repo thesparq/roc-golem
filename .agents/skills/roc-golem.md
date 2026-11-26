@@ -24,7 +24,7 @@ The simplest, zero-boilerplate way to define a durable agent in Roc:
 
 ```roc
 app [agent] {
-    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.4.3/roc-golem-v1.4.3__b2x-70Ho8p_fzmT9VmD8c8NmtNiD3Gx7alCIjNBYVvw.tar.zst",
+    pf: platform "https://github.com/thesparq/roc-golem/releases/download/v1.5.0/roc-golem-v1.5.0__bu9YwysiCrb-2ThuRBX_g5WolwrZ-UGUPDeXkTvEuWU.tar.zst",
 }
 
 import pf.Golem exposing [Agent, Tool, agent, reply, readOnly, tool, param]
@@ -470,7 +470,7 @@ temperature = parseF64Or(tempStr, 0.7.F64)
 
 3. **Package Platform Release**:
    ```bash
-   ./tooling/build.sh package v1.4.3 thesparq/roc-golem
+   ./tooling/build.sh package v1.5.0 thesparq/roc-golem
    ```
 
 4. **Build & Deploy Agent**:

@@ -112,4 +112,33 @@ Each unit is one change that can be verified on its own. Write a spec for a unit
 *Dependencies:* 16.
 *Status:* Complete.
 
+## Phase 6 — Remediation & DX Polish (v1.2.0)
+
+**18. v1.2.0 remediation and DX polish**
+*What it builds:* Hardens DX primitives, HTTP mounting metadata, and tool parameter ergonomics.
+*Dependencies:* 17.
+*Status:* Complete.
+
+## Phase 7 — Multi-Agent Bundling & Numerical Parsing (v1.3.0)
+
+**19. Multi-agent bundling and numerical parsing**
+*What it builds:* Multi-agent bundling (`bundle`, `bundle2`..`bundle5`, `bundleAll`), automated routing in `main.roc`, robust ASCII-based numerical parsing primitives (`Parse.roc`).
+*Dependencies:* 18.
+*Status:* Complete.
+
+## Phase 8 — Effectful High-Level Agent API (v1.4.0)
+
+**20. Effectful high-level agent API**
+*What it builds:* Effectful closures (`=>`) for high-level agent constructors (`Golem.agent`, `Golem.agentWith`), `statefulTool`, `statelessTool`, `Tool(state)`, and `onMessage`.
+*Dependencies:* 19.
+*Status:* Complete.
+
+## Phase 9 — Roc 0.1.0-RC2 Toolchain Migration (v1.5.0)
+
+**21. Full migration to Roc 0.1.0-RC2**
+*What it builds:* Modernizes platform, examples, tests, and tooling to Roc `0.1.0-RC2`. Eliminates reserved module name collision by renaming `platform/Json.roc` to `platform/GolemJson.roc`. Converts platform and example modules from deprecated `module [...]` headers to Type Modules (`TypeName := [].{ ... }`). Updates `Json.parse` type annotations to exact union. Pins official release `0.1.0-RC2` in `tooling/build.sh` and CI workflows.
+*Dependencies:* 20.
+*Status:* Complete.
+
+
 

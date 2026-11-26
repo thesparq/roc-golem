@@ -1,6 +1,6 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Golem exposing [Agent, agent, reply, readOnly, toolJson]
+import pf.Golem exposing [Agent, agent, readOnly, reply, toolJson]
 
 # Agent State
 State : {

@@ -1,7 +1,7 @@
 app [agent] { pf: platform "../../platform/main.roc" }
 
-import pf.Json exposing [escape]
-import pf.Golem exposing [Agent, agent, readOnly, statefulTool, param]
+import pf.GolemJson exposing [escape]
+import pf.Golem exposing [Agent, agent, param, readOnly, statefulTool]
 
 # Agent State
 State : {

@@ -38,13 +38,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.roc-cache
-          key: roc-nightly-2026-09-29-7f11a82
+          key: roc-0.1.0-RC2
 
-      - name: Install Pinned Roc Nightly
+      - name: Install Pinned Roc Release
         if: steps.cache-roc.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$HOME/.roc-cache"
-          curl -fsSL https://github.com/roc-lang/nightlies/releases/download/nightly-2026-09-29-7f11a82/roc_nightly-linux_x86_64-2026-09-29-7f11a82.tar.gz | tar -xz -C "$HOME/.roc-cache" --strip-components=1
+          curl -fsSL https://github.com/roc-lang/roc/releases/download/0.1.0-RC2/roc-linux_x86_64-0.1.0-RC2.tar.gz | tar -xz -C "$HOME/.roc-cache" --strip-components=1
 
       - name: Add Roc to PATH
         run: |
@@ -64,7 +64,7 @@ jobs:
           echo "==> Running Clippy..."
           cargo clippy --manifest-path host/Cargo.toml --features stub-guest --lib -- -D warnings
           echo "==> Checking Roc formatting..."
-          roc fmt --check platform/main.roc platform/Json.roc examples/counter/main.roc examples/ai_tool/main.roc examples/streaming_agent/main.roc examples/canary_release/main.roc tests/envelope.roc tests/json_roundtrip.roc tests/dx_primitives.roc tests/spec_builder.roc tests/bundle.roc
+          roc fmt --check platform/main.roc platform/GolemJson.roc examples/counter/main.roc examples/ai_tool/main.roc examples/streaming_agent/main.roc examples/canary_release/main.roc tests/envelope.roc tests/json_roundtrip.roc tests/dx_primitives.roc tests/spec_builder.roc tests/bundle.roc tests/parse_numbers.roc tests/multi_agent_bundle.roc tests/effectful_agent.roc
           echo "==> Running Roc checks..."
           roc check platform/main.roc || [ $? -eq 2 ]
           roc check examples/counter/main.roc || [ $? -eq 2 ]
@@ -82,6 +82,9 @@ jobs:
           roc test tests/dx_primitives.roc || [ $? -eq 2 ]
           roc test tests/spec_builder.roc || [ $? -eq 2 ]
           roc test tests/bundle.roc || [ $? -eq 2 ]
+          roc test tests/parse_numbers.roc || [ $? -eq 2 ]
+          roc test tests/multi_agent_bundle.roc || [ $? -eq 2 ]
+          roc test tests/effectful_agent.roc || [ $? -eq 2 ]
 
       - name: "Layer 3: App Builds & Packaging"
         run: |

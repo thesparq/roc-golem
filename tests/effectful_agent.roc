@@ -2,28 +2,28 @@ app [main] { pf: platform "../platform/main.roc" }
 
 import pf.Golem exposing [
 	Agent,
-	Tool,
-	StatelessTool,
-	agent,
-	ephemeral,
-	tool,
-	effectfulTool,
-	effectfulToolJson,
-	effectfulStatelessTool,
-	param,
-	reply,
-	readOnly,
-	runEffect!,
-	now,
 	HttpMount,
 	HttpRequest,
-	SecretHeader,
 	SecretHandle,
-	wrapSecretHandle,
-	withAgentHttpMount,
+	SecretHeader,
+	StatelessTool,
+	Tool,
+	agent,
+	effectfulStatelessTool,
+	effectfulTool,
+	effectfulToolJson,
 	encodeHttpRequest,
+	ephemeral,
+	now,
+	param,
+	readOnly,
+	reply,
+	runEffect!,
+	tool,
+	withAgentHttpMount,
+	wrapSecretHandle,
 ]
-import pf.Effect exposing [Effect, map]
+import pf.Effect exposing [map]
 
 BookingState : {
 	activeCount : U64,
@@ -133,14 +133,14 @@ erasedBooking =
 expect {
 	erasedBooking.metadata.name == "booking-coordinator"
 		and erasedBooking.metadata.mode == Durable
-			and List.len(erasedBooking.metadata.tools) == 2
+		and List.len(erasedBooking.metadata.tools) == 2
 }
 
 # Test 2: Tool parameter schemas and names
 expect {
 	getStatusTool.definition.name == "get_status"
 		and getStatusTool.definition.description == "Returns current booking count"
-			and List.is_empty(getStatusTool.definition.parameters)
+		and List.is_empty(getStatusTool.definition.parameters)
 }
 
 expect {
@@ -173,7 +173,7 @@ erasedEphemeral =
 expect {
 	erasedEphemeral.metadata.name == "time-oracle"
 		and erasedEphemeral.metadata.mode == Ephemeral
-			and List.len(erasedEphemeral.metadata.tools) == 1
+		and List.len(erasedEphemeral.metadata.tools) == 1
 }
 
 expect {
@@ -191,7 +191,7 @@ expect {
 		Some(mount) =>
 			mount.pathPrefix == "/booking/{id}"
 				and mount.webhookSuffix == "webhooks"
-					and mount.corsOrigins == ["*"]
+				and mount.corsOrigins == ["*"]
 
 		None => False
 	}
@@ -217,7 +217,7 @@ expect {
 	}
 	req.url == "https://api.booking.example.com"
 		and secHeader.name == "Authorization"
-			and req.method == "POST"
+		and req.method == "POST"
 }
 
 # Test 7: Verify encodeHttpRequest serializes headers as a JSON object
@@ -237,7 +237,7 @@ expect {
 	expectedHeaders = "\"headers\":{\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer sk-test-key\"}"
 	Str.contains(encoded, expectedHeaders)
 		and Str.contains(encoded, "\"method\":\"POST\"")
-			and Str.contains(encoded, "\"secretHeaders\":[]")
+		and Str.contains(encoded, "\"secretHeaders\":[]")
 }
 
 main = bookingAgent

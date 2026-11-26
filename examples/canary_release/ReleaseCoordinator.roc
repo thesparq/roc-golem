@@ -1,493 +1,484 @@
-module [
-	agent,
-	startCanary,
-	approveGate,
-	emergencyRollback,
-	scheduleRollback,
-	fireRollback,
-	statusMethod,
-	dashboardMethod,
-]
-
 import pf.Golem exposing [
 	Agent,
 	Method,
-	define,
-	registerTyped,
-	registerReadOnlyTyped,
-	registerEffectfulTyped,
-	withTools,
-	withStatelessToolHandler,
-	withHttpMount,
-	method,
 	build,
 	createPromise,
 	createWebhook,
-	rpcTyped,
-	rpcSchedule,
+	define,
+	method,
+	registerEffectfulTyped,
+	registerReadOnlyTyped,
+	registerTyped,
 	rpcFireAndForget,
+	rpcSchedule,
+	rpcTyped,
+	withHttpMount,
+	withStatelessToolHandler,
+	withTools,
 	workerId,
 ]
 import pf.Types as PfTypes exposing [ToolCall, ToolResult]
 import pf.Effect
-import pf.Json as GolemJson exposing [encode, decode, decode_or]
+import pf.GolemJson exposing [decode, decode_or, encode]
 import Types exposing [
-	Result,
-	State,
-	StartInput,
-	StartOutput,
 	DecisionInput,
+	DiagnosticReport,
+	LogBatch,
+	Result,
 	RollbackInput,
 	ScheduleRollbackInput,
+	StartInput,
+	StartOutput,
+	State,
 	Status,
-	LogBatch,
-	DiagnosticReport,
-	encodeStartInput,
-	decodeStartInput,
-	encodeStartOutput,
-	decodeStartOutput,
-	encodeDecisionInput,
 	decodeDecisionInput,
-	encodeRollbackInput,
-	decodeRollbackInput,
-	encodeScheduleRollbackInput,
-	decodeScheduleRollbackInput,
-	encodeStatus,
-	decodeStatus,
-	encodeLogBatch,
-	decodeLogBatch,
-	encodeDiagnosticReport,
 	decodeDiagnosticReport,
+	decodeLogBatch,
+	decodeRollbackInput,
+	decodeScheduleRollbackInput,
+	decodeStartInput,
+	decodeStartOutput,
+	decodeStatus,
+	encodeDecisionInput,
+	encodeDiagnosticReport,
+	encodeLogBatch,
+	encodeRollbackInput,
+	encodeScheduleRollbackInput,
+	encodeStartInput,
+	encodeStartOutput,
+	encodeStatus,
 ]
 import DiagnosticsWorker
 
-startCanary : Method(StartInput, StartOutput)
-startCanary = method({
-	name: "start_canary",
-	description: "Starts a new canary deployment for a given service.",
-	promptHint: "Call this to initialize a canary with initial traffic.",
-})
-
-approveGate : Method(DecisionInput, Str)
-approveGate = method({
-	name: "approve_gate",
-	description: "Approves or rejects promotion of the canary traffic weight.",
-	promptHint: "Call to advance canary to next rollout stage.",
-})
-
-emergencyRollback : Method(RollbackInput, Str)
-emergencyRollback = method({
-	name: "emergency_rollback",
-	description: "Rolls the canary back to 0% of traffic.",
-	promptHint: "Call this to take the canary out of rotation immediately.",
-})
-
-scheduleRollback : Method(ScheduleRollbackInput, Str)
-scheduleRollback = method({
-	name: "schedule_rollback",
-	description: "Schedules an emergency rollback after delayMillis milliseconds.",
-	promptHint: "Call to schedule a delayed rollback.",
-})
-
-fireRollback : Method(RollbackInput, Str)
-fireRollback = method({
-	name: "fire_rollback",
-	description: "Fires an immediate rollback asynchronously without awaiting reply.",
-	promptHint: "Call to trigger rollback via fire-and-forget RPC.",
-})
-
-statusMethod : Method({}, Status)
-statusMethod = method({
-	name: "get_status",
-	description: "Returns the current rollout status.",
-	promptHint: "Query current canary status.",
-})
-
-dashboardMethod : Method({}, Str)
-dashboardMethod = method({
-	name: "dashboard",
-	description: "Serves live HTML dashboard for the canary release.",
-	promptHint: "Fetch live HTML dashboard.",
-})
-
-agent : Agent(State)
-agent =
-	define(
-		{
-			name: "canary-release",
-			version: "1.0.0",
-			description: "Canary rollout orchestrator: typed methods, a gate, a live dashboard.",
-		},
-		initCoordinator,
-		serializeState,
-		deserializeState,
-	)
-		|> withTools([
-			{
-				name: "analyze_logs",
-				description: "Scans log lines for panics and OOMs",
-				parameters: [
-					{
-						name: "logs",
-						description: "Raw log text to analyze",
-						paramType: "string",
-						required: True,
-					},
-				],
-			},
-		])
-		|> withStatelessToolHandler(handleTool)
-		|> registerEffectfulTyped(
-			startCanary,
-			handleStart,
-			decodeStartInput,
-			encodeStartOutput,
-		)
-		|> registerTyped(
-			approveGate,
-			handleApprove,
-			decodeDecisionInput,
-			|s| s,
-		)
-		|> registerTyped(
-			emergencyRollback,
-			handleRollback,
-			decodeRollbackInput,
-			|s| s,
-		)
-		|> registerEffectfulTyped(
-			scheduleRollback,
-			handleScheduleRollback,
-			decodeScheduleRollbackInput,
-			|s| s,
-		)
-		|> registerEffectfulTyped(
-			fireRollback,
-			handleFireRollback,
-			decodeRollbackInput,
-			|s| s,
-		)
-		|> registerReadOnlyTyped(
-			statusMethod,
-			handleStatus,
-			|_| Ok({}),
-			encodeStatus,
-		)
-		|> registerReadOnlyTyped(
-			dashboardMethod,
-			handleDashboard,
-			|_| Ok({}),
-			|html| html,
-		)
-		|> withHttpMount({ pathPrefix: "/canary/{id}", corsOrigins: ["*"], webhookSuffix: "webhooks" })
-		|> build
-
-Config : {
-	service : Str,
-}
-
-initCoordinator : Str -> Result(State, Str)
-initCoordinator = |configJson| {
-	cfg : Config
-	cfg = decode_or(configJson, { service: "default-service" })
-	Ok({
-		service: cfg.service,
-		activeVersion: "v1.0.0",
-		canaryVersion: "",
-		weight: 0.U64,
-		region: "us-east-1",
-		pendingTimerHandle: 0.U32,
-		approvalWebhookUrl: "",
-		events: ["coordinator_initialized"],
+ReleaseCoordinator := [].{
+	startCanary : Method(StartInput, StartOutput)
+	startCanary = method({
+		name: "start_canary",
+		description: "Starts a new canary deployment for a given service.",
+		promptHint: "Call this to initialize a canary with initial traffic.",
 	})
-}
 
-handleStart : State, StartInput -> Effect.Effect(Result({ state : State, out : StartOutput }, Str))
-handleStart = |state, input|
-	Effect.and_then(
-		rpcTyped(
-			"diagnostics-worker",
-			DiagnosticsWorker.runDiagnostics,
-			{ service: state.service, lines: input.logs },
-			encodeLogBatch,
-			decodeDiagnosticReport,
-		),
-		|diagRes| {
-			diagReport =
-				match diagRes {
-					Ok(rep) => rep
-					Err(_) =>
-						DiagnosticsWorker.handleRunDiagnostics({
-							service: state.service,
-							lines: input.logs,
-						})
-							?? { service: state.service, faults: 0.U64, healthy: True, summary: "ok" }
-				}
+	approveGate : Method(DecisionInput, Str)
+	approveGate = method({
+		name: "approve_gate",
+		description: "Approves or rejects promotion of the canary traffic weight.",
+		promptHint: "Call to advance canary to next rollout stage.",
+	})
 
-			if !diagReport.healthy {
-				abortEvent = "canary_aborted: ${diagReport.summary}"
-				events = List.append(state.events, abortEvent)
-				nextState = { ..state, events: events }
-				Effect.always(
-					Ok({
-						state: nextState,
-						out: {
-							status: "aborted_unhealthy",
-							version: input.version,
-							weight: 0.U64,
-							approvalWebhookUrl: "",
-							faults: diagReport.faults,
+	emergencyRollback : Method(RollbackInput, Str)
+	emergencyRollback = method({
+		name: "emergency_rollback",
+		description: "Rolls the canary back to 0% of traffic.",
+		promptHint: "Call this to take the canary out of rotation immediately.",
+	})
+
+	scheduleRollback : Method(ScheduleRollbackInput, Str)
+	scheduleRollback = method({
+		name: "schedule_rollback",
+		description: "Schedules an emergency rollback after delayMillis milliseconds.",
+		promptHint: "Call to schedule a delayed rollback.",
+	})
+
+	fireRollback : Method(RollbackInput, Str)
+	fireRollback = method({
+		name: "fire_rollback",
+		description: "Fires an immediate rollback asynchronously without awaiting reply.",
+		promptHint: "Call to trigger rollback via fire-and-forget RPC.",
+	})
+
+	statusMethod : Method({}, Status)
+	statusMethod = method({
+		name: "get_status",
+		description: "Returns the current rollout status.",
+		promptHint: "Query current canary status.",
+	})
+
+	dashboardMethod : Method({}, Str)
+	dashboardMethod = method({
+		name: "dashboard",
+		description: "Serves live HTML dashboard for the canary release.",
+		promptHint: "Fetch live HTML dashboard.",
+	})
+
+	agent : Agent(State)
+	agent =
+		define(
+			{
+				name: "canary-release",
+				version: "1.0.0",
+				description: "Canary rollout orchestrator: typed methods, a gate, a live dashboard.",
+			},
+			initCoordinator,
+			serializeState,
+			deserializeState,
+		)
+			|> withTools([
+				{
+					name: "analyze_logs",
+					description: "Scans log lines for panics and OOMs",
+					parameters: [
+						{
+							name: "logs",
+							description: "Raw log text to analyze",
+							paramType: "string",
+							required: True,
 						},
-					}),
-				)
-			} else {
-				Effect.and_then(
-					createPromise,
-					|promiseRes|
-						match promiseRes {
-							Err(err) => Effect.always(Err("Failed to create promise: ${err}"))
-							Ok(promiseId) =>
-								Effect.and_then(
-									createWebhook(promiseId),
-									|webhookRes|
-										match webhookRes {
-											Err(err) => Effect.always(Err("Failed to create webhook: ${err}"))
-											Ok(webhookUrl) =>
-												Effect.and_then(
-													workerId,
-													|selfId|
-														Effect.and_then(
-															rpcSchedule(
-																selfId,
-																emergencyRollback,
-																"{\"reason\":\"approval timeout expired\"}",
-																300000.U64,
-															),
-															|schedRes|
-																match schedRes {
-																	Err(err) =>
-																		Effect.always(Err("Failed to schedule emergency rollback: ${err}"))
+					],
+				},
+			])
+			|> withStatelessToolHandler(handleTool)
+			|> registerEffectfulTyped(
+				startCanary,
+				handleStart,
+				decodeStartInput,
+				encodeStartOutput,
+			)
+			|> registerTyped(
+				approveGate,
+				handleApprove,
+				decodeDecisionInput,
+				|s| s,
+			)
+			|> registerTyped(
+				emergencyRollback,
+				handleRollback,
+				decodeRollbackInput,
+				|s| s,
+			)
+			|> registerEffectfulTyped(
+				scheduleRollback,
+				handleScheduleRollback,
+				decodeScheduleRollbackInput,
+				|s| s,
+			)
+			|> registerEffectfulTyped(
+				fireRollback,
+				handleFireRollback,
+				decodeRollbackInput,
+				|s| s,
+			)
+			|> registerReadOnlyTyped(
+				statusMethod,
+				handleStatus,
+				|_| Ok({}),
+				encodeStatus,
+			)
+			|> registerReadOnlyTyped(
+				dashboardMethod,
+				handleDashboard,
+				|_| Ok({}),
+				|html| html,
+			)
+			|> withHttpMount({ pathPrefix: "/canary/{id}", corsOrigins: ["*"], webhookSuffix: "webhooks" })
+			|> build
 
-																	Ok(_) => {
-																		timerHandle = U64.to_u32_wrap(promiseId)
-																		startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
-																		events = List.append(state.events, startEvent)
-																		nextState = {
-																			..state,
-																			canaryVersion: input.version,
-																			weight: input.weight,
-																			pendingTimerHandle: timerHandle,
-																			approvalWebhookUrl: webhookUrl,
-																			events: events,
-																		}
-																		Effect.always(
-																			Ok({
-																				state: nextState,
-																				out: {
-																					status: "canary_started",
-																					version: input.version,
-																					weight: input.weight,
-																					approvalWebhookUrl: webhookUrl,
-																					faults: 0.U64,
-																				},
-																			}),
-																		)
-																	}
-																},
-														),
-												)
-										},
-								)
-						},
-				)
-			}
-		},
-	)
+	Config : {
+		service : Str,
+	}
 
-handleScheduleRollback : State, ScheduleRollbackInput -> Effect.Effect(Result({ state : State, out : Str }, Str))
-handleScheduleRollback = |state, input|
-	Effect.and_then(
-		workerId,
-		|selfId|
-			Effect.and_then(
-				rpcSchedule(
-					selfId,
-					emergencyRollback,
-					"{\"reason\":\"${input.reason}\"}",
-					input.delayMillis,
-				),
-				|schedRes|
-					match schedRes {
-						Err(err) => Effect.always(Err("Failed to schedule rollback: ${err}"))
-						Ok(_) =>
-							Effect.always(
-								Ok({
-									state: state,
-									out: "Rollback scheduled in ${Str.inspect(input.delayMillis)}ms",
-								}),
-							)
-					},
+	initCoordinator : Str -> Result(State, Str)
+	initCoordinator = |configJson| {
+		cfg : Config
+		cfg = decode_or(configJson, { service: "default-service" })
+		Ok({
+			service: cfg.service,
+			activeVersion: "v1.0.0",
+			canaryVersion: "",
+			weight: 0.U64,
+			region: "us-east-1",
+			pendingTimerHandle: 0.U32,
+			approvalWebhookUrl: "",
+			events: ["coordinator_initialized"],
+		})
+	}
+
+	handleStart : State, StartInput -> Effect.Effect(Result({ state : State, out : StartOutput }, Str))
+	handleStart = |state, input|
+		Effect.and_then(
+			rpcTyped(
+				"diagnostics-worker",
+				DiagnosticsWorker.runDiagnostics,
+				{ service: state.service, lines: input.logs },
+				encodeLogBatch,
+				decodeDiagnosticReport,
 			),
-	)
-
-handleFireRollback : State, RollbackInput -> Effect.Effect(Result({ state : State, out : Str }, Str))
-handleFireRollback = |state, input|
-	Effect.and_then(
-		rpcFireAndForget(
-			"diagnostics-worker",
-			DiagnosticsWorker.runDiagnostics,
-			"{\"service\":\"emergency-audit\",\"lines\":\"ALERT: emergency abort initiated: ${input.reason}\"}",
-		),
-		|fireRes|
-			match fireRes {
-				Err(err) => Effect.always(Err("Failed fire-and-forget to diagnostics-worker: ${err}")),
-				Ok(_) => {
-					events = List.append(state.events, "emergency_rollback_fired: ${input.reason}")
-					nextState = {
-						..state,
-						canaryVersion: "",
-						weight: 0.U64,
-						events: events,
+			|diagRes| {
+				diagReport =
+					match diagRes {
+						Ok(rep) => rep
+						Err(_) =>
+							DiagnosticsWorker.handleRunDiagnostics({
+								service: state.service,
+								lines: input.logs,
+							})
+								?? { service: state.service, faults: 0.U64, healthy: True, summary: "ok" }
 					}
+
+				if !diagReport.healthy {
+					abortEvent = "canary_aborted: ${diagReport.summary}"
+					events = List.append(state.events, abortEvent)
+					nextState = { ..state, events: events }
 					Effect.always(
 						Ok({
 							state: nextState,
-							out: "Rollback fired via fire-and-forget RPC to diagnostics-worker",
+							out: {
+								status: "aborted_unhealthy",
+								version: input.version,
+								weight: 0.U64,
+								approvalWebhookUrl: "",
+								faults: diagReport.faults,
+							},
 						}),
 					)
-				},
+				} else {
+					Effect.and_then(
+						createPromise,
+						|promiseRes|
+							match promiseRes {
+								Err(err) => Effect.always(Err("Failed to create promise: ${err}"))
+								Ok(promiseId) =>
+									Effect.and_then(
+										createWebhook(promiseId),
+										|webhookRes|
+											match webhookRes {
+												Err(err) => Effect.always(Err("Failed to create webhook: ${err}"))
+												Ok(webhookUrl) =>
+													Effect.and_then(
+														workerId,
+														|selfId|
+															Effect.and_then(
+																rpcSchedule(
+																	selfId,
+																	emergencyRollback,
+																	"{\"reason\":\"approval timeout expired\"}",
+																	300000.U64,
+																),
+																|schedRes|
+																	match schedRes {
+																		Err(err) =>
+																			Effect.always(Err("Failed to schedule emergency rollback: ${err}"))
+
+																		Ok(_) => {
+																			timerHandle = U64.to_u32_wrap(promiseId)
+																			startEvent = "canary_started: ${input.version} at ${Str.inspect(input.weight)}%"
+																			events = List.append(state.events, startEvent)
+																			nextState = {
+																				..state,
+																				canaryVersion: input.version,
+																				weight: input.weight,
+																				pendingTimerHandle: timerHandle,
+																				approvalWebhookUrl: webhookUrl,
+																				events: events,
+																			}
+																			Effect.always(
+																				Ok({
+																					state: nextState,
+																					out: {
+																						status: "canary_started",
+																						version: input.version,
+																						weight: input.weight,
+																						approvalWebhookUrl: webhookUrl,
+																						faults: 0.U64,
+																					},
+																				}),
+																			)
+																		}
+																	},
+															),
+													)
+											},
+									)
+							},
+					)
+				}
 			},
-	)
+		)
 
-handleDashboard : State, {} -> Result(Str, Str)
-handleDashboard = |state, _|
-	Ok(renderDashboard(state))
+	handleScheduleRollback : State, ScheduleRollbackInput -> Effect.Effect(Result({ state : State, out : Str }, Str))
+	handleScheduleRollback = |state, input|
+		Effect.and_then(
+			workerId,
+			|selfId|
+				Effect.and_then(
+					rpcSchedule(
+						selfId,
+						emergencyRollback,
+						"{\"reason\":\"${input.reason}\"}",
+						input.delayMillis,
+					),
+					|schedRes|
+						match schedRes {
+							Err(err) => Effect.always(Err("Failed to schedule rollback: ${err}"))
+							Ok(_) =>
+								Effect.always(
+									Ok({
+										state: state,
+										out: "Rollback scheduled in ${Str.inspect(input.delayMillis)}ms",
+									}),
+								)
+						},
+				),
+		)
 
-handleApprove : State, DecisionInput -> Result({ state : State, out : Str }, Str)
-handleApprove = |state, input| {
-	if input.approved {
-		promotedVer = if Str.is_empty(state.canaryVersion) state.activeVersion else state.canaryVersion
-		events = List.append(state.events, "approved_by_${input.reviewer}: promoted ${promotedVer} to 100%")
-		nextState = {
-			..state,
-			activeVersion: promotedVer,
-			canaryVersion: "",
-			weight: 100.U64,
-			pendingTimerHandle: 0.U32,
-			events: events,
+	handleFireRollback : State, RollbackInput -> Effect.Effect(Result({ state : State, out : Str }, Str))
+	handleFireRollback = |state, input|
+		Effect.and_then(
+			rpcFireAndForget(
+				"diagnostics-worker",
+				DiagnosticsWorker.runDiagnostics,
+				"{\"service\":\"emergency-audit\",\"lines\":\"ALERT: emergency abort initiated: ${input.reason}\"}",
+			),
+			|fireRes|
+				match fireRes {
+					Err(err) => Effect.always(Err("Failed fire-and-forget to diagnostics-worker: ${err}"))
+					Ok(_) => {
+						events = List.append(state.events, "emergency_rollback_fired: ${input.reason}")
+						nextState = {
+							..state,
+							canaryVersion: "",
+							weight: 0.U64,
+							events: events,
+						}
+						Effect.always(
+							Ok({
+								state: nextState,
+								out: "Rollback fired via fire-and-forget RPC to diagnostics-worker",
+							}),
+						)
+					}
+				},
+		)
+
+	handleDashboard : State, {} -> Result(Str, Str)
+	handleDashboard = |state, _|
+		Ok(renderDashboard(state))
+
+	handleApprove : State, DecisionInput -> Result({ state : State, out : Str }, Str)
+	handleApprove = |state, input| {
+		if input.approved {
+			promotedVer = if (Str.is_empty(state.canaryVersion)) state.activeVersion else state.canaryVersion
+			events = List.append(state.events, "approved_by_${input.reviewer}: promoted ${promotedVer} to 100%")
+			nextState = {
+				..state,
+				activeVersion: promotedVer,
+				canaryVersion: "",
+				weight: 100.U64,
+				pendingTimerHandle: 0.U32,
+				events: events,
+			}
+			Ok({
+				state: nextState,
+				out: "Promoted ${promotedVer} to 100% (approved by ${input.reviewer})",
+			})
+		} else {
+			events = List.append(state.events, "rejected_by_${input.reviewer}: canary ${state.canaryVersion} reset to 0%")
+			nextState = {
+				..state,
+				canaryVersion: "",
+				weight: 0.U64,
+				pendingTimerHandle: 0.U32,
+				events: events,
+			}
+			Ok({
+				state: nextState,
+				out: "Canary rejected by ${input.reviewer}",
+			})
 		}
-		Ok({
-			state: nextState,
-			out: "Promoted ${promotedVer} to 100% (approved by ${input.reviewer})",
-		})
-	} else {
-		events = List.append(state.events, "rejected_by_${input.reviewer}: canary ${state.canaryVersion} reset to 0%")
+	}
+
+	handleRollback : State, RollbackInput -> Result({ state : State, out : Str }, Str)
+	handleRollback = |state, input| {
+		events = List.append(state.events, "emergency_rollback: ${input.reason}")
 		nextState = {
 			..state,
-			canaryVersion: "",
 			weight: 0.U64,
 			pendingTimerHandle: 0.U32,
 			events: events,
 		}
 		Ok({
 			state: nextState,
-			out: "Canary rejected by ${input.reviewer}",
+			out: "Rolled back to 0%: ${input.reason}",
 		})
 	}
-}
 
-handleRollback : State, RollbackInput -> Result({ state : State, out : Str }, Str)
-handleRollback = |state, input| {
-	events = List.append(state.events, "emergency_rollback: ${input.reason}")
-	nextState = {
-		..state,
-		weight: 0.U64,
-		pendingTimerHandle: 0.U32,
-		events: events,
-	}
-	Ok({
-		state: nextState,
-		out: "Rolled back to 0%: ${input.reason}",
-	})
-}
-
-handleStatus : State, {} -> Result(Status, Str)
-handleStatus = |state, _|
-	Ok({
-		service: state.service,
-		activeVersion: state.activeVersion,
-		canaryVersion: state.canaryVersion,
-		weight: state.weight,
-		region: state.region,
-		pendingTimerHandle: state.pendingTimerHandle,
-		approvalWebhookUrl: state.approvalWebhookUrl,
-		events: state.events,
-	})
-
-handleTool : ToolCall -> Result(ToolResult, Str)
-handleTool = |call| {
-	if call.name == "analyze_logs" or call.name == "analyze-logs" {
-		logs = call.arguments
-		panicCount = countOccurrences(logs, "PANIC")
-		oomCount = countOccurrences(logs, "OOM")
-		faults = panicCount + oomCount
+	handleStatus : State, {} -> Result(Status, Str)
+	handleStatus = |state, _|
 		Ok({
-			id: call.id,
-			success: True,
-			output: encode({ faults: faults }),
+			service: state.service,
+			activeVersion: state.activeVersion,
+			canaryVersion: state.canaryVersion,
+			weight: state.weight,
+			region: state.region,
+			pendingTimerHandle: state.pendingTimerHandle,
+			approvalWebhookUrl: state.approvalWebhookUrl,
+			events: state.events,
 		})
-	} else {
-		Ok({
-			id: call.id,
-			success: False,
-			output: encode({ error: "Unknown tool ${call.name}" }),
-		})
-	}
-}
 
-countOccurrences : Str, Str -> U64
-countOccurrences = |text, needle|
-	match Str.split_first(text, needle) {
-		Ok({ after, .. }) => 1.U64 + countOccurrences(after, needle)
-		Err(_) => 0.U64
-	}
-
-renderDashboard : State -> Str
-renderDashboard = |st| {
-	eventItems =
-		st.events
-			|> List.map(|e| "<li>${e}</li>")
-			|> Str.join_with("")
-	"<!doctype html><html><body><h1>Release Guardian: ${st.service}</h1><p>Active: ${st.activeVersion} | Canary: ${st.canaryVersion} at ${Str.inspect(st.weight)}%</p><ul>${eventItems}</ul></body></html>"
-}
-
-serializeState : State -> Str
-serializeState = |st|
-	encodeStatus({
-		service: st.service,
-		activeVersion: st.activeVersion,
-		canaryVersion: st.canaryVersion,
-		weight: st.weight,
-		region: st.region,
-		pendingTimerHandle: st.pendingTimerHandle,
-		approvalWebhookUrl: st.approvalWebhookUrl,
-		events: st.events,
-	})
-
-deserializeState : Str -> Result(State, Str)
-deserializeState = |json| {
-	match decodeStatus(json) {
-		Ok(status) =>
+	handleTool : ToolCall -> Result(ToolResult, Str)
+	handleTool = |call| {
+		if call.name == "analyze_logs" or call.name == "analyze-logs" {
+			logs = call.arguments
+			panicCount = countOccurrences(logs, "PANIC")
+			oomCount = countOccurrences(logs, "OOM")
+			faults = panicCount + oomCount
 			Ok({
-				service: status.service,
-				activeVersion: status.activeVersion,
-				canaryVersion: status.canaryVersion,
-				weight: status.weight,
-				region: status.region,
-				pendingTimerHandle: status.pendingTimerHandle,
-				approvalWebhookUrl: status.approvalWebhookUrl,
-				events: status.events,
+				id: call.id,
+				success: True,
+				output: encode({ faults: faults }),
 			})
-		Err(err) => Err(err)
+		} else {
+			Ok({
+				id: call.id,
+				success: False,
+				output: encode({ error: "Unknown tool ${call.name}" }),
+			})
+		}
+	}
+
+	countOccurrences : Str, Str -> U64
+	countOccurrences = |text, needle|
+		match Str.split_first(text, needle) {
+			Ok({ after, .. }) => 1.U64 + countOccurrences(after, needle)
+			Err(_) => 0.U64
+		}
+
+	renderDashboard : State -> Str
+	renderDashboard = |st| {
+		eventItems =
+			st.events
+				|> List.map(|e| "<li>${e}</li>")
+				|> Str.join_with("")
+		"<!doctype html><html><body><h1>Release Guardian: ${st.service}</h1><p>Active: ${st.activeVersion} | Canary: ${st.canaryVersion} at ${Str.inspect(st.weight)}%</p><ul>${eventItems}</ul></body></html>"
+	}
+
+	serializeState : State -> Str
+	serializeState = |st|
+		encodeStatus({
+			service: st.service,
+			activeVersion: st.activeVersion,
+			canaryVersion: st.canaryVersion,
+			weight: st.weight,
+			region: st.region,
+			pendingTimerHandle: st.pendingTimerHandle,
+			approvalWebhookUrl: st.approvalWebhookUrl,
+			events: st.events,
+		})
+
+	deserializeState : Str -> Result(State, Str)
+	deserializeState = |json| {
+		match decodeStatus(json) {
+			Ok(status) =>
+				Ok({
+					service: status.service,
+					activeVersion: status.activeVersion,
+					canaryVersion: status.canaryVersion,
+					weight: status.weight,
+					region: status.region,
+					pendingTimerHandle: status.pendingTimerHandle,
+					approvalWebhookUrl: status.approvalWebhookUrl,
+					events: status.events,
+				})
+			Err(err) => Err(err)
+		}
 	}
 }

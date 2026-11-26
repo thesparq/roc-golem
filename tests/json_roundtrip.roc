@@ -1,6 +1,6 @@
 app [main] { pf: platform "../platform/main.roc" }
 
-import pf.Json
+import pf.GolemJson
 import pf.Types exposing [Result]
 import pf.Golem exposing [Agent, defineAgent]
 
@@ -64,8 +64,8 @@ ToolCallEnvelope : {
 expect {
 	val : { a : I64, b : I64, c : I64 }
 	val = { a: -100.I64, b: 0.I64, c: 999999.I64 }
-	encoded = Json.encode(val)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(val)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(val)
 }
 
@@ -73,8 +73,8 @@ expect {
 expect {
 	val : { t : Bool, f : Bool }
 	val = { t: True, f: False }
-	encoded = Json.encode(val)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(val)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(val)
 }
 
@@ -83,8 +83,8 @@ expect {
 	specialStr = "Line 1\nLine 2\t\"Quotes\" and \\backslashes\\ and \r carriage return: 🚀 \u(1f389) 🎉"
 	val : { text : Str }
 	val = { text: specialStr }
-	encoded = Json.encode(val)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(val)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(val)
 }
 
@@ -94,7 +94,7 @@ expect {
 	# Spaces around colon
 	rawJson = "{\"count\" : 42}"
 	res : Result(CounterState, Str)
-	res = Json.decode(rawJson)
+	res = GolemJson.decode(rawJson)
 	res == Ok({ count: 42.I64 })
 }
 
@@ -102,7 +102,7 @@ expect {
 	# Indented with newlines and multiple spaces
 	rawJson = "{\n  \"count\":   42\n}"
 	res : Result(CounterState, Str)
-	res = Json.decode(rawJson)
+	res = GolemJson.decode(rawJson)
 	res == Ok({ count: 42.I64 })
 }
 
@@ -110,7 +110,7 @@ expect {
 	# Complex whitespace with tabs and spaces
 	rawJson = "\t{\n\t\t\"invocations\"\t:\t  7,\n\t\t\"lastTool\" : \"calculator\"\n\t}\n"
 	res : Result(AiToolState, Str)
-	res = Json.decode(rawJson)
+	res = GolemJson.decode(rawJson)
 	res == Ok({ invocations: 7.I64, lastTool: "calculator" })
 }
 
@@ -120,16 +120,16 @@ expect {
 expect {
 	initialState : CounterState
 	initialState = { count: -42.I64 }
-	encoded = Json.encode(initialState)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(initialState)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(initialState)
 }
 
 expect {
 	initialState : CounterState
 	initialState = { count: 0.I64 }
-	encoded = Json.encode(initialState)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(initialState)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(initialState)
 }
 
@@ -140,8 +140,8 @@ expect {
 		invocations: 12.I64,
 		lastTool: "echo\n\"quotes\" and \\slashes\\\twith\r\nlines and 🤖 emojis",
 	}
-	encoded = Json.encode(initialState)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(initialState)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(initialState)
 }
 
@@ -154,8 +154,8 @@ expect {
 		sent: 1000.U64,
 		received: 2000.U64,
 	}
-	encoded = Json.encode(initialState)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(initialState)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(initialState)
 }
 
@@ -167,8 +167,8 @@ expect {
 		sent: 0.U64,
 		received: 0.U64,
 	}
-	encoded = Json.encode(initialState)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(initialState)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(initialState)
 }
 
@@ -189,8 +189,8 @@ expect {
 			"health_check_passed: latency < 50ms\nerror_rate = 0.00%",
 		],
 	}
-	encoded = Json.encode(status)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(status)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(status)
 }
 
@@ -199,8 +199,8 @@ expect {
 	rollback = {
 		reason: "Error spike > 5% on canary pods: \"500 Internal Error\"\npanic: nil pointer",
 	}
-	encoded = Json.encode(rollback)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(rollback)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(rollback)
 }
 
@@ -210,8 +210,8 @@ expect {
 		service: "auth-gateway",
 		lines: "2026-11-08T10:00:00Z [INFO] Started\n2026-11-08T10:00:01Z [WARN] Retrying connection \"db-1\"",
 	}
-	encoded = Json.encode(batch)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(batch)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(batch)
 }
 
@@ -223,8 +223,8 @@ expect {
 		healthy: False,
 		summary: "Found 2 PANIC lines and 1 OOM in logs",
 	}
-	encoded = Json.encode(diag)
-	decoded = Json.decode(encoded)
+	encoded = GolemJson.encode(diag)
+	decoded = GolemJson.decode(encoded)
 	decoded == Ok(diag)
 }
 
@@ -233,14 +233,14 @@ expect {
 expect {
 	rawToolJson = "{\n  \"id\": \"call-42\",\n  \"name\": \"calculator\",\n  \"arguments\": \"{\\\"expr\\\": \\\"2+2\\\"}\"\n}"
 	res : Result(ToolCallEnvelope, Str)
-	res = Json.decode(rawToolJson)
+	res = GolemJson.decode(rawToolJson)
 	res == Ok({ id: "call-42", name: "calculator", arguments: "{\"expr\": \"2+2\"}" })
 }
 
 expect {
 	rawToolJson = "{\"id\" : \"call-99\" , \"name\" : \"echo\" , \"arguments\" : \"hello world\"}"
 	res : Result(ToolCallEnvelope, Str)
-	res = Json.decode(rawToolJson)
+	res = GolemJson.decode(rawToolJson)
 	res == Ok({ id: "call-99", name: "echo", arguments: "hello world" })
 }
 
@@ -248,41 +248,41 @@ expect {
 
 expect {
 	res : Result(CounterState, Str)
-	res = Json.decode("{not valid json")
+	res = GolemJson.decode("{not valid json")
 	Result.is_err(res)
 }
 
 expect {
 	res : Result(CounterState, Str)
-	res = Json.decode("")
+	res = GolemJson.decode("")
 	Result.is_err(res)
 }
 
 expect {
 	res : Result(CounterState, Str)
-	res = Json.decode("{\"count\": \"not a number\"}")
+	res = GolemJson.decode("{\"count\": \"not a number\"}")
 	Result.is_err(res)
 }
 
 # decode_or fallback
 expect {
-	val = Json.decode_or("{\"invalid\": true}", { count: 123.I64 })
+	val = GolemJson.decode_or("{\"invalid\": true}", { count: 123.I64 })
 	val == { count: 123.I64 }
 }
 
 expect {
-	val = Json.decode_or("{\"count\": 999}", { count: 123.I64 })
+	val = GolemJson.decode_or("{\"count\": 999}", { count: 123.I64 })
 	val == { count: 999.I64 }
 }
 
 # --- 6. String escaping helper ---
 
-expect Json.escape("hello \"world\"\nline2\r\ttab\\backslash") == "hello \\\"world\\\"\\nline2\\r\\ttab\\\\backslash"
+expect GolemJson.escape("hello \"world\"\nline2\r\ttab\\backslash") == "hello \\\"world\\\"\\nline2\\r\\ttab\\\\backslash"
 
 # Control characters U+0000..U+001F escaping
-expect Json.escape("\u(0000)\u(0001)\u(001f)") == "\\u0000\\u0001\\u001f"
-expect Json.escape("\u(0008)\u(000c)") == "\\b\\f"
-expect Json.escape("null\u(0000)byte and alert\u(0007)") == "null\\u0000byte and alert\\u0007"
+expect GolemJson.escape("\u(0000)\u(0001)\u(001f)") == "\\u0000\\u0001\\u001f"
+expect GolemJson.escape("\u(0008)\u(000c)") == "\\b\\f"
+expect GolemJson.escape("null\u(0000)byte and alert\u(0007)") == "null\\u0000byte and alert\\u0007"
 
 # Dummy agent to satisfy platform requirements
 agent : Agent({})

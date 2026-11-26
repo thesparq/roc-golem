@@ -2,14 +2,26 @@
 
 Keep this file short (about 150 lines). It is a status page, not a diary. Move finished sections to `docs/temp/progress-archive.md`. Historical audit narrative and workflow diagrams are preserved in `docs/temp/progress-archive.md`.
 
-### Current Phase: Production Stable — Outbound HTTP Host C-ABI Return Buffer Order Fix (v1.4.3 Release, 2026-11-19)
+### Current Phase: Production Stable — Roc 0.1.0-RC2 Toolchain Migration (v1.5.0, 2026-11-26)
 
-Goal: Correct the parameter order in `rocFxHttpRequest` (`out` buffer as first argument, matching LLVM `sret` calling convention and `rocFxRpcInvoke`), eliminating WASM linear memory out-of-bounds faults upon string deallocation during outgoing HTTP requests.
+Goal: Full migration to official Roc `0.1.0-RC2` release across the entire platform, examples, test suites, CI pipelines, and build tooling, achieving zero errors and zero warnings.
 
-Status: **v1.4.3 Released & 100% Verified.** All 4 verification layers passing clean: 58 host unit tests, 146 Roc tests across 8 suites, consumer package smoke test, and release packaging.
-
+Status: **Roc 0.1.0-RC2 Migration Complete & 100% Verified.** All 4 verification layers passing clean with 0 errors and 0 warnings: 58 host unit tests, 146 Roc tests across 8 suites, all 4 examples compiling and packaging cleanly, and consumer smoke test passing.
 
 ## Done
+
+- **Full Migration to Roc 0.1.0-RC2 & Release Cut (v1.5.0 - 2026-11-26)**:
+  - Upgraded compiler pin in `tooling/build.sh`, `.github/workflows/ci.yaml`, and `.github/workflows/release.yaml` to official release `0.1.0-RC2`.
+  - Renamed `platform/Json.roc` to `platform/GolemJson.roc` to resolve reserved module and type name conflicts with Roc's builtin `Json`.
+  - Modernized all platform files (`Types.roc`, `Parse.roc`, `GolemJson.roc`, `Golem.roc`) and multi-file examples (`canary_release/ReleaseCoordinator.roc`, `canary_release/DiagnosticsWorker.roc`, `canary_release/Types.roc`) to headerless Type Modules (`TypeName := [].{ ... }`), eliminating all module header deprecation warnings.
+  - Aligned `Json.parse` signatures and where clauses in `platform/GolemJson.roc` and `platform/Golem.roc` to exact tag union `where [a.Json.Parseable([InvalidJson(Str)])]`.
+  - Resolved `redundant expose` compiler error in `tests/effectful_agent.roc` (`import pf.Effect exposing [map]`).
+  - Added explicit result type annotations to test mock closures in `tests/dx_primitives.roc` to eliminate `unmatchable pattern` compiler warnings.
+  - Updated all 8 test suites (146 tests) and all 4 examples to compile cleanly with 0 errors and 0 warnings.
+  - Packaged platform release `v1.5.0` (`roc-golem-v1.5.0__bu9YwysiCrb-2ThuRBX_g5WolwrZ-UGUPDeXkTvEuWU.tar.zst`).
+  - Verified consumer smoke test (`./tooling/test_consumer.sh dist/roc-golem-v1.5.0__bu9YwysiCrb-2ThuRBX_g5WolwrZ-UGUPDeXkTvEuWU.tar.zst`): 100% pass.
+  - Formatted codebase (`roc fmt --check` and `cargo fmt --check` 100% clean).
+  - Synchronized documentation in `README.md`, `CHANGELOG.md`, `golem.yaml`, `host/Cargo.toml`, `.agents/skills/roc-golem.md`, and authored `docs/specs/21-roc-0.1-rc2-migration.md`.
 
 - **Outbound HTTP Host C-ABI Return Buffer Order Fix (v1.4.3 - 2026-11-19)**:
   - Corrected `rocFxHttpRequest` parameter order in `host/src/lib.rs` to `(out: *mut RocResult<RocStr, RocStr>, req_json: *const RocStr)`, adhering to Roc's standard WASM C-ABI `sret` calling convention for composite return values.

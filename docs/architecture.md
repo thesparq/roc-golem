@@ -6,8 +6,8 @@ What the repository contains today, the contracts between its parts, and the rul
 
 | Layer | Technology | Role |
 | :--- | :--- | :--- |
-| Agent code | Roc nightly `nightly-2026-09-29-7f11a82` (new compiler; syntax: `snake_case` standard library, `match`, `or`/`and`, `\|x\|` lambdas) | The application author's pure functions |
-| Platform | Roc platform `platform/main.roc` with `Golem.roc`, `Effect.roc`, `Types.roc` | The SDK the author imports, and the entry points the host calls |
+| Agent code | Roc `0.1.0-RC2` (official release candidate; syntax: Type Modules, `snake_case` standard library, `match`, `or`/`and`, `\|x\|` lambdas) | The application author's pure functions |
+| Platform | Roc platform `platform/main.roc` with `Golem.roc`, `Effect.roc`, `Types.roc`, `GolemJson.roc`, `Parse.roc` | The SDK the author imports, and the entry points the host calls |
 | Host | Rust (`host/`, crate `roc-golem-host`; crate types `staticlib`, `cdylib`, `rlib`; `wit-bindgen` 0.59.0; `serde_json`) | Translates between Roc text messages and Golem's WIT interfaces; performs effects |
 | Interface definitions | WIT in `wit/` (`world.wit`, vendored `wit/deps/**`) | The contract with Golem: exports `golem:agent/guest@2.0.0`; imports Golem host APIs and WASI |
 | Componentizing | `wasm-tools` (1.263.0) | Wraps the core WebAssembly module as a Component Model component |
@@ -16,7 +16,7 @@ What the repository contains today, the contracts between its parts, and the rul
 | Packaging | `tooling/pack_platform` (Rust), BLAKE3 base64url checksums | Release archives `.tar.zst`, `.tar.br`, `.tar.gz` |
 | CI / release | GitHub Actions (`.github/workflows/`) | Test, build, validate, publish |
 
-**Pinned toolchain.** Roc: `nightly-2026-09-29-7f11a82`, from the `roc-lang/nightlies` releases (asset `roc_nightly-linux_x86_64-2026-09-29-7f11a82.tar.gz`), the same pin the school-management-system repository uses in its `Dockerfile.app`. This is the only place the Roc version is declared. `tooling/build.sh` and CI must use exactly this version (units 01 and 03 in `docs/specs/00-build-plan.md`). Changing it is a unit of its own: run `roc check` on the platform and on every example, and update this paragraph and the Stack table in the same change.
+**Pinned toolchain.** Roc: `0.1.0-RC2`, from the official `roc-lang/roc` release (asset `roc-linux_x86_64-0.1.0-RC2.tar.gz`). This is the only place the Roc version is declared. `tooling/build.sh` and CI must use exactly this version (units 01, 03, and 21 in `docs/specs/00-build-plan.md`). Changing it is a unit of its own: run `roc check` on the platform and on every example, and update this paragraph and the Stack table in the same change.
 
 ## Repository layout
 
@@ -119,7 +119,7 @@ The exported symbol names are part of the ABI and are fixed:
 9. **Errors are surfaced, not hidden.** A failing handler returns its own error. The host must not retry a failed call as a different kind of call and report a different error.
 10. **The platform and host contain no example-specific logic.** Behavior that an agent needs (for instance an HTTP mount) is declared in the agent's metadata, not switched on by agent name in the host.
 11. **One public API, four views.** `Effect.roc`, `Golem.roc`, the README, and `.agents/skills/roc-golem.md` (and its copy in `.gemini/skills/`) describe the same API. Changing one means checking the others.
-12. **Versions are declared once.** The WIT versions in `wit/world.wit`, the manifest version in `golem.yaml`, the `wasm-tools` version in CI, and the Roc nightly are each stated in one place and referenced from `docs/architecture.md` (this file).
+12. **Versions are declared once.** The WIT versions in `wit/world.wit`, the manifest version in `golem.yaml`, the `wasm-tools` version in CI, and the Roc compiler version are each stated in one place and referenced from `docs/architecture.md` (this file).
 13. **Verify against something that behaves like production.** A check that passes against a fake proves the fake. See `docs/testing.md` for what each layer proves.
 
 ## Known deviations from these principles

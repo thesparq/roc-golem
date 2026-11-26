@@ -5,13 +5,13 @@ import pf.Golem exposing [
 	Agent,
 	Method,
 	Spec,
-	define,
-	registerTyped,
-	registerReadOnlyTyped,
 	build,
+	define,
 	method,
+	registerReadOnlyTyped,
+	registerTyped,
 ]
-import pf.Json
+import pf.GolemJson
 
 CountState : { n : I64 }
 
@@ -28,20 +28,20 @@ testSpec =
 	define(
 		{ name: "spec-test", version: "1.0.0", description: "Test agent for spec builder" },
 		|_| Ok({ n: 0.I64 }),
-		|st| Json.encode(st),
-		|raw| Json.decode(raw),
+		|st| GolemJson.encode(st),
+		|raw| GolemJson.decode(raw),
 	)
 		|> registerTyped(
 			addMethod,
 			|st, delta| Ok({ state: { n: st.n + delta }, out: st.n + delta }),
-			|raw| Json.decode(raw),
-			|out| Json.encode(out),
+			|raw| GolemJson.decode(raw),
+			|out| GolemJson.encode(out),
 		)
 		|> registerReadOnlyTyped(
 			getMethod,
 			|st, _| Ok(st.n),
 			|_| Ok({}),
-			|out| Json.encode(out),
+			|out| GolemJson.encode(out),
 		)
 
 testAgent : Agent(CountState)
@@ -103,7 +103,7 @@ expect {
 		[erased, ..] =>
 			erased.metadata.name == "spec-test"
 				and erased.metadata.version == "1.0.0"
-					and List.len(erased.metadata.methods) == 2
+				and List.len(erased.metadata.methods) == 2
 		_ => False
 	}
 }

@@ -3,26 +3,26 @@ app [main] { pf: platform "../platform/main.roc" }
 import pf.Types exposing [Result]
 import pf.Golem exposing [
 	Agent,
-	Tool,
 	StatelessTool,
+	Tool,
 	agent,
-	simpleAgent,
 	ephemeral,
+	fail,
+	optionalParam,
+	param,
+	readOnly,
+	readOnlyJson,
+	reply,
+	replyJson,
+	simpleAgent,
 	simpleEphemeral,
-	tool,
-	toolJson,
 	statefulTool,
+	statelessToTool,
 	statelessTool,
 	statelessToolJson,
-	statelessToTool,
-	param,
-	optionalParam,
-	reply,
-	readOnly,
 	stay,
-	fail,
-	replyJson,
-	readOnlyJson,
+	tool,
+	toolJson,
 ]
 
 State : { count : I64, name : Str }
@@ -93,6 +93,7 @@ expect {
 
 # tool: read-only state query tool (stateChanged = False)
 expect {
+	exec : State, Str -> Result(Str, Str)
 	exec = |st, _args| Ok(st.name)
 	queryTool : Tool(State)
 	queryTool = tool({
@@ -124,6 +125,7 @@ expect {
 
 # statefulTool: mutates state, stateChanged = True
 expect {
+	exec : State, Str -> Result({ state : State, stateChanged : Bool, output : Str }, Str)
 	exec = |st, _args|
 		Ok({
 			state: { count: st.count + 5.I64, name: st.name },
@@ -270,7 +272,7 @@ expect {
 		Ok(r) =>
 			r.stateChanged == True
 				and r.state.count == 11.I64
-					and r.response == "incremented"
+				and r.response == "incremented"
 		Err(_) => False
 	}
 }

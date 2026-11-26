@@ -15,12 +15,12 @@
 
 - **Use the current Roc syntax of the pinned toolchain.** `snake_case` standard library names (`Str.split_first`, `List.map`), `match` for branching, `or` / `and` instead of `||` / `&&`, `|args| body` lambdas, `?` and `??` as in the existing code. The repo's history shows several syntax migrations; do not reintroduce old forms.
 - **Formatting.** Code must be `roc fmt` clean. Use tabs, as the existing files do.
-- **Types on every top-level definition.** Every function in `platform/` and `examples/` has a type annotation. Public items are listed in the module header and documented with `##` comments.
+- **Types on every top-level definition.** Every function in `platform/` and `examples/` has a type annotation. Public items are defined within the module's nominal Type Module block (`TypeName := [].{ ... }`) and documented with `##` comments.
 - **Names.** Public SDK functions follow the existing `camelCase` (`registerReadOnlyTyped`). Internal helpers and platform entry points use `snake_case` (`main_init_for_host`, `escape_json_str`). Types are `PascalCase`. Do not rename public SDK items without a unit that says so (it breaks every consumer).
 - **Handlers are pure.** An agent handler takes state and input and returns a `Result`. Side effects go through the effect wrappers only.
 - **Return `Result`, never crash.** No `crash`, no `expect` in platform code. Convert every failure into `Err(Str)` with a message that names what failed.
 - **JSON in Roc.**
-  - There is no JSON parser. Use the shared helpers in the platform or in `examples/canary_release/Types.roc` style codecs. Do not write a new `Str.split_first` field search inside an agent.
+  - Built-in `Json.to_str` and `Json.parse` provide core runtime serialization and parsing. Use the shared platform codec module `platform/GolemJson.roc` (`encode`, `decode`, `decode_or`, `escape`) exposed via `pf.GolemJson`.
   - Every dynamic string put into JSON goes through the one shared escape function. Escape quotes, backslashes, newlines, carriage returns and tabs, and control characters.
   - A state string embedded in an envelope is escaped like any other string.
 - **Typed methods.** Declare each method once as `Method(input, output)`, and register it with the matching `register*Typed` builder with explicit encode/decode functions.
@@ -53,7 +53,7 @@
 
 - **`tooling/build.sh`** must `set -euo pipefail`, fail on any missing prerequisite with a clear message, and never silently skip a step (for example, "if `roc` is installed, run it" is not acceptable for a build step).
 - **One CI workflow per purpose.** `ci.yaml` / `ci.yml` duplicates are not allowed. Release is separate from CI.
-- **Pinned tools.** CI installs a specific version of each tool (Rust target, `wasm-tools`, Roc nightly).
+- **Pinned tools.** CI installs a specific version of each tool (Rust target, `wasm-tools`, Roc `0.1.0-RC2`).
 - **Releases.** A release is built only from a tag by `release.yaml`. The README's snippet (URL and hash) is updated in the same unit as the release.
 
 ## Examples
